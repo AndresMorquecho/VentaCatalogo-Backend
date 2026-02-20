@@ -1,0 +1,331 @@
+// Prisma Schema para VentasCatalogo
+// Conectado a Neon PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// CORE ENTITIES
+// ============================================================================
+
+model Client {
+  id                   String   @id @default(uuid())
+  identificationType   String   @map("identification_type")
+  identificationNumber String   @unique @map("identification_number")
+  firstName            String   @map("first_name")
+  country              String
+  province             String
+  city                 String
+  address              String
+  neighborhood         String?
+  sector               String?
+  email                String
+  phone1               String   @map("phone1")
+  operator1            String   @map("operator1")
+  phone2               String?  @map("phone2")
+  operator2            String?  @map("operator2")
+  reference            String?
+  isActive             Boolean  @default(true) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  orders            Order[]
+  clientAccount     ClientAccount?
+  financialRecords  FinancialRecord[]
+  calls             Call[]
+  inventoryMovements InventoryMovement[]
+
+  @@index([firstName])
+  @@index([email])
+  @@index([identificationNumber])
+  @@map("clients")
+}
+
+model Brand {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  orders     Order[]
+  orderItems OrderItem[]
+  inventoryMovements InventoryMovement[]
+
+  @@map("brands")
+}
+
+model BankAccount {
+  id             String   @id @default(uuid())
+  name           String
+  type           String   // BANK, CASH
+  holderName     String   @map("holder_name")
+  bankName       String   @map("bank_name")
+  accountNumber  String   @map("account_number")
+  currentBalance Decimal  @default(0) @map("current_balance") @db.Decimal(10, 2)
+  isActive       Boolean  @default(true) @map("is_active")
+  description    String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  version        Int      @default(1)
+
+  // Relations
+  orders           Order[]
+  financialRecords FinancialRecord[]
+
+  @@index([type])
+  @@index([isActive])
+  @@map("bank_accounts")
+}
+
+// ============================================================================
+// ORDERS AGGREGATE
+// ============================================================================
+
+model Order {
+  id                  String    @id @default(uuid())
+  receiptNumber       String    @unique @map("receipt_number")
+  salesChannel        String    @map("sales_channel") // OFICINA, WHATSAPP, DOMICILIO
+  type                String    // NORMAL, PREVENTA, REPROGRAMACION
+  brandId             String    @map("brand_id")
+  total               Decimal   @db.Decimal(10, 2)
+  realInvoiceTotal    Decimal?  @map("real_invoice_total") @db.Decimal(10, 2)
+  paymentMethod       String    @map("payment_method") // EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE
+  bankAccountId       String?   @map("bank_account_id")
+  transactionDate     DateTime  @map("transaction_date")
+  possibleDeliveryDate DateTime @map("possible_delivery_date")
+  receptionDate       DateTime? @map("reception_date")
+  deliveryDate        DateTime? @map("delivery_date")
+  invoiceNumber       String?   @map("invoice_number")
+  status              String    @default("POR_RECIBIR") // POR_RECIBIR, RECIBIDO_EN_BODEGA, ENTREGADO, CANCELADO
+  clientId            String    @map("client_id")
+  clientName          String    @map("client_name")
+  notes               String?
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  version             Int       @default(1)
+
+  // Relations
+  client             Client              @relation(fields: [clientId], references: [id])
+  brand              Brand               @relation(fields: [brandId], references: [id])
+  bankAccount        BankAccount?        @relation(fields: [bankAccountId], references: [id])
+  items              OrderItem[]
+  payments           OrderPayment[]
+  financialRecords   FinancialRecord[]
+  inventoryMovements InventoryMovement[]
+  calls              Call[]
+  rewardApplications RewardApplication[]
+
+  @@index([clientId])
+  @@index([brandId])
+  @@index([status])
+  @@index([transactionDate])
+  @@index([receiptNumber])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String  @id @default(uuid())
+  orderId     String  @map("order_id")
+  productName String  @map("product_name")
+  quantity    Int
+  unitPrice   Decimal @map("unit_price") @db.Decimal(10, 2)
+  brandId     String  @map("brand_id")
+  brandName   String  @map("brand_name")
+  link        String?
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  brand Brand @relation(fields: [brandId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model OrderPayment {
+  id          String   @id @default(uuid())
+  orderId     String   @map("order_id")
+  amount      Decimal  @db.Decimal(10, 2)
+  method      String   // EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE, CREDITO_CLIENTE
+  reference   String?
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_payments")
+}
+
+// ============================================================================
+// FINANCIAL RECORD AGGREGATE (UNIFICADO)
+// ============================================================================
+
+model FinancialRecord {
+  id              String   @id @default(uuid())
+  type            String   // PAYMENT, ADJUSTMENT, EXPENSE
+  referenceNumber String   @unique @map("reference_number")
+  amount          Decimal  @db.Decimal(10, 2)
+  date            DateTime
+  
+  // Audit Trail
+  clientId        String   @map("client_id")
+  clientName      String   @map("client_name")
+  orderId         String?  @map("order_id")
+  createdBy       String   @map("created_by")
+  notes           String?
+  
+  // Movement
+  bankAccountId   String   @map("bank_account_id")
+  source          String   // ORDER_PAYMENT, MANUAL, ADJUSTMENT
+  paymentMethod   String?  @map("payment_method")
+  movementType    String   @map("movement_type") // INCOME, EXPENSE
+  
+  // Metadata
+  createdAt       DateTime @default(now()) @map("created_at")
+  version         Int      @default(1)
+
+  // Relations
+  client      Client       @relation(fields: [clientId], references: [id])
+  order       Order?       @relation(fields: [orderId], references: [id])
+  bankAccount BankAccount  @relation(fields: [bankAccountId], references: [id])
+
+  @@index([clientId])
+  @@index([orderId])
+  @@index([bankAccountId])
+  @@index([date])
+  @@index([referenceNumber])
+  @@map("financial_records")
+}
+
+// ============================================================================
+// CLIENT ACCOUNT AGGREGATE
+// ============================================================================
+
+model ClientAccount {
+  id                   String   @id @default(uuid())
+  clientId             String   @unique @map("client_id")
+  totalCreditAvailable Decimal  @default(0) @map("total_credit_available") @db.Decimal(10, 2)
+  totalRewardPoints    Int      @default(0) @map("total_reward_points")
+  totalOrders          Int      @default(0) @map("total_orders")
+  totalSpent           Decimal  @default(0) @map("total_spent") @db.Decimal(10, 2)
+  rewardLevel          String   @default("BRONCE") @map("reward_level") // BRONCE, PLATA, ORO, PLATINO
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  version              Int      @default(1)
+
+  // Relations
+  client             Client              @relation(fields: [clientId], references: [id])
+  credits            ClientCredit[]
+  rewardApplications RewardApplication[]
+
+  @@map("client_accounts")
+}
+
+model ClientCredit {
+  id                  String    @id @default(uuid())
+  clientAccountId     String    @map("client_account_id")
+  amount              Decimal   @db.Decimal(10, 2)
+  remainingAmount     Decimal   @map("remaining_amount") @db.Decimal(10, 2)
+  originTransactionId String    @unique @map("origin_transaction_id")
+  originOrderId       String?   @map("origin_order_id")
+  status              String    @default("AVAILABLE") // AVAILABLE, USED, EXPIRED
+  createdAt           DateTime  @default(now()) @map("created_at")
+  usedAt              DateTime? @map("used_at")
+
+  // Relations
+  clientAccount ClientAccount @relation(fields: [clientAccountId], references: [id])
+
+  @@index([clientAccountId])
+  @@index([status])
+  @@map("client_credits")
+}
+
+model RewardApplication {
+  id              String   @id @default(uuid())
+  clientAccountId String   @map("client_account_id")
+  orderId         String   @unique @map("order_id")
+  pointsEarned    Int      @map("points_earned")
+  appliedAt       DateTime @default(now()) @map("applied_at")
+
+  // Relations
+  clientAccount ClientAccount @relation(fields: [clientAccountId], references: [id])
+  order         Order         @relation(fields: [orderId], references: [id])
+
+  @@index([clientAccountId])
+  @@map("reward_applications")
+}
+
+// ============================================================================
+// INVENTORY AGGREGATE
+// ============================================================================
+
+model InventoryMovement {
+  id        String   @id @default(uuid())
+  orderId   String   @map("order_id")
+  clientId  String   @map("client_id")
+  brandId   String   @map("brand_id")
+  type      String   // ENTRY, DELIVERED
+  createdBy String   @map("created_by")
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  order  Order  @relation(fields: [orderId], references: [id])
+  client Client @relation(fields: [clientId], references: [id])
+  brand  Brand  @relation(fields: [brandId], references: [id])
+
+  @@index([orderId])
+  @@index([type])
+  @@map("inventory_movements")
+}
+
+// ============================================================================
+// CALLS & TRACKING
+// ============================================================================
+
+model Call {
+  id           String    @id @default(uuid())
+  clientId     String    @map("client_id")
+  orderId      String?   @map("order_id")
+  reason       String
+  result       String
+  notes        String?
+  followUpDate DateTime? @map("follow_up_date")
+  createdBy    String    @map("created_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  client Client @relation(fields: [clientId], references: [id])
+  order  Order?  @relation(fields: [orderId], references: [id])
+
+  @@index([clientId])
+  @@index([orderId])
+  @@map("calls")
+}
+
+// ============================================================================
+// USERS & AUTH
+// ============================================================================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("USER") // ADMIN, USER
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
