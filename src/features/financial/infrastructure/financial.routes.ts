@@ -1,43 +1,142 @@
-import { Router } from 'express';
-import { prisma } from '../../../lib/prisma';
+import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaFinancialRecordRepository } from './PrismaFinancialRecordRepository';
-import { authenticate, AuthRequest } from '../../../middleware/auth';
+import { FinancialRecord } from '../domain/FinancialRecord.entity';
+import { authenticate } from '../../../middleware/auth';
 import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
 
 const router = Router();
-const financialRepository = new PrismaFinancialRecordRepository();
+const repository = new PrismaFinancialRecordRepository();
 
-// Get all financial movements
-router.get('/', authenticate, async (req, res, next) => {
+// GET /api/financial-records - Get all with optional filters
+router.get('/', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const filters: any = {};
-    
-    if (req.query.type) filters.movementType = req.query.type;
-    if (req.query.source) filters.source = req.query.source;
-    if (req.query.bankAccountId) filters.bankAccountId = req.query.bankAccountId;
-    if (req.query.clientId) filters.clientId = req.query.clientId;
-    if (req.query.startDate || req.query.endDate) {
-      filters.date = {};
-      if (req.query.startDate) filters.date.gte = new Date(req.query.startDate as string);
-      if (req.query.endDate) filters.date.lte = new Date(req.query.endDate as string);
-    }
+    const { clientId, orderId, bankAccountId, startDate, endDate, type, movementType } = req.query;
 
-    const records = await financialRepository.findAll(filters);
-    const data = records.map(r => r.toJSON());
-    
-    return HttpResponse.ok(res, data);
+    const filters: any = {};
+    if (clientId) filters.clientId = clientId as string;
+    if (orderId) filters.orderId = orderId as string;
+    if (bankAccountId) filters.bankAccountId = bankAccountId as string;
+    if (type) filters.type = type as string;
+    if (movementType) filters.movementType = movementType as string;
+    if (startDate) filters.startDate = new Date(startDate as string);
+    if (endDate) filters.endDate = new Date(endDate as string);
+
+    const records = await repository.findAll(filters);
+    return HttpResponse.ok(res, records.map(r => r.toJSON()));
   } catch (error) {
     next(error);
+    return;
   }
 });
 
-// Create manual financial movement
-router.post('/', authenticate, async (req: AuthRequest, res, next) => {
+// GET /api/financial-records/:id - Get by ID
+router.get('/:id', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    // This will be implemented as a use case later
-    return HttpResponse.created(res, { message: 'Manual movements to be implemented' });
+    const { id } = req.params;
+    const record = await repository.findById(id);
+
+    if (!record) {
+      return res.status(404).json({ error: 'Financial record not found' });
+    }
+
+    return res.json(record.toJSON());
   } catch (error) {
     next(error);
+    return;
+  }
+});
+
+// POST /api/financial-records - Create new record
+router.post('/', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const {
+      type,
+      source,
+      movementType,
+      referenceNumber,
+      amount,
+      date,
+      clientId,
+      clientName,
+      orderId,
+      createdBy,
+      notes,
+      bankAccountId,
+      paymentMethod
+    } = req.body;
+
+    // Validate required fields
+    if (!type || !source || !movementType || !amount || !date || !clientId || !clientName || !createdBy || !bankAccountId) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Generate reference number if not provided
+    const finalReferenceNumber = referenceNumber || await repository.generateReferenceNumber();
+
+    const record = FinancialRecord.create({
+      type,
+      source,
+      movementType,
+      referenceNumber: finalReferenceNumber,
+      amount: Number(amount),
+      date: new Date(date),
+      clientId,
+      clientName,
+      orderId,
+      createdBy,
+      notes,
+      bankAccountId,
+      paymentMethod,
+      createdAt: new Date(),
+      version: 1
+    });
+
+    const saved = await repository.save(record);
+    res.status(201).json(saved.toJSON());
+  } catch (error) {
+    next(error);
+    return;
+  }
+});
+
+// PUT /api/financial-records/:id - Update record
+router.put('/:id', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { amount, notes, date } = req.body;
+
+    const record = await repository.findById(id);
+    if (!record) {
+      return res.status(404).json({ error: 'Financial record not found' });
+    }
+
+    if (amount !== undefined) record.updateAmount(Number(amount));
+    if (notes !== undefined) record.updateNotes(notes);
+    if (date !== undefined) record.updateDate(new Date(date));
+
+    const updated = await repository.update(record);
+    return res.json(updated.toJSON());
+  } catch (error) {
+    next(error);
+    return;
+  }
+});
+
+// DELETE /api/financial-records/:id - Delete record
+router.delete('/:id', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+
+    const record = await repository.findById(id);
+    if (!record) {
+      return res.status(404).json({ error: 'Financial record not found' });
+    }
+
+    await repository.delete(id);
+    return res.status(204).send();
+  } catch (error) {
+    next(error);
+    return;
   }
 });
 

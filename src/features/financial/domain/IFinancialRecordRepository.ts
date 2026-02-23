@@ -1,17 +1,23 @@
 import { FinancialRecord } from './FinancialRecord.entity';
 
-export interface CreateOrderPaymentRecordDTO {
-  orderId: string;
-  clientId: string;
-  clientName: string;
-  amount: number;
-  paymentMethod: string;
-  bankAccountId: string;
-  referenceNumber?: string;
-  notes?: string;
+export interface FinancialRecordFilters {
+  clientId?: string;
+  orderId?: string;
+  bankAccountId?: string;
+  startDate?: Date;
+  endDate?: Date;
+  type?: string;
+  movementType?: string;
 }
 
 export interface IFinancialRecordRepository {
-  createOrderPaymentRecord(dto: CreateOrderPaymentRecordDTO, createdBy: string): Promise<FinancialRecord>;
-  findAll(filters: any): Promise<FinancialRecord[]>;
+  findAll(filters: FinancialRecordFilters): Promise<FinancialRecord[]>;
+  findById(id: string): Promise<FinancialRecord | null>;
+  findByClient(clientId: string): Promise<FinancialRecord[]>;
+  findByOrder(orderId: string): Promise<FinancialRecord[]>;
+  findByDateRange(startDate: Date, endDate: Date): Promise<FinancialRecord[]>;
+  save(record: FinancialRecord): Promise<FinancialRecord>;
+  update(record: FinancialRecord): Promise<FinancialRecord>;
+  delete(id: string): Promise<void>;
+  generateReferenceNumber(): Promise<string>;
 }

@@ -27,7 +27,8 @@ export class PrismaOrderRepository implements IOrderRepository {
       where,
       include: {
         items: true,
-        payments: true
+        payments: true,
+        brand: true
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -40,7 +41,21 @@ export class PrismaOrderRepository implements IOrderRepository {
       where: { id },
       include: {
         items: true,
-        payments: true
+        payments: true,
+        brand: true
+      }
+    });
+
+    return order ? this.toDomain(order) : null;
+  }
+
+  async findByReceiptNumber(receiptNumber: string): Promise<Order | null> {
+    const order = await prisma.order.findUnique({
+      where: { receiptNumber },
+      include: {
+        items: true,
+        payments: true,
+        brand: true
       }
     });
 
@@ -108,6 +123,7 @@ export class PrismaOrderRepository implements IOrderRepository {
         salesChannel: raw.salesChannel,
         type: raw.type,
         brandId: raw.brandId,
+        brandName: raw.brand?.name || 'Sin marca',
         total: Number(raw.total),
         realInvoiceTotal: raw.realInvoiceTotal ? Number(raw.realInvoiceTotal) : undefined,
         paymentMethod: raw.paymentMethod,

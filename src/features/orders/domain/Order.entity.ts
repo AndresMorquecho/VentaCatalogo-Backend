@@ -5,6 +5,7 @@ export interface OrderProps {
   salesChannel: string;
   type: string;
   brandId: string;
+  brandName: string;
   total: number;
   realInvoiceTotal?: number;
   paymentMethod: string;

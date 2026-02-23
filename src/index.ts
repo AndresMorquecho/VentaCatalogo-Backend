@@ -8,17 +8,18 @@ import { requestLogger } from './middleware/requestLogger';
 // Feature-based routes (Hexagonal Architecture)
 import orderRoutes from './features/orders/infrastructure/order.routes';
 import financialRoutes from './features/financial/infrastructure/financial.routes';
+import paymentRoutes from './features/payments/infrastructure/payment.routes';
 
 // Legacy routes (to be migrated)
 import authRouter from './routes/auth.routes';
 import clientsRouter from './routes/clients.routes';
 import brandsRouter from './routes/brands.routes';
 import bankAccountsRouter from './routes/bankAccounts.routes';
-import paymentsRouter from './routes/payments.routes';
 import dashboardRouter from './routes/dashboard.routes';
 import inventoryRouter from './routes/inventory.routes';
 import callsRouter from './routes/calls.routes';
 import rewardsRouter from './routes/rewards.routes';
+import clientCreditsRouter from './routes/clientCredits.routes';
 
 dotenv.config();
 
@@ -35,8 +36,8 @@ app.use(requestLogger);
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
     architecture: 'hexagonal'
   });
@@ -44,18 +45,19 @@ app.get('/health', (_req, res) => {
 
 // API Routes - Feature-based (Hexagonal)
 app.use('/api/orders', orderRoutes);
-app.use('/api/financial-movements', financialRoutes);
+app.use('/api/financial-records', financialRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // API Routes - Legacy (to be migrated)
 app.use('/api/auth', authRouter);
 app.use('/api/clients', clientsRouter);
 app.use('/api/brands', brandsRouter);
 app.use('/api/bank-accounts', bankAccountsRouter);
-app.use('/api/payments', paymentsRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/inventory', inventoryRouter);
 app.use('/api/calls', callsRouter);
 app.use('/api/rewards', rewardsRouter);
+app.use('/api/client-credits', clientCreditsRouter);
 
 // Error handling
 app.use(errorHandler);

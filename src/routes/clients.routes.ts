@@ -64,8 +64,27 @@ router.get('/:id', authenticate, async (req: AuthRequest, res, next) => {
 
 router.post('/', authenticate, async (req: AuthRequest, res, next) => {
   try {
+    // Convert snake_case to camelCase for Prisma
+    const clientData: any = {};
+    if (req.body.identification_type) clientData.identificationType = req.body.identification_type;
+    if (req.body.identification_number) clientData.identificationNumber = req.body.identification_number;
+    if (req.body.first_name) clientData.firstName = req.body.first_name;
+    if (req.body.country) clientData.country = req.body.country;
+    if (req.body.province) clientData.province = req.body.province;
+    if (req.body.city) clientData.city = req.body.city;
+    if (req.body.address) clientData.address = req.body.address;
+    if (req.body.neighborhood) clientData.neighborhood = req.body.neighborhood;
+    if (req.body.sector) clientData.sector = req.body.sector;
+    if (req.body.email) clientData.email = req.body.email;
+    if (req.body.phone1) clientData.phone1 = req.body.phone1;
+    if (req.body.operator1) clientData.operator1 = req.body.operator1;
+    if (req.body.phone2) clientData.phone2 = req.body.phone2;
+    if (req.body.operator2) clientData.operator2 = req.body.operator2;
+    if (req.body.reference) clientData.reference = req.body.reference;
+    if (req.body.is_active !== undefined) clientData.isActive = req.body.is_active;
+
     const client = await prisma.$transaction(async (tx) => {
-      const newClient = await tx.client.create({ data: req.body });
+      const newClient = await tx.client.create({ data: clientData });
       await tx.clientAccount.create({ data: { clientId: newClient.id } });
       return newClient;
     });
@@ -78,20 +97,40 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
 
 router.put('/:id', authenticate, async (req: AuthRequest, res, next) => {
   try {
+    // Convert snake_case to camelCase for Prisma
+    const data: any = {};
+    if (req.body.identification_type !== undefined) data.identificationType = req.body.identification_type;
+    if (req.body.identification_number !== undefined) data.identificationNumber = req.body.identification_number;
+    if (req.body.first_name !== undefined) data.firstName = req.body.first_name;
+    if (req.body.country !== undefined) data.country = req.body.country;
+    if (req.body.province !== undefined) data.province = req.body.province;
+    if (req.body.city !== undefined) data.city = req.body.city;
+    if (req.body.address !== undefined) data.address = req.body.address;
+    if (req.body.neighborhood !== undefined) data.neighborhood = req.body.neighborhood;
+    if (req.body.sector !== undefined) data.sector = req.body.sector;
+    if (req.body.email !== undefined) data.email = req.body.email;
+    if (req.body.phone1 !== undefined) data.phone1 = req.body.phone1;
+    if (req.body.operator1 !== undefined) data.operator1 = req.body.operator1;
+    if (req.body.phone2 !== undefined) data.phone2 = req.body.phone2;
+    if (req.body.operator2 !== undefined) data.operator2 = req.body.operator2;
+    if (req.body.reference !== undefined) data.reference = req.body.reference;
+    if (req.body.is_active !== undefined) data.isActive = req.body.is_active;
+    data.updatedAt = new Date();
+
     const client = await prisma.client.update({
       where: { id: req.params.id },
-      data: { ...req.body, updatedAt: new Date() }
+      data
     });
     
     // Sync client name if changed
-    if (req.body.firstName) {
+    if (data.firstName) {
       await prisma.order.updateMany({
         where: { clientId: req.params.id },
-        data: { clientName: req.body.firstName }
+        data: { clientName: data.firstName }
       });
       await prisma.financialRecord.updateMany({
         where: { clientId: req.params.id },
-        data: { clientName: req.body.firstName }
+        data: { clientName: data.firstName }
       });
     }
     

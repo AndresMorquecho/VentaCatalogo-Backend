@@ -290,6 +290,31 @@ model InventoryMovement {
 }
 
 // ============================================================================
+// CASH CLOSURE AGGREGATE
+// ============================================================================
+
+model CashClosure {
+  id            String   @id @default(uuid())
+  fromDate      DateTime @map("from_date")
+  toDate        DateTime @map("to_date")
+  notes         String?
+  totalIncome   Decimal  @map("total_income") @db.Decimal(10, 2)
+  totalExpense  Decimal  @map("total_expense") @db.Decimal(10, 2)
+  netTotal      Decimal  @map("net_total") @db.Decimal(10, 2)
+  movementCount Int      @map("movement_count")
+  closedBy      String   @map("closed_by")
+  closedAt      DateTime @default(now()) @map("closed_at")
+  
+  // Detailed report stored as JSON
+  detailedReport Json?   @map("detailed_report")
+
+  @@index([fromDate])
+  @@index([toDate])
+  @@index([closedAt])
+  @@map("cash_closures")
+}
+
+// ============================================================================
 // CALLS & TRACKING
 // ============================================================================
 

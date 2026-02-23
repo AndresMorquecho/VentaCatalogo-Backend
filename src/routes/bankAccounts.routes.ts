@@ -10,7 +10,14 @@ router.get('/', authenticate, async (req, res, next) => {
       where: { isActive: true },
       orderBy: { name: 'asc' }
     });
-    res.json({ success: true, data: accounts });
+
+    // Explicitly convert Decimal to Number for frontend compatibility
+    const formattedAccounts = accounts.map(acc => ({
+      ...acc,
+      currentBalance: Number(acc.currentBalance)
+    }));
+
+    res.json({ success: true, data: formattedAccounts });
   } catch (error) {
     next(error);
   }

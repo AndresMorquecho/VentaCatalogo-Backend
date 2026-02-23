@@ -1,59 +1,115 @@
 import { prisma } from '../../../lib/prisma';
-import { IFinancialRecordRepository, CreateOrderPaymentRecordDTO } from '../domain/IFinancialRecordRepository';
-import { FinancialRecord, FinancialRecordType, FinancialSource, MovementType } from '../domain/FinancialRecord.entity';
+import { IFinancialRecordRepository, FinancialRecordFilters } from '../domain/IFinancialRecordRepository';
+import { FinancialRecord, FinancialRecordType, FinancialSource, MovementType, PaymentMethod } from '../domain/FinancialRecord.entity';
+import { Prisma } from '@prisma/client';
 
 export class PrismaFinancialRecordRepository implements IFinancialRecordRepository {
-  async createOrderPaymentRecord(dto: CreateOrderPaymentRecordDTO, createdBy: string): Promise<FinancialRecord> {
-    const refNumber = dto.referenceNumber || `PAY-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  async findAll(filters: FinancialRecordFilters): Promise<FinancialRecord[]> {
+    const where: Prisma.FinancialRecordWhereInput = {};
 
-    const created = await prisma.$transaction(async (tx) => {
-      // Create financial record
-      const record = await tx.financialRecord.create({
-        data: {
-          type: FinancialRecordType.PAYMENT,
-          referenceNumber: refNumber,
-          amount: dto.amount,
-          date: new Date(),
-          clientId: dto.clientId,
-          clientName: dto.clientName,
-          orderId: dto.orderId,
-          createdBy,
-          notes: dto.notes,
-          bankAccountId: dto.bankAccountId,
-          source: FinancialSource.ORDER_PAYMENT,
-          paymentMethod: dto.paymentMethod,
-          movementType: MovementType.INCOME
-        }
-      });
+    if (filters.clientId) where.clientId = filters.clientId;
+    if (filters.orderId) where.orderId = filters.orderId;
+    if (filters.bankAccountId) where.bankAccountId = filters.bankAccountId;
+    if (filters.type) where.type = filters.type;
+    if (filters.movementType) where.movementType = filters.movementType;
+    
+    if (filters.startDate || filters.endDate) {
+      where.date = {};
+      if (filters.startDate) where.date.gte = filters.startDate;
+      if (filters.endDate) where.date.lte = filters.endDate;
+    }
 
-      // Update bank account balance
-      await tx.bankAccount.update({
-        where: { id: dto.bankAccountId },
-        data: {
-          currentBalance: { increment: dto.amount },
-          updatedAt: new Date()
-        }
-      });
-
-      return record;
-    });
-
-    return this.toDomain(created);
-  }
-
-  async findAll(filters: any): Promise<FinancialRecord[]> {
     const records = await prisma.financialRecord.findMany({
-      where: filters,
+      where,
       orderBy: { date: 'desc' }
     });
 
     return records.map(this.toDomain);
   }
 
+  async findById(id: string): Promise<FinancialRecord | null> {
+    const record = await prisma.financialRecord.findUnique({
+      where: { id }
+    });
+
+    return record ? this.toDomain(record) : null;
+  }
+
+  async findByClient(clientId: string): Promise<FinancialRecord[]> {
+    const records = await prisma.financialRecord.findMany({
+      where: { clientId },
+      orderBy: { date: 'desc' }
+    });
+
+    return records.map(this.toDomain);
+  }
+
+  async findByOrder(orderId: string): Promise<FinancialRecord[]> {
+    const records = await prisma.financialRecord.findMany({
+      where: { orderId },
+      orderBy: { date: 'desc' }
+    });
+
+    return records.map(this.toDomain);
+  }
+
+  async findByDateRange(startDate: Date, endDate: Date): Promise<FinancialRecord[]> {
+    const records = await prisma.financialRecord.findMany({
+      where: {
+        date: {
+          gte: startDate,
+          lte: endDate
+        }
+      },
+      orderBy: { date: 'desc' }
+    });
+
+    return records.map(this.toDomain);
+  }
+
+  async save(record: FinancialRecord): Promise<FinancialRecord> {
+    const data = this.toPersistence(record);
+    
+    const created = await prisma.financialRecord.create({
+      data
+    });
+
+    return this.toDomain(created);
+  }
+
+  async update(record: FinancialRecord): Promise<FinancialRecord> {
+    const data = this.toPersistence(record);
+    
+    const updated = await prisma.financialRecord.update({
+      where: { id: record.id },
+      data
+    });
+
+    return this.toDomain(updated);
+  }
+
+  async delete(id: string): Promise<void> {
+    await prisma.financialRecord.delete({
+      where: { id }
+    });
+  }
+
+  async generateReferenceNumber(): Promise<string> {
+    const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const count = await prisma.financialRecord.count({
+      where: {
+        referenceNumber: { startsWith: `FIN-${today}` }
+      }
+    });
+    return `FIN-${today}-${String(count + 1).padStart(4, '0')}`;
+  }
+
   private toDomain(raw: any): FinancialRecord {
     return FinancialRecord.create(
       {
         type: raw.type as FinancialRecordType,
+        source: raw.source as FinancialSource,
+        movementType: raw.movementType as MovementType,
         referenceNumber: raw.referenceNumber,
         amount: Number(raw.amount),
         date: raw.date,
@@ -63,13 +119,32 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
         createdBy: raw.createdBy,
         notes: raw.notes,
         bankAccountId: raw.bankAccountId,
-        source: raw.source as FinancialSource,
-        paymentMethod: raw.paymentMethod,
-        movementType: raw.movementType as MovementType,
+        paymentMethod: raw.paymentMethod as PaymentMethod | undefined,
         createdAt: raw.createdAt,
         version: raw.version
       },
       raw.id
     );
+  }
+
+  private toPersistence(record: FinancialRecord): any {
+    const json = record.toJSON();
+    return {
+      id: json.id,
+      type: json.type,
+      source: json.source,
+      movementType: json.movementType,
+      referenceNumber: json.referenceNumber,
+      amount: json.amount,
+      date: json.date,
+      clientId: json.clientId,
+      clientName: json.clientName,
+      orderId: json.orderId,
+      createdBy: json.createdBy,
+      notes: json.notes,
+      bankAccountId: json.bankAccountId,
+      paymentMethod: json.paymentMethod,
+      version: json.version
+    };
   }
 }

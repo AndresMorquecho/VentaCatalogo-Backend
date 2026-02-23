@@ -12,6 +12,7 @@ export interface OrderFilters {
 export interface IOrderRepository {
   findAll(filters: OrderFilters): Promise<Order[]>;
   findById(id: string): Promise<Order | null>;
+  findByReceiptNumber(receiptNumber: string): Promise<Order | null>;
   save(order: Order): Promise<Order>;
   update(order: Order): Promise<Order>;
   delete(id: string): Promise<void>;
