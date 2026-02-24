@@ -33,6 +33,7 @@ export interface CreateOrderDTO {
     method: string;
     reference?: string;
   };
+  creditAmount?: number;
 }
 
 export class CreateOrderUseCase {
@@ -62,16 +63,6 @@ export class CreateOrderUseCase {
         ...item
       }));
 
-      // Create initial payment entity for the order
-      const initialPayment = {
-        id: crypto.randomUUID(),
-        amount: dto.initialPayment.amount,
-        method: dto.initialPayment.method,
-        reference: dto.initialPayment.reference,
-        description: 'Pago inicial',
-        createdAt: new Date()
-      };
-
       // Create order entity
       const order = Order.create(
         {
@@ -90,7 +81,7 @@ export class CreateOrderUseCase {
           clientName: dto.clientName,
           notes: dto.notes,
           items,
-          payments: [initialPayment],
+          payments: [], // Will be populated in transaction
           createdAt: new Date(),
           updatedAt: new Date(),
           version: 1
@@ -98,62 +89,216 @@ export class CreateOrderUseCase {
         crypto.randomUUID()
       );
 
-      // Save order
-      const savedOrder = await this.orderRepository.save(order);
-
-      // Create financial record if there is an initial payment
-      if (dto.initialPayment.amount > 0 && dto.bankAccountId) {
-        // Check for duplicate reference in non-cash payments
-        if (dto.initialPayment.method !== 'EFECTIVO' && dto.initialPayment.reference) {
-          const whereClause: any = {
-            paymentMethod: dto.initialPayment.method,
-            referenceNumber: dto.initialPayment.reference
-          };
-          if (dto.initialPayment.method === 'CHEQUE') {
-            whereClause.bankAccountId = dto.bankAccountId;
+      // Execute everything in a transaction for atomicity
+      const savedOrder = await prisma.$transaction(async (tx) => {
+        // Save order and items
+        const rawOrder = order.toJSON();
+        const createdOrder = await tx.order.create({
+          data: {
+            id: rawOrder.id,
+            receiptNumber: rawOrder.receiptNumber,
+            salesChannel: rawOrder.salesChannel,
+            type: rawOrder.type,
+            brandId: rawOrder.brandId,
+            total: rawOrder.total,
+            paymentMethod: rawOrder.paymentMethod,
+            bankAccountId: rawOrder.bankAccountId,
+            transactionDate: rawOrder.transactionDate,
+            possibleDeliveryDate: rawOrder.possibleDeliveryDate,
+            status: rawOrder.status as any,
+            clientId: rawOrder.clientId,
+            clientName: rawOrder.clientName,
+            notes: rawOrder.notes,
+            version: rawOrder.version,
+            items: {
+              create: order.items
+            }
+          },
+          include: {
+            items: true,
+            payments: true,
+            brand: true
           }
-          const existingRecord = await prisma.financialRecord.findFirst({
-            where: whereClause
+        });
+
+        // Handle initial payment (Cash/Transfer/etc)
+        if (dto.initialPayment.amount > 0) {
+          if (!dto.bankAccountId) {
+            throw new Error('Bank account is required for initial payment');
+          }
+
+          // Reference validation
+          if (dto.initialPayment.method !== 'EFECTIVO' && dto.initialPayment.reference) {
+            const existingRecord = await tx.financialRecord.findFirst({
+              where: {
+                paymentMethod: dto.initialPayment.method,
+                referenceNumber: dto.initialPayment.reference,
+                ...(dto.initialPayment.method === 'CHEQUE' ? { bankAccountId: dto.bankAccountId } : {})
+              }
+            });
+            if (existingRecord) throw new Error(`La referencia ${dto.initialPayment.reference} ya fue utilizada.`);
+          }
+
+          const referenceNumber = dto.initialPayment.method !== 'EFECTIVO' && dto.initialPayment.reference
+            ? dto.initialPayment.reference
+            : `REF-INI-${Date.now()}`;
+
+          // Create order payment record
+          await tx.orderPayment.create({
+            data: {
+              orderId: createdOrder.id,
+              amount: dto.initialPayment.amount,
+              method: dto.initialPayment.method,
+              reference: dto.initialPayment.reference,
+              description: 'Abono inicial'
+            }
           });
 
-          if (existingRecord) {
-            return Result.fail(`La referencia ${dto.initialPayment.reference} ya fue utilizada en otro pago de tipo ${dto.initialPayment.method}.`);
+          // Create financial record
+          await tx.financialRecord.create({
+            data: {
+              type: 'PAYMENT',
+              source: 'ORDER_PAYMENT',
+              movementType: 'INCOME',
+              referenceNumber,
+              amount: dto.initialPayment.amount,
+              date: new Date(),
+              clientId: dto.clientId,
+              clientName: dto.clientName,
+              orderId: createdOrder.id,
+              createdBy,
+              notes: `Abono inicial pedido ${receiptNumber}`,
+              bankAccountId: dto.bankAccountId,
+              paymentMethod: dto.initialPayment.method,
+              version: 1
+            }
+          });
+
+          // Update BankAccount balance
+          await tx.bankAccount.update({
+            where: { id: dto.bankAccountId },
+            data: {
+              currentBalance: { increment: dto.initialPayment.amount },
+              version: { increment: 1 }
+            }
+          });
+        }
+
+        // Handle separate credit usage
+        if (dto.creditAmount && dto.creditAmount > 0) {
+          // Create credit payment in order
+          await tx.orderPayment.create({
+            data: {
+              orderId: createdOrder.id,
+              amount: dto.creditAmount,
+              method: 'CREDITO_CLIENTE',
+              description: 'Saldo a favor aplicado'
+            }
+          });
+
+          // Find a fallback account if none provided to avoid foreign key errors for CREDIT
+          let creditBankAccountId = dto.bankAccountId; // from the dto if exists
+          if (!creditBankAccountId || creditBankAccountId === 'default') {
+            const cashAcc = await tx.bankAccount.findFirst({ where: { type: 'CASH' } });
+            if (cashAcc) creditBankAccountId = cashAcc.id;
+          }
+
+          // Create financial record for credit
+          await tx.financialRecord.create({
+            data: {
+              type: 'PAYMENT',
+              source: 'ORDER_PAYMENT',
+              movementType: 'INCOME',
+              referenceNumber: `REF-CRED-${Date.now()}`,
+              amount: dto.creditAmount,
+              date: new Date(),
+              clientId: dto.clientId,
+              clientName: dto.clientName,
+              orderId: createdOrder.id,
+              createdBy,
+              notes: `Saldo a favor aplicado al pedido ${receiptNumber}`,
+              bankAccountId: creditBankAccountId!,
+              paymentMethod: 'CREDITO_CLIENTE',
+              version: 1
+            }
+          });
+
+          // REDUCE CLIENT CREDITS
+          const availableCredits = await tx.clientCredit.findMany({
+            where: {
+              clientAccount: { clientId: dto.clientId },
+              status: 'AVAILABLE'
+            },
+            orderBy: { createdAt: 'asc' }
+          });
+
+          let remainingToSubtract = dto.creditAmount;
+          for (const credit of availableCredits) {
+            if (remainingToSubtract <= 0) break;
+            const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
+
+            await tx.clientCredit.update({
+              where: { id: credit.id },
+              data: {
+                remainingAmount: { decrement: amountToSubtract },
+                status: Number(credit.remainingAmount) - amountToSubtract <= 0.01 ? 'USED' : 'AVAILABLE'
+              }
+            });
+            remainingToSubtract -= amountToSubtract;
+          }
+
+          if (remainingToSubtract > 0.01) {
+            throw new Error(`Saldo a favor insuficiente para cubrir $${dto.creditAmount.toFixed(2)}`);
           }
         }
 
-        const referenceNumber = dto.initialPayment.method !== 'EFECTIVO' && dto.initialPayment.reference
-          ? dto.initialPayment.reference
-          : await this.financialRepository.generateReferenceNumber();
-
-        const financialRecord = FinancialRecord.create({
-          type: 'PAYMENT',
-          source: 'ORDER_PAYMENT',
-          movementType: 'INCOME',
-          referenceNumber,
-          amount: dto.initialPayment.amount,
-          date: new Date(),
-          clientId: dto.clientId,
-          clientName: dto.clientName,
-          orderId: savedOrder.id,
-          createdBy,
-          notes: `Abono inicial pedido ${receiptNumber}`,
-          bankAccountId: dto.bankAccountId,
-          paymentMethod: dto.initialPayment.method as any,
-          createdAt: new Date(),
-          version: 1
+        // Fetch final state for mapping
+        return await tx.order.findUnique({
+          where: { id: createdOrder.id },
+          include: { items: true, payments: true, brand: true }
         });
+      });
 
-        await this.financialRepository.save(financialRecord);
+      if (!savedOrder) throw new Error("Failed to retrieve saved order");
 
-        // Update BankAccount balance
-        await this.bankAccountRepository.updateBalance(
-          dto.bankAccountId,
-          dto.initialPayment.amount,
-          'INCOME'
-        );
-      }
+      // Map back to Domain Entity
+      const finalOrder = Order.create({
+        receiptNumber: savedOrder.receiptNumber,
+        salesChannel: savedOrder.salesChannel,
+        type: savedOrder.type,
+        brandId: savedOrder.brandId,
+        brandName: (savedOrder as any).brand?.name || 'Sin marca',
+        total: Number(savedOrder.total),
+        paymentMethod: savedOrder.paymentMethod,
+        bankAccountId: savedOrder.bankAccountId || undefined,
+        transactionDate: savedOrder.transactionDate,
+        possibleDeliveryDate: savedOrder.possibleDeliveryDate,
+        status: savedOrder.status as any,
+        clientId: savedOrder.clientId,
+        clientName: savedOrder.clientName,
+        notes: savedOrder.notes || undefined,
+        items: savedOrder.items.map((i: any) => ({
+          id: i.id,
+          productName: i.productName,
+          quantity: i.quantity,
+          unitPrice: Number(i.unitPrice),
+          brandId: i.brandId,
+          brandName: i.brandName
+        })),
+        payments: savedOrder.payments.map((p: any) => ({
+          id: p.id,
+          amount: Number(p.amount),
+          method: p.method,
+          reference: p.reference || undefined,
+          description: p.description || undefined,
+          createdAt: p.createdAt
+        })),
+        createdAt: savedOrder.createdAt,
+        updatedAt: savedOrder.updatedAt,
+        version: savedOrder.version
+      }, savedOrder.id);
 
-      return Result.ok(savedOrder);
+      return Result.ok(finalOrder);
     } catch (error) {
       console.error('CreateOrderUseCase Error:', error);
       return Result.fail(error instanceof Error ? error.message : 'Failed to create order');

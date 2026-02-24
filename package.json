@@ -11,7 +11,9 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:push": "prisma db push",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "db:clean": "node prisma/run-clean.js",
+    "db:quick-clean": "node prisma/quick-clean.js"
   },
   "keywords": [
     "api",

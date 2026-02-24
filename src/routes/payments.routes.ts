@@ -9,7 +9,7 @@ const financialRepository = new PrismaFinancialRecordRepository();
 
 router.post('/', authenticate, async (req: AuthRequest, res, next) => {
   try {
-    const { orderId, amount, method, referenceNumber, notes, bankAccountId } = req.body;
+    const { orderId, amount, method, referenceNumber, notes, bankAccountId, creditAmount } = req.body;
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -21,31 +21,100 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      // Add payment to order
-      const payment = await tx.orderPayment.create({
-        data: {
-          orderId,
-          amount,
-          method,
-          reference: referenceNumber,
-          description: notes || 'Abono posterior'
+      // 1. Handle regular payment (Cash, Transfer, etc.)
+      let mainPayment = null;
+      if (amount > 0) {
+        if (!bankAccountId) {
+          throw new AppError(400, 'Bank account is required for main payment', 'MISSING_BANK_ACCOUNT');
         }
-      });
 
-      // Create financial record using the repository
-      await financialRepository.createOrderPaymentRecord(
-        {
-          orderId,
-          clientId: order.clientId,
-          clientName: order.clientName,
-          amount,
-          paymentMethod: method,
-          bankAccountId,
-          referenceNumber,
-          notes
-        },
-        req.user!.email
-      );
+        mainPayment = await tx.orderPayment.create({
+          data: {
+            orderId,
+            amount,
+            method,
+            reference: referenceNumber,
+            description: notes || 'Abono posterior'
+          }
+        });
+
+        await financialRepository.createOrderPaymentRecord(
+          {
+            orderId,
+            clientId: order.clientId,
+            clientName: order.clientName,
+            amount,
+            paymentMethod: method,
+            bankAccountId,
+            referenceNumber,
+            notes
+          },
+          req.user!.email,
+          tx
+        );
+      }
+
+      // 2. Handle credit usage
+      let creditPayment = null;
+      if (creditAmount > 0) {
+        // REDUCE CLIENT CREDITS
+        const availableCredits = await tx.clientCredit.findMany({
+          where: {
+            clientAccount: { clientId: order.clientId },
+            status: 'AVAILABLE'
+          },
+          orderBy: { createdAt: 'asc' }
+        });
+
+        let remainingToSubtract = creditAmount;
+        for (const credit of availableCredits) {
+          if (remainingToSubtract <= 0) break;
+          const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
+
+          await tx.clientCredit.update({
+            where: { id: credit.id },
+            data: {
+              remainingAmount: { decrement: amountToSubtract },
+              status: Number(credit.remainingAmount) - amountToSubtract <= 0.01 ? 'USED' : 'AVAILABLE'
+            }
+          });
+          remainingToSubtract -= amountToSubtract;
+        }
+
+        if (remainingToSubtract > 0.01) {
+          throw new AppError(400, `Saldo a favor insuficiente para cubrir $${creditAmount.toFixed(2)}`, 'INSUFFICIENT_CREDIT');
+        }
+
+        creditPayment = await tx.orderPayment.create({
+          data: {
+            orderId,
+            amount: creditAmount,
+            method: 'CREDITO_CLIENTE',
+            description: 'Abono con saldo a favor'
+          }
+        });
+
+        let finalCreditAccId = bankAccountId;
+        if (!finalCreditAccId || finalCreditAccId === 'default') {
+          const cashAcc = await tx.bankAccount.findFirst({ where: { type: 'CASH' } });
+          if (cashAcc) finalCreditAccId = cashAcc.id;
+        }
+
+        await financialRepository.createOrderPaymentRecord(
+          {
+            orderId,
+            clientId: order.clientId,
+            clientName: order.clientName,
+            amount: creditAmount,
+            paymentMethod: 'CREDITO_CLIENTE',
+            bankAccountId: finalCreditAccId!,
+            referenceNumber: `REF-CRED-${Date.now()}`,
+            notes: 'Abono con saldo a favor'
+          },
+          req.user!.email,
+          tx
+        );
+      }
 
       // Get updated order
       const updatedOrder = await tx.order.findUnique({
@@ -53,7 +122,7 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
         include: { payments: true }
       });
 
-      return { payment, order: updatedOrder };
+      return { payment: mainPayment || creditPayment, order: updatedOrder };
     });
 
     res.status(201).json({ success: true, data: result });

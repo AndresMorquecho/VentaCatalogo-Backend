@@ -92,7 +92,8 @@ export class OrderController {
           amount: Number(req.body.deposit || 0),
           method: req.body.payment_method,
           reference: req.body.transaction_reference || ''
-        }
+        },
+        creditAmount: Number(req.body.credit_to_use ?? req.body.creditToUse ?? 0)
       };
 
       const result = await this.createOrderUseCase.execute(dto, req.user!.email);

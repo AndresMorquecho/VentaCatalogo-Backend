@@ -9,13 +9,13 @@ router.get('/', authenticate, async (req: AuthRequest, res, next) => {
   try {
     const search = req.query.search as string;
     const active = req.query.active;
-    
+
     const where: any = {};
     // Only filter by isActive if explicitly provided
     if (active === 'true') where.isActive = true;
     if (active === 'false') where.isActive = false;
     // If active is undefined, don't filter by isActive (show all)
-    
+
     if (search) {
       where.OR = [
         { firstName: { contains: search, mode: 'insensitive' } },
@@ -28,7 +28,7 @@ router.get('/', authenticate, async (req: AuthRequest, res, next) => {
       where,
       orderBy: { createdAt: 'desc' }
     });
-    
+
     console.log(`GET /api/clients - Found ${clients.length} clients`);
     res.json({ success: true, data: clients });
   } catch (error) {
@@ -48,17 +48,18 @@ router.get('/:id', authenticate, async (req: AuthRequest, res, next) => {
         }
       }
     });
-    
+
     if (!client) {
-      return res.status(404).json({ 
-        success: false, 
+      return res.status(404).json({
+        success: false,
         error: { code: 'NOT_FOUND', message: 'Client not found' }
       });
     }
-    
-    res.json({ success: true, data: client });
+
+    return res.json({ success: true, data: client });
   } catch (error) {
     next(error);
+    return;
   }
 });
 
@@ -88,7 +89,7 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
       await tx.clientAccount.create({ data: { clientId: newClient.id } });
       return newClient;
     });
-    
+
     res.status(201).json({ success: true, data: client });
   } catch (error) {
     next(error);
@@ -121,7 +122,7 @@ router.put('/:id', authenticate, async (req: AuthRequest, res, next) => {
       where: { id: req.params.id },
       data
     });
-    
+
     // Sync client name if changed
     if (data.firstName) {
       await prisma.order.updateMany({
@@ -133,7 +134,7 @@ router.put('/:id', authenticate, async (req: AuthRequest, res, next) => {
         data: { clientName: data.firstName }
       });
     }
-    
+
     res.json({ success: true, data: client });
   } catch (error) {
     next(error);

@@ -103,29 +103,64 @@ export class DeliverOrderUseCase {
           }
         });
 
-        // Crear registro financiero (solo si hay cuenta bancaria)
-        if (bankAccountId) {
-          const referenceNumber = data.paymentMethod !== 'EFECTIVO' && data.reference
-            ? data.reference
-            : await this.financialRepository.generateReferenceNumber();
-          await tx.financialRecord.create({
-            data: {
-              type: 'PAYMENT',
-              referenceNumber,
-              amount: data.finalPayment,
-              date: new Date(),
-              clientId: order.clientId,
-              clientName: order.clientName,
-              orderId: order.id,
-              bankAccountId: bankAccountId,
-              source: 'ORDER_PAYMENT',
-              paymentMethod: data.paymentMethod,
-              movementType: 'INCOME',
-              createdBy: userId,
-              notes: data.notes || `Pago final en entrega - Pedido ${order.receiptNumber}`
-            }
+        // Crear registro financiero
+        const isCredit = data.paymentMethod === 'CREDITO_CLIENTE';
+        const referenceNumber = !isCredit && data.paymentMethod !== 'EFECTIVO' && data.reference
+          ? data.reference
+          : `REF-${Date.now()}`;
+
+        let finalBankAccountId = bankAccountId;
+        if (!finalBankAccountId || finalBankAccountId === 'default') {
+          const cashAcc = await tx.bankAccount.findFirst({ where: { type: 'CASH' } });
+          if (cashAcc) finalBankAccountId = cashAcc.id;
+        }
+
+        await tx.financialRecord.create({
+          data: {
+            type: 'PAYMENT',
+            referenceNumber,
+            amount: data.finalPayment,
+            date: new Date(),
+            clientId: order.clientId,
+            clientName: order.clientName,
+            orderId: order.id,
+            bankAccountId: finalBankAccountId!,
+            source: 'ORDER_PAYMENT',
+            paymentMethod: data.paymentMethod,
+            movementType: 'INCOME',
+            createdBy: userId,
+            notes: data.notes || `Pago final en entrega${isCredit ? ' (Crédito)' : ''} - Pedido ${order.receiptNumber}`
+          }
+        });
+
+        if (isCredit) {
+          // REDUCE CLIENT CREDITS
+          const availableCredits = await tx.clientCredit.findMany({
+            where: {
+              clientAccount: { clientId: order.clientId },
+              status: 'AVAILABLE'
+            },
+            orderBy: { createdAt: 'asc' }
           });
 
+          let remainingToSubtract = data.finalPayment;
+          for (const credit of availableCredits) {
+            if (remainingToSubtract <= 0) break;
+            const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
+
+            await tx.clientCredit.update({
+              where: { id: credit.id },
+              data: {
+                remainingAmount: { decrement: amountToSubtract },
+                status: Number(credit.remainingAmount) - amountToSubtract <= 0.01 ? 'USED' : 'AVAILABLE'
+              }
+            });
+            remainingToSubtract -= amountToSubtract;
+          }
+          if (remainingToSubtract > 0.01) {
+            throw new Error(`Saldo a favor insuficiente. Faltan $${remainingToSubtract.toFixed(2)}`);
+          }
+        } else if (bankAccountId) {
           // Actualizar saldo de cuenta bancaria
           await tx.bankAccount.update({
             where: { id: bankAccountId },
@@ -169,14 +204,36 @@ export class DeliverOrderUseCase {
       });
 
       // SISTEMA DE LEALTAD
-      // Calcular puntos ganados
-      let pointsEarned = 0;
-      pointsEarned += Math.floor(effectiveTotal / 10); // 1 punto por cada $10
-      pointsEarned += 5; // +5 puntos base por pedido entregado
+      // 1. Obtener reglas activas
+      const activeRules = await tx.loyaltyRule.findMany({
+        where: { isActive: true }
+      });
 
+      // 2. Calcular puntos ganados basados en reglas
+      let pointsEarned = 0;
       const newPaidAmount = paidAmount + (data.finalPayment || 0);
-      if (newPaidAmount >= effectiveTotal - 0.01) {
-        pointsEarned += 10; // Bonus por pago completo
+      const isFullPayment = newPaidAmount >= effectiveTotal - 0.01;
+
+      if (activeRules.length > 0) {
+        for (const rule of activeRules) {
+          if (rule.type === 'POR_MONTO') {
+            // Ejemplo: 1 punto por cada $10 (condition="10")
+            const divisor = parseFloat(rule.condition || '10');
+            const safeDivisor = isNaN(divisor) || divisor <= 0 ? 10 : divisor;
+            pointsEarned += Math.floor(effectiveTotal / safeDivisor) * rule.pointsValue;
+          } else if (rule.type === 'POR_PEDIDO') {
+            // Ejemplo: 5 puntos fijos por pedido
+            pointsEarned += rule.pointsValue;
+          } else if (rule.type === 'BONUS_PAGO_COMPLETO' && isFullPayment) {
+            // Ejemplo: 10 puntos extra por pagar todo
+            pointsEarned += rule.pointsValue;
+          }
+        }
+      } else {
+        // Fallback a lógica básica si no hay reglas configuradas
+        pointsEarned += Math.floor(effectiveTotal / 10);
+        pointsEarned += 5;
+        if (isFullPayment) pointsEarned += 10;
       }
 
       // Obtener o crear cuenta del cliente

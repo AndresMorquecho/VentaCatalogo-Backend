@@ -11,22 +11,30 @@ export class PaymentController {
         try {
             const orderId = req.body.order_id || req.body.orderId;
             const amount = req.body.amount;
+            const creditAmount = req.body.credit_amount ?? req.body.creditAmount ?? 0;
             const method = req.body.method;
             const referenceNumber = req.body.reference_number || req.body.referenceNumber;
             const bankAccountId = req.body.bank_account_id || req.body.bankAccountId;
             const notes = req.body.notes;
 
-            if (!orderId || amount === undefined || !method || !bankAccountId) {
-                return HttpResponse.badRequest(res, 'Missing required fields: orderId, amount, method, and bankAccountId are required.');
+            if (!orderId || (amount === undefined && creditAmount === undefined)) {
+                return HttpResponse.badRequest(res, 'Missing required fields: orderId and amount (or creditAmount) are required.');
+            }
+
+            console.log("PAYMENT REQ BODY:", req.body);
+
+            if (Number(amount) > 0 && (!method || !bankAccountId)) {
+                return HttpResponse.badRequest(res, 'Missing required fields: method and bankAccountId are required for manual payments.');
             }
 
             const dto = {
                 orderId,
-                amount: Number(amount),
-                method,
+                amount: Number(amount) || 0,
+                method: method || 'EFECTIVO',
                 referenceNumber,
                 bankAccountId,
-                notes
+                notes,
+                creditAmount: Number(creditAmount)
             };
 
             const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.email);

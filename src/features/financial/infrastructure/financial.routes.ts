@@ -92,7 +92,7 @@ router.post('/', authenticate, async (req: Request, res: Response, next: NextFun
     });
 
     const saved = await repository.save(record);
-    res.status(201).json(saved.toJSON());
+    return res.status(201).json(saved.toJSON());
   } catch (error) {
     next(error);
     return;

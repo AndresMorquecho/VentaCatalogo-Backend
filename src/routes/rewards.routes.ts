@@ -40,4 +40,21 @@ router.get('/:clientId', authenticate, async (req, res, next) => {
   }
 });
 
+router.get('/history/all', authenticate, async (req, res, next) => {
+  try {
+    const history = await prisma.rewardApplication.findMany({
+      include: {
+        clientAccount: {
+          include: { client: true }
+        },
+        order: true
+      },
+      orderBy: { appliedAt: 'desc' }
+    });
+    res.json({ success: true, data: history });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

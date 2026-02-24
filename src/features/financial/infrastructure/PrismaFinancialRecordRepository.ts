@@ -12,7 +12,7 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
     if (filters.bankAccountId) where.bankAccountId = filters.bankAccountId;
     if (filters.type) where.type = filters.type;
     if (filters.movementType) where.movementType = filters.movementType;
-    
+
     if (filters.startDate || filters.endDate) {
       where.date = {};
       if (filters.startDate) where.date.gte = filters.startDate;
@@ -69,7 +69,7 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
 
   async save(record: FinancialRecord): Promise<FinancialRecord> {
     const data = this.toPersistence(record);
-    
+
     const created = await prisma.financialRecord.create({
       data
     });
@@ -79,7 +79,7 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
 
   async update(record: FinancialRecord): Promise<FinancialRecord> {
     const data = this.toPersistence(record);
-    
+
     const updated = await prisma.financialRecord.update({
       where: { id: record.id },
       data
@@ -102,6 +102,40 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
       }
     });
     return `FIN-${today}-${String(count + 1).padStart(4, '0')}`;
+  }
+
+  async createOrderPaymentRecord(data: any, createdBy: string, tx?: any): Promise<void> {
+    const client = tx || prisma;
+    const ref = data.referenceNumber || await this.generateReferenceNumber();
+
+    await client.financialRecord.create({
+      data: {
+        type: 'PAYMENT',
+        source: 'ORDER_PAYMENT',
+        movementType: 'INCOME',
+        referenceNumber: ref,
+        amount: data.amount,
+        date: new Date(),
+        clientId: data.clientId,
+        clientName: data.clientName,
+        orderId: data.orderId,
+        createdBy,
+        notes: data.notes || `Abono a pedido`,
+        bankAccountId: data.bankAccountId,
+        paymentMethod: data.paymentMethod,
+        version: 1
+      }
+    });
+
+    if (data.bankAccountId && data.paymentMethod !== 'CREDITO_CLIENTE') {
+      await client.bankAccount.update({
+        where: { id: data.bankAccountId },
+        data: {
+          currentBalance: { increment: data.amount },
+          version: { increment: 1 }
+        }
+      });
+    }
   }
 
   private toDomain(raw: any): FinancialRecord {

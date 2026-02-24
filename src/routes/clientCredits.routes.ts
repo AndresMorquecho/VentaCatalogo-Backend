@@ -12,7 +12,10 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
         const status = req.query.status as string;
 
         const where: any = {};
-        if (clientId) where.clientAccountId = { in: await prisma.clientAccount.findMany({ where: { clientId } }).then(a => a.map(acc => acc.id)) };
+        if (clientId) {
+            const accounts = await prisma.clientAccount.findMany({ where: { clientId } });
+            where.clientAccountId = { in: accounts.map(acc => acc.id) };
+        }
         if (status) where.status = status;
 
         const credits = await prisma.clientCredit.findMany({
@@ -56,6 +59,42 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
         return HttpResponse.created(res, credit);
     } catch (error) {
         return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error creating credit');
+    }
+});
+
+// POST /api/client-credits/:id/use
+router.post('/:id/use', authenticate, async (req: AuthRequest, res) => {
+    try {
+        const { amountToUse } = req.body;
+        const creditId = req.params.id;
+
+        if (amountToUse === undefined || amountToUse <= 0) {
+            return HttpResponse.badRequest(res, 'Invalid amount to use');
+        }
+
+        const credit = await prisma.clientCredit.findUnique({
+            where: { id: creditId }
+        });
+
+        if (!credit) {
+            return HttpResponse.notFound(res, 'Credit not found');
+        }
+
+        if (Number(credit.remainingAmount) < amountToUse) {
+            return HttpResponse.badRequest(res, 'Insufficient credit amount');
+        }
+
+        const updatedCredit = await prisma.clientCredit.update({
+            where: { id: creditId },
+            data: {
+                remainingAmount: { decrement: amountToUse },
+                status: Number(credit.remainingAmount) - amountToUse <= 0.01 ? 'USED' : 'AVAILABLE'
+            }
+        });
+
+        return HttpResponse.ok(res, updatedCredit);
+    } catch (error) {
+        return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error using credit');
     }
 });
 

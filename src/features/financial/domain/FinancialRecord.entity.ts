@@ -3,7 +3,7 @@ import { Entity } from '../../../shared/domain/Entity';
 export type FinancialRecordType = 'PAYMENT' | 'ADJUSTMENT' | 'EXPENSE';
 export type FinancialSource = 'ORDER_PAYMENT' | 'MANUAL' | 'ADJUSTMENT';
 export type MovementType = 'INCOME' | 'EXPENSE';
-export type PaymentMethod = 'EFECTIVO' | 'TRANSFERENCIA' | 'DEPOSITO' | 'CHEQUE';
+export type PaymentMethod = 'EFECTIVO' | 'TRANSFERENCIA' | 'DEPOSITO' | 'CHEQUE' | 'CREDITO_CLIENTE';
 
 export interface FinancialRecordProps {
   type: FinancialRecordType;
@@ -24,12 +24,12 @@ export interface FinancialRecordProps {
 }
 
 export class FinancialRecord extends Entity<FinancialRecordProps> {
-  private constructor(props: FinancialRecordProps, id?: string) {
+  private constructor(props: FinancialRecordProps, id: string) {
     super(props, id);
   }
 
   static create(props: FinancialRecordProps, id?: string): FinancialRecord {
-    return new FinancialRecord(props, id);
+    return new FinancialRecord(props, id || crypto.randomUUID());
   }
 
   get type(): FinancialRecordType {

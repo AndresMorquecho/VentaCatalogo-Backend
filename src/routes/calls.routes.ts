@@ -37,4 +37,27 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
   }
 });
 
+router.put('/:id', authenticate, async (req, res, next) => {
+  try {
+    const call = await prisma.call.update({
+      where: { id: req.params.id },
+      data: req.body
+    });
+    res.json({ success: true, data: call });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete('/:id', authenticate, async (req, res, next) => {
+  try {
+    await prisma.call.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;
