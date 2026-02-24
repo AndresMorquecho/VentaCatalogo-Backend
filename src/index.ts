@@ -19,6 +19,7 @@ import dashboardRouter from './routes/dashboard.routes';
 import inventoryRouter from './routes/inventory.routes';
 import callsRouter from './routes/calls.routes';
 import rewardsRouter from './routes/rewards.routes';
+import loyaltyRouter from './routes/loyalty.routes';
 import clientCreditsRouter from './routes/clientCredits.routes';
 
 dotenv.config();
@@ -57,6 +58,7 @@ app.use('/api/dashboard', dashboardRouter);
 app.use('/api/inventory', inventoryRouter);
 app.use('/api/calls', callsRouter);
 app.use('/api/rewards', rewardsRouter);
+app.use('/api/loyalty', loyaltyRouter);
 app.use('/api/client-credits', clientCreditsRouter);
 
 // Error handling

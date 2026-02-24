@@ -36,10 +36,10 @@ model Client {
   updatedAt            DateTime @updatedAt @map("updated_at")
 
   // Relations
-  orders            Order[]
-  clientAccount     ClientAccount?
-  financialRecords  FinancialRecord[]
-  calls             Call[]
+  orders             Order[]
+  clientAccount      ClientAccount?
+  financialRecords   FinancialRecord[]
+  calls              Call[]
   inventoryMovements InventoryMovement[]
 
   @@index([firstName])
@@ -56,8 +56,8 @@ model Brand {
   createdAt   DateTime @default(now()) @map("created_at")
 
   // Relations
-  orders     Order[]
-  orderItems OrderItem[]
+  orders             Order[]
+  orderItems         OrderItem[]
   inventoryMovements InventoryMovement[]
 
   @@map("brands")
@@ -66,7 +66,7 @@ model Brand {
 model BankAccount {
   id             String   @id @default(uuid())
   name           String
-  type           String   // BANK, CASH
+  type           String // BANK, CASH
   holderName     String   @map("holder_name")
   bankName       String   @map("bank_name")
   accountNumber  String   @map("account_number")
@@ -91,27 +91,27 @@ model BankAccount {
 // ============================================================================
 
 model Order {
-  id                  String    @id @default(uuid())
-  receiptNumber       String    @unique @map("receipt_number")
-  salesChannel        String    @map("sales_channel") // OFICINA, WHATSAPP, DOMICILIO
-  type                String    // NORMAL, PREVENTA, REPROGRAMACION
-  brandId             String    @map("brand_id")
-  total               Decimal   @db.Decimal(10, 2)
-  realInvoiceTotal    Decimal?  @map("real_invoice_total") @db.Decimal(10, 2)
-  paymentMethod       String    @map("payment_method") // EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE
-  bankAccountId       String?   @map("bank_account_id")
-  transactionDate     DateTime  @map("transaction_date")
-  possibleDeliveryDate DateTime @map("possible_delivery_date")
-  receptionDate       DateTime? @map("reception_date")
-  deliveryDate        DateTime? @map("delivery_date")
-  invoiceNumber       String?   @map("invoice_number")
-  status              String    @default("POR_RECIBIR") // POR_RECIBIR, RECIBIDO_EN_BODEGA, ENTREGADO, CANCELADO
-  clientId            String    @map("client_id")
-  clientName          String    @map("client_name")
-  notes               String?
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
-  version             Int       @default(1)
+  id                   String    @id @default(uuid())
+  receiptNumber        String    @unique @map("receipt_number")
+  salesChannel         String    @map("sales_channel") // OFICINA, WHATSAPP, DOMICILIO
+  type                 String // NORMAL, PREVENTA, REPROGRAMACION
+  brandId              String    @map("brand_id")
+  total                Decimal   @db.Decimal(10, 2)
+  realInvoiceTotal     Decimal?  @map("real_invoice_total") @db.Decimal(10, 2)
+  paymentMethod        String    @map("payment_method") // EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE
+  bankAccountId        String?   @map("bank_account_id")
+  transactionDate      DateTime  @map("transaction_date")
+  possibleDeliveryDate DateTime  @map("possible_delivery_date")
+  receptionDate        DateTime? @map("reception_date")
+  deliveryDate         DateTime? @map("delivery_date")
+  invoiceNumber        String?   @map("invoice_number")
+  status               String    @default("POR_RECIBIR") // POR_RECIBIR, RECIBIDO_EN_BODEGA, ENTREGADO, CANCELADO
+  clientId             String    @map("client_id")
+  clientName           String    @map("client_name")
+  notes                String?
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  version              Int       @default(1)
 
   // Relations
   client             Client              @relation(fields: [clientId], references: [id])
@@ -154,7 +154,7 @@ model OrderPayment {
   id          String   @id @default(uuid())
   orderId     String   @map("order_id")
   amount      Decimal  @db.Decimal(10, 2)
-  method      String   // EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE, CREDITO_CLIENTE
+  method      String // EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE, CREDITO_CLIENTE
   reference   String?
   description String?
   createdAt   DateTime @default(now()) @map("created_at")
@@ -172,32 +172,32 @@ model OrderPayment {
 
 model FinancialRecord {
   id              String   @id @default(uuid())
-  type            String   // PAYMENT, ADJUSTMENT, EXPENSE
+  type            String // PAYMENT, ADJUSTMENT, EXPENSE
   referenceNumber String   @unique @map("reference_number")
   amount          Decimal  @db.Decimal(10, 2)
   date            DateTime
-  
+
   // Audit Trail
-  clientId        String   @map("client_id")
-  clientName      String   @map("client_name")
-  orderId         String?  @map("order_id")
-  createdBy       String   @map("created_by")
-  notes           String?
-  
+  clientId   String  @map("client_id")
+  clientName String  @map("client_name")
+  orderId    String? @map("order_id")
+  createdBy  String  @map("created_by")
+  notes      String?
+
   // Movement
-  bankAccountId   String   @map("bank_account_id")
-  source          String   // ORDER_PAYMENT, MANUAL, ADJUSTMENT
-  paymentMethod   String?  @map("payment_method")
-  movementType    String   @map("movement_type") // INCOME, EXPENSE
-  
+  bankAccountId String  @map("bank_account_id")
+  source        String // ORDER_PAYMENT, MANUAL, ADJUSTMENT
+  paymentMethod String? @map("payment_method")
+  movementType  String  @map("movement_type") // INCOME, EXPENSE
+
   // Metadata
-  createdAt       DateTime @default(now()) @map("created_at")
-  version         Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+  version   Int      @default(1)
 
   // Relations
-  client      Client       @relation(fields: [clientId], references: [id])
-  order       Order?       @relation(fields: [orderId], references: [id])
-  bankAccount BankAccount  @relation(fields: [bankAccountId], references: [id])
+  client      Client      @relation(fields: [clientId], references: [id])
+  order       Order?      @relation(fields: [orderId], references: [id])
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id])
 
   @@index([clientId])
   @@index([orderId])
@@ -274,7 +274,7 @@ model InventoryMovement {
   orderId   String   @map("order_id")
   clientId  String   @map("client_id")
   brandId   String   @map("brand_id")
-  type      String   // ENTRY, DELIVERED
+  type      String // ENTRY, DELIVERED
   createdBy String   @map("created_by")
   notes     String?
   createdAt DateTime @default(now()) @map("created_at")
@@ -304,9 +304,9 @@ model CashClosure {
   movementCount Int      @map("movement_count")
   closedBy      String   @map("closed_by")
   closedAt      DateTime @default(now()) @map("closed_at")
-  
+
   // Detailed report stored as JSON
-  detailedReport Json?   @map("detailed_report")
+  detailedReport Json? @map("detailed_report")
 
   @@index([fromDate])
   @@index([toDate])
@@ -331,7 +331,7 @@ model Call {
 
   // Relations
   client Client @relation(fields: [clientId], references: [id])
-  order  Order?  @relation(fields: [orderId], references: [id])
+  order  Order? @relation(fields: [orderId], references: [id])
 
   @@index([clientId])
   @@index([orderId])
@@ -353,4 +353,34 @@ model User {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("users")
+}
+
+// ============================================================================
+// LOYALTY & REWARDS CONFIGURATION
+// ============================================================================
+
+model LoyaltyRule {
+  id          String   @id @default(uuid())
+  name        String
+  type        String // POR_MONTO, POR_PEDIDO, OTRO
+  pointsValue Int      @map("points_value")
+  condition   String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("loyalty_rules")
+}
+
+model LoyaltyPrize {
+  id             String   @id @default(uuid())
+  name           String
+  description    String?
+  type           String // DESCUENTO_PORCENTAJE, ENVIO_GRATIS, DESCUENTO_FIJO, PEDIDO_ESPECIAL
+  pointsRequired Int      @map("points_required")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("loyalty_prizes")
 }

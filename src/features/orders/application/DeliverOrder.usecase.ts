@@ -168,15 +168,75 @@ export class DeliverOrderUseCase {
         }
       });
 
-      // 6. Calcular nuevo saldo pendiente
+      // SISTEMA DE LEALTAD
+      // Calcular puntos ganados
+      let pointsEarned = 0;
+      pointsEarned += Math.floor(effectiveTotal / 10); // 1 punto por cada $10
+      pointsEarned += 5; // +5 puntos base por pedido entregado
+
       const newPaidAmount = paidAmount + (data.finalPayment || 0);
+      if (newPaidAmount >= effectiveTotal - 0.01) {
+        pointsEarned += 10; // Bonus por pago completo
+      }
+
+      // Obtener o crear cuenta del cliente
+      let clientAccount = order.client.clientAccount;
+      if (!clientAccount) {
+        clientAccount = await tx.clientAccount.create({
+          data: {
+            clientId: order.clientId,
+            totalRewardPoints: 0,
+            totalOrders: 0,
+            totalSpent: 0,
+            rewardLevel: 'BRONCE'
+          }
+        });
+      }
+
+      // Actualizar saldos de cuenta
+      const updatedPoints = clientAccount.totalRewardPoints + pointsEarned;
+      const updatedOrders = clientAccount.totalOrders + 1;
+      const updatedSpent = Number(clientAccount.totalSpent) + effectiveTotal;
+
+      // Calcular nuevo nivel
+      let newLevel = 'BRONCE';
+      if (updatedPoints >= 600) newLevel = 'PLATINO';
+      else if (updatedPoints >= 300) newLevel = 'ORO';
+      else if (updatedPoints >= 100) newLevel = 'PLATA';
+
+      await tx.clientAccount.update({
+        where: { id: clientAccount.id },
+        data: {
+          totalRewardPoints: updatedPoints,
+          totalOrders: updatedOrders,
+          totalSpent: updatedSpent,
+          rewardLevel: newLevel,
+          version: { increment: 1 }
+        }
+      });
+
+      // Registrar aplicación de puntos
+      await tx.rewardApplication.create({
+        data: {
+          clientAccountId: clientAccount.id,
+          orderId: order.id,
+          pointsEarned: pointsEarned
+        }
+      });
+
+      // 7. Calcular nuevo saldo pendiente
       const newPendingAmount = effectiveTotal - newPaidAmount;
 
       // Retornar pedido actualizado con cálculos
       return {
         ...updatedOrder,
         paidAmount: newPaidAmount,
-        pendingAmount: newPendingAmount
+        pendingAmount: newPendingAmount,
+        loyalty: {
+          pointsEarned,
+          currentTotalPoints: updatedPoints,
+          newLevel
+        }
       };
     });
   }
