@@ -328,6 +328,7 @@ model Call {
   followUpDate DateTime? @map("follow_up_date")
   createdBy    String    @map("created_by")
   createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
   // Relations
   client Client @relation(fields: [clientId], references: [id])
