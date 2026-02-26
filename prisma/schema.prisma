@@ -109,6 +109,9 @@ model Order {
   clientId             String    @map("client_id")
   clientName           String    @map("client_name")
   notes                String?
+  createdByName        String?   @map("created_by_name")   // Usuario que creó el pedido
+  receivedByName       String?   @map("received_by_name")  // Usuario que recibió en bodega
+  deliveredByName      String?   @map("delivered_by_name") // Usuario que procesó la entrega
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
   version              Int       @default(1)
@@ -329,6 +332,7 @@ model Call {
   notes        String?
   followUpDate DateTime? @map("follow_up_date")
   createdBy    String    @map("created_by")
+  updatedBy    String?   @map("updated_by")  // Usuario que editó por última vez
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
 
@@ -358,6 +362,18 @@ model User {
   redemptions LoyaltyRedemption[] @relation("RedemptionAuthor")
 
   @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  permissions String[] // Array of strings like "orders.view"
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("roles")
 }
 
 // ============================================================================
@@ -406,3 +422,23 @@ model LoyaltyRedemption {
   @@map("loyalty_redemptions")
 }
 
+
+// ============================================================================
+// AUDIT LOGS
+// ============================================================================
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  userName  String   @map("user_name")
+  action    String
+  module    String
+  detail    String
+  severity  String   @default("INFO")
+  timestamp DateTime @default(now())
+  success   Boolean  @default(true)
+
+  @@index([userId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}

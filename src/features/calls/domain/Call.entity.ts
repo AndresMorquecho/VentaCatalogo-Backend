@@ -8,6 +8,7 @@ export interface CallProps {
     notes?: string | null;
     followUpDate?: Date | null;
     createdBy: string;
+    updatedBy?: string | null;
     createdAt: Date;
     updatedAt: Date;
 }

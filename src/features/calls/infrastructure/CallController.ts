@@ -43,7 +43,7 @@ export class CallController {
                 followUpDate: req.body.follow_up_date ? new Date(req.body.follow_up_date) : (req.body.followUpDate ? new Date(req.body.followUpDate) : undefined),
             };
 
-            const result = await this.createCallUseCase.execute(dto, req.user!.email);
+            const result = await this.createCallUseCase.execute(dto, req.user!.username);
 
             if (result.isFailure) {
                 return HttpResponse.badRequest(res, result.error!);
@@ -55,7 +55,7 @@ export class CallController {
         }
     };
 
-    update = async (req: Request, res: Response) => {
+    update = async (req: AuthRequest, res: Response) => {
         try {
             const { id } = req.params;
             const dto = {
@@ -67,7 +67,7 @@ export class CallController {
                 followUpDate: req.body.follow_up_date ? new Date(req.body.follow_up_date) : (req.body.followUpDate ? new Date(req.body.followUpDate) : undefined),
             };
 
-            const result = await this.updateCallUseCase.execute(id, dto);
+            const result = await this.updateCallUseCase.execute(id, dto, req.user!.username);
 
             if (result.isFailure) {
                 return HttpResponse.badRequest(res, result.error!);

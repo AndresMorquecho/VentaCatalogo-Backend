@@ -1,15 +1,19 @@
 import { Router } from 'express';
+// Trigger backend reload
 import { prisma } from '../lib/prisma';
 import bcrypt from 'bcryptjs';
 import { AppError } from '../middleware/errorHandler';
+import { authenticate, authorize, requirePermission } from '../middleware/auth';
 
 const router = Router();
 
+// Protect all user routes - Authentication required
+router.use(authenticate);
+
 // GET all users
-router.get('/', async (req, res, next) => {
+router.get('/', requirePermission('users.view'), async (req, res, next) => {
   try {
     const users = await prisma.user.findMany({
-      where: { isActive: true },
       select: {
         id: true,
         username: true,
@@ -27,7 +31,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // CREATE user
-router.post('/', async (req, res, next) => {
+router.post('/', requirePermission('users.create'), async (req, res, next) => {
   try {
     const { username, password, role } = req.body;
 
@@ -60,17 +64,29 @@ router.post('/', async (req, res, next) => {
 });
 
 // UPDATE user (username, role)
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', requirePermission('users.edit'), async (req, res, next) => {
   try {
     const { id } = req.params;
     const { username, role, isActive } = req.body;
+
+    const existing = await prisma.user.findUnique({ where: { id } });
+    if (!existing) throw new AppError(404, 'User not found', 'NOT_FOUND');
+
+    // Protect ADMIN: Cannot deactivate or change role from ADMIN
+    let finalActive = isActive;
+    let finalRole = role;
+
+    if (existing.role.toUpperCase() === 'ADMIN') {
+      finalActive = true; // Always active
+      finalRole = existing.role; // Role cannot be changed via this endpoint
+    }
 
     const user = await prisma.user.update({
       where: { id },
       data: {
         username,
-        role,
-        isActive
+        role: finalRole,
+        isActive: finalActive
       }
     });
 
@@ -89,10 +105,14 @@ router.put('/:id', async (req, res, next) => {
 });
 
 // CHANGE password
-router.patch('/:id/password', async (req, res, next) => {
+router.patch('/:id/password', requirePermission('users.change_password'), async (req, res, next) => {
   try {
     const { id } = req.params;
     const { password } = req.body;
+
+    if (password.length < 4) {
+      throw new AppError(400, 'La contraseña debe tener al menos 4 caracteres.', 'INVALID_PASSWORD');
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -108,27 +128,65 @@ router.patch('/:id/password', async (req, res, next) => {
 });
 
 // DELETE (soft)
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', requirePermission('users.delete'), async (req, res, next) => {
   try {
     const { id } = req.params;
 
     // Prevent deleting last admin
     const userToDelete = await prisma.user.findUnique({ where: { id } });
-    if (userToDelete?.role === 'ADMIN') {
+    if (userToDelete?.role.toUpperCase() === 'ADMIN') {
       const adminCount = await prisma.user.count({
-        where: { role: 'ADMIN', isActive: true }
+        where: {
+          role: { in: ['ADMIN', 'admin'] },
+          isActive: true
+        }
       });
       if (adminCount <= 1) {
         throw new AppError(400, 'Cannot delete the last administrator', 'LAST_ADMIN');
       }
     }
 
-    await prisma.user.update({
+    try {
+      await prisma.user.delete({ where: { id } });
+      res.json({ success: true, message: 'Usuario eliminado exitosamente' });
+    } catch (dbError: any) {
+      if (dbError.code === 'P2003') {
+        throw new AppError(400, 'El usuario no puede ser eliminado porque tiene registros asociados (ej. fidelización). Desactívalo en su lugar.', 'USER_HAS_RELATIONS');
+      }
+      throw dbError;
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+// TOGGLE status
+router.patch('/:id/toggle-status', requirePermission('users.edit'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const user = await prisma.user.findUnique({ where: { id } });
+
+    if (!user) throw new AppError(404, 'User not found', 'NOT_FOUND');
+
+    // Prevent deactivating last admin
+    if (user.role.toUpperCase() === 'ADMIN' && user.isActive) {
+      const adminCount = await prisma.user.count({
+        where: {
+          role: { in: ['ADMIN', 'admin'] },
+          isActive: true
+        }
+      });
+      if (adminCount <= 1) {
+        throw new AppError(400, 'No se puede desactivar al único administrador activo.', 'LAST_ADMIN');
+      }
+    }
+
+    const updated = await prisma.user.update({
       where: { id },
-      data: { isActive: false }
+      data: { isActive: !user.isActive }
     });
 
-    res.json({ success: true, message: 'User deactivated successfully' });
+    res.json({ success: true, data: updated });
   } catch (error) {
     next(error);
   }

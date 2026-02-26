@@ -5,7 +5,7 @@ import { RegisterOrderPaymentUseCase } from '../application/RegisterOrderPayment
 import { PrismaOrderRepository } from '../../orders/infrastructure/PrismaOrderRepository';
 import { PrismaFinancialRecordRepository } from '../../financial/infrastructure/PrismaFinancialRecordRepository';
 import { PrismaBankAccountRepository } from '../../financial/infrastructure/PrismaBankAccountRepository';
-import { authenticate } from '../../../middleware/auth';
+import { authenticate, requirePermission } from '../../../middleware/auth';
 
 const router = Router();
 
@@ -25,6 +25,6 @@ const registerOrderPaymentUseCase = new RegisterOrderPaymentUseCase(
 const paymentController = new PaymentController(registerOrderPaymentUseCase);
 
 // Routes
-router.post('/', authenticate, paymentController.registerPayment);
+router.post('/', authenticate, requirePermission('payments.create'), paymentController.registerPayment);
 
 export default router;

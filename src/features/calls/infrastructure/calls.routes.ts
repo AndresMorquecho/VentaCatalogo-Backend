@@ -5,7 +5,7 @@ import { CreateCallUseCase } from '../application/CreateCall.usecase';
 import { UpdateCallUseCase } from '../application/UpdateCall.usecase';
 import { DeleteCallUseCase } from '../application/DeleteCall.usecase';
 import { PrismaCallRepository } from './PrismaCallRepository';
-import { authenticate } from '../../../middleware/auth';
+import { authenticate, requirePermission } from '../../../middleware/auth';
 
 const router = Router();
 
@@ -23,9 +23,9 @@ const callController = new CallController(
     deleteCallUseCase
 );
 
-router.get('/', authenticate, callController.getAll);
-router.post('/', authenticate, callController.create);
-router.put('/:id', authenticate, callController.update);
-router.delete('/:id', authenticate, callController.delete);
+router.get('/', authenticate, requirePermission('calls.view'), callController.getAll);
+router.post('/', authenticate, requirePermission('calls.create'), callController.create);
+router.put('/:id', authenticate, requirePermission('calls.create'), callController.update);  // calls.create covers edit too
+router.delete('/:id', authenticate, requirePermission('calls.create'), callController.delete);
 
 export default router;

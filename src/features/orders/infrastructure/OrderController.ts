@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { prisma } from '../../../lib/prisma';
 import { CreateOrderUseCase } from '../application/CreateOrder.usecase';
 import { GetOrdersUseCase } from '../application/GetOrders.usecase';
 import { ReceiveOrderUseCase } from '../application/ReceiveOrder.usecase';
@@ -88,6 +89,7 @@ export class OrderController {
           link: item.link
         })) || [],
         notes: req.body.notes,
+        createdByName: req.user!.username,
         initialPayment: {
           amount: Number(req.body.deposit || 0),
           method: req.body.payment_method,
@@ -96,7 +98,7 @@ export class OrderController {
         creditAmount: Number(req.body.credit_to_use ?? req.body.creditToUse ?? 0)
       };
 
-      const result = await this.createOrderUseCase.execute(dto, req.user!.email);
+      const result = await this.createOrderUseCase.execute(dto, req.user!.username);
 
       if (result.isFailure) {
         return HttpResponse.badRequest(res, result.error!);
@@ -112,56 +114,67 @@ export class OrderController {
     try {
       const { id } = req.params;
 
-      // Find existing order
-      const existingOrder = await this.orderRepository.findById(id);
-      if (!existingOrder) {
+      // Find existing order with full details
+      const order = await prisma.order.findUnique({
+        where: { id },
+        include: { payments: true }
+      });
+
+      if (!order) {
         return HttpResponse.notFound(res, 'Order not found');
       }
 
-      // Ensure brandId is available for items
-      const orderBrandId = req.body.brand_id;
-
-      if (!orderBrandId) {
-        return HttpResponse.badRequest(res, 'Brand ID is required');
+      // 1. BUSINESS RULE: Delivered orders cannot be edited
+      if (order.status === 'ENTREGADO') {
+        return HttpResponse.badRequest(res, 'No se puede editar un pedido que ya ha sido entregado.');
       }
 
-      // Get existing order data
-      const existingData = existingOrder.toJSON();
+      // 2. BUSINESS RULE: Consolidated orders in closed cash periods
+      const lastClosure = await prisma.cashClosure.findFirst({
+        orderBy: { toDate: 'desc' }
+      });
 
-      // Convert snake_case to camelCase and merge with existing data
-      const updatedProps = {
-        receiptNumber: req.body.receipt_number || existingData.receiptNumber,
-        salesChannel: req.body.sales_channel || existingData.salesChannel,
-        type: req.body.type || existingData.type,
-        brandId: orderBrandId,
-        brandName: req.body.brand_name || existingData.brandName,
-        total: req.body.total !== undefined ? Number(req.body.total) : existingData.total,
-        realInvoiceTotal: existingData.realInvoiceTotal,
-        paymentMethod: req.body.payment_method || existingData.paymentMethod,
-        bankAccountId: req.body.bank_account_id || existingData.bankAccountId,
-        transactionDate: req.body.transaction_date ? new Date(req.body.transaction_date) : existingData.transactionDate,
-        possibleDeliveryDate: req.body.possible_delivery_date ? new Date(req.body.possible_delivery_date) : existingData.possibleDeliveryDate,
-        receptionDate: existingData.receptionDate,
-        deliveryDate: existingData.deliveryDate,
-        invoiceNumber: existingData.invoiceNumber,
-        status: req.body.status || existingData.status,
-        clientId: req.body.client_id || existingData.clientId,
-        clientName: req.body.client_name || existingData.clientName,
-        notes: req.body.notes !== undefined ? req.body.notes : existingData.notes,
-        items: existingData.items, // Keep existing items for now
-        payments: existingData.payments, // Keep existing payments
-        createdAt: existingData.createdAt,
+      if (lastClosure && order.transactionDate <= lastClosure.toDate) {
+        return HttpResponse.badRequest(res, 'No se puede editar un pedido de un periodo de caja ya cerrado. Requiere reversión contable.');
+      }
+
+      // 3. BUSINESS RULE: Initial payment protection
+      // If req.body has a new deposit/initial payment amount
+      if (req.body.deposit !== undefined) {
+        // Check if there are more than 1 payment (the initial one)
+        if (order.payments.length > 1) {
+          return HttpResponse.badRequest(res, 'No se puede editar el abono inicial porque ya existen abonos posteriores vinculados a este pedido.');
+        }
+      }
+
+      // Map DTO but keep critical fields protected
+      const updateData: any = {
+        receiptNumber: req.body.receipt_number,
+        salesChannel: req.body.sales_channel,
+        type: req.body.type,
+        brandId: req.body.brand_id,
+        total: req.body.total !== undefined ? Number(req.body.total) : undefined,
+        paymentMethod: req.body.payment_method,
+        bankAccountId: req.body.bank_account_id,
+        transactionDate: req.body.transaction_date ? new Date(req.body.transaction_date) : undefined,
+        possibleDeliveryDate: req.body.possible_delivery_date ? new Date(req.body.possible_delivery_date) : undefined,
+        clientId: req.body.client_id,
+        clientName: req.body.client_name,
+        notes: req.body.notes,
         updatedAt: new Date(),
-        version: existingData.version + 1
+        version: { increment: 1 }
       };
 
-      // Create updated order entity
-      const updatedOrder = Order.create(updatedProps, id);
+      // Remove undefined fields
+      Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
 
-      // Save to repository
-      const savedOrder = await this.orderRepository.update(updatedOrder);
+      const savedOrder = await prisma.order.update({
+        where: { id },
+        data: updateData,
+        include: { items: true, payments: true }
+      });
 
-      return HttpResponse.ok(res, savedOrder.toJSON());
+      return HttpResponse.ok(res, savedOrder);
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to update order');
     }
@@ -171,16 +184,71 @@ export class OrderController {
     try {
       const { id } = req.params;
 
-      // Find existing order
-      const existingOrder = await this.orderRepository.findById(id);
-      if (!existingOrder) {
-        return HttpResponse.notFound(res, 'Order not found');
-      }
+      // 1. Transactional Atomic Rollback & Deletion
+      await prisma.$transaction(async (tx) => {
+        // Find existing order with relations
+        const order = await tx.order.findUnique({
+          where: { id },
+          include: {
+            payments: true,
+            financialRecords: true
+          }
+        });
 
-      // Soft delete (mark as CANCELADO)
-      await this.orderRepository.delete(id);
+        if (!order) {
+          throw new Error('Order not found');
+        }
 
-      return HttpResponse.ok(res, { message: 'Order deleted successfully' });
+        // Integrity Check: Delivered orders cannot be deleted
+        if (order.status === 'ENTREGADO') {
+          throw new Error('No se puede eliminar un pedido que ya ha sido entregado. Realice una devolución si es necesario.');
+        }
+
+        // Integrity Check: Consolidated orders in closed cash periods
+        const lastClosure = await tx.cashClosure.findFirst({
+          orderBy: { toDate: 'desc' }
+        });
+
+        if (lastClosure && order.transactionDate <= lastClosure.toDate) {
+          throw new Error('No se puede eliminar un pedido de un periodo de caja ya cerrado. Requiere reversión contable manual.');
+        }
+
+        // 2. Revert Financial Impacts
+        for (const payment of order.payments) {
+          // If it had a bank account and was income, decrement balance
+          // Note: Source source typically marks if it hit a bank account. 
+          // FinancialRecord has the real movement info.
+          const relatedFinancial = order.financialRecords.filter(fr => fr.bankAccountId);
+
+          for (const fr of relatedFinancial) {
+            // MovementType: INCOME -> Decrement balance
+            if (fr.movementType === 'INCOME') {
+              await tx.bankAccount.update({
+                where: { id: fr.bankAccountId },
+                data: { currentBalance: { decrement: fr.amount }, version: { increment: 1 } }
+              });
+            } else if (fr.movementType === 'EXPENSE') {
+              await tx.bankAccount.update({
+                where: { id: fr.bankAccountId },
+                data: { currentBalance: { increment: fr.amount }, version: { increment: 1 } }
+              });
+            }
+          }
+        }
+
+        // 3. Clear all related records
+        await tx.financialRecord.deleteMany({ where: { orderId: id } });
+        await tx.inventoryMovement.deleteMany({ where: { orderId: id } });
+        await tx.rewardApplication.deleteMany({ where: { orderId: id } });
+        await tx.orderItem.deleteMany({ where: { orderId: id } });
+        await tx.orderPayment.deleteMany({ where: { orderId: id } });
+        await tx.call.updateMany({ where: { orderId: id }, data: { orderId: null } });
+
+        // Final Deletion
+        await tx.order.delete({ where: { id } });
+      });
+
+      return HttpResponse.ok(res, { message: 'Pedido y registros asociados eliminados permanentemente' });
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to delete order');
     }
@@ -203,10 +271,11 @@ export class OrderController {
           : undefined,
         bankAccountId: req.body.bank_account_id || req.body.bankAccountId,
         paymentMethod: req.body.payment_method || req.body.paymentMethod,
-        reference: req.body.reference || req.body.transaction_reference || undefined
+        reference: req.body.reference || req.body.transaction_reference || undefined,
+        receivedByName: req.user!.username
       };
 
-      const result = await this.receiveOrderUseCase.execute(id, dto, req.user!.email);
+      const result = await this.receiveOrderUseCase.execute(id, dto, req.user!.username);
 
       return HttpResponse.ok(res, result);
     } catch (error) {
@@ -240,13 +309,14 @@ export class OrderController {
               : undefined,
             bankAccountId: item.bankAccountId || item.bank_account_id,
             paymentMethod: item.paymentMethod || item.payment_method,
-            reference: item.referenceNumber || item.reference_number || undefined
+            reference: item.referenceNumber || item.reference_number || undefined,
+            receivedByName: req.user!.username
           };
 
           const result = await this.receiveOrderUseCase.execute(
             item.orderId || item.order_id,
             dto,
-            req.user!.email
+            req.user!.username
           );
 
           results.push({
@@ -318,13 +388,14 @@ export class OrderController {
             invoiceNumber: undefined, // Sin número de factura
             abonoRecepcion: undefined,
             bankAccountId: undefined,
-            paymentMethod: undefined
+            paymentMethod: undefined,
+            receivedByName: req.user!.username
           };
 
           const result = await this.receiveOrderUseCase.execute(
             orderId,
             dto,
-            req.user!.email
+            req.user!.username
           );
 
           results.push({
@@ -377,14 +448,101 @@ export class OrderController {
         bankAccountId: req.body.bank_account_id || req.body.bankAccountId,
         paymentMethod: req.body.payment_method || req.body.paymentMethod,
         reference: req.body.reference,
-        notes: req.body.notes
+        notes: req.body.notes,
+        deliveredByName: req.user!.username
       };
 
-      const result = await this.deliverOrderUseCase.execute(id, dto, req.user!.email);
+      const result = await this.deliverOrderUseCase.execute(id, dto, req.user!.username);
 
       return HttpResponse.ok(res, result);
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to deliver order');
+    }
+  };
+
+  reverseReception = async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      await prisma.$transaction(async (tx: any) => {
+        // Find existing order with full details
+        const order = await tx.order.findUnique({
+          where: { id },
+          include: {
+            payments: true,
+            financialRecords: true,
+            inventoryMovements: true
+          }
+        });
+
+        if (!order) {
+          throw new Error('Order not found');
+        }
+
+        // 1. Validations
+        if (order.status === 'ENTREGADO') {
+          throw new Error('No se puede regresar la recepción de un pedido que ya ha sido entregado.');
+        }
+
+        if (order.status !== 'RECIBIDO_EN_BODEGA') {
+          throw new Error('El pedido no está en estado recibido.');
+        }
+
+        // Check consolidation
+        const lastClosure = await tx.cashClosure.findFirst({
+          orderBy: { toDate: 'desc' }
+        });
+
+        if (lastClosure && order.receptionDate && order.receptionDate <= lastClosure.toDate) {
+          throw new Error('No se puede regresar la recepción de un periodo de caja ya cerrado.');
+        }
+
+        // 2. Identify and reversa abono de recepción (Added during reception)
+        const receptionPayments = order.payments.filter((p: any) =>
+          order.receptionDate && p.createdAt.getTime() >= order.receptionDate.getTime() - 10000 // Buffer 10s
+        );
+
+        for (const payment of receptionPayments) {
+          const relatedFr = order.financialRecords.find((fr: any) =>
+            Number(fr.amount) === Number(payment.amount) &&
+            Math.abs(fr.date.getTime() - payment.createdAt.getTime()) < 5000
+          );
+
+          if (relatedFr && relatedFr.bankAccountId) {
+            await tx.bankAccount.update({
+              where: { id: relatedFr.bankAccountId },
+              data: { currentBalance: { decrement: relatedFr.amount }, version: { increment: 1 } }
+            });
+          }
+
+          if (relatedFr) {
+            await tx.financialRecord.delete({ where: { id: relatedFr.id } });
+          }
+          await tx.orderPayment.delete({ where: { id: payment.id } });
+        }
+
+        // 3. Delete inventory movements associated with reception
+        await tx.inventoryMovement.deleteMany({
+          where: { orderId: id, type: 'ENTRY' }
+        });
+
+        // 4. Update Order Status back to POR_RECIBIR
+        await tx.order.update({
+          where: { id },
+          data: {
+            status: 'POR_RECIBIR',
+            receptionDate: null,
+            receivedByName: null,
+            realInvoiceTotal: null,
+            invoiceNumber: null,
+            version: { increment: 1 }
+          }
+        });
+      });
+
+      return HttpResponse.ok(res, { message: 'Recepción regresada exitosamente' });
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to reverse reception');
     }
   };
 }

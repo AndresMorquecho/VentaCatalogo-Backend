@@ -28,6 +28,7 @@ export interface CreateOrderDTO {
     link?: string;
   }>;
   notes?: string;
+  createdByName?: string; // Username del que crea el pedido
   initialPayment: {
     amount: number;
     method: string;
@@ -118,6 +119,7 @@ export class CreateOrderUseCase {
             clientId: rawOrder.clientId,
             clientName: rawOrder.clientName,
             notes: rawOrder.notes,
+            createdByName: dto.createdByName || createdBy || null,
             version: rawOrder.version,
             items: {
               create: order.items

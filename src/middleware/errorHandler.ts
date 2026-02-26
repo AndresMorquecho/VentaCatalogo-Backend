@@ -57,6 +57,28 @@ export const errorHandler = (
     }
   }
 
+  // Prisma Validation Errors
+  if (err instanceof Prisma.PrismaClientValidationError) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Los datos proporcionados son inválidos. Por favor verifique los campos.'
+      }
+    });
+  }
+
+  // Prisma Unknown Errors
+  if (err instanceof Prisma.PrismaClientUnknownRequestError) {
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'DATABASE_ERROR',
+        message: 'Error inesperado en la base de datos.'
+      }
+    });
+  }
+
   // Custom app errors
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({

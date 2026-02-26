@@ -29,13 +29,13 @@ export interface CashClosurePreview {
 }
 
 export class GetCashClosurePreviewUseCase {
-    constructor(private cashClosureRepository: ICashClosureRepository) {}
+    constructor(private cashClosureRepository: ICashClosureRepository) { }
 
     async execute(toDate: Date): Promise<Result<CashClosurePreview>> {
         try {
             const lastClosure = await this.cashClosureRepository.findLastClosure();
             const fromDate = lastClosure ? new Date(lastClosure.toDate.getTime() + 1) : new Date(0);
-            
+
             // Check if this date (ignoring time) is already closed
             const existing = await this.cashClosureRepository.checkClosureExistsForPeriod(fromDate, toDate);
 
@@ -51,7 +51,7 @@ export class GetCashClosurePreviewUseCase {
                 const balance = recs.reduce((sum, r) => {
                     const amt = Number(r.amount);
                     const isCreditApplication = r.paymentMethod === 'CREDITO_CLIENTE';
-                    
+
                     // Only count physical money movements for the balance summary
                     if (isCreditApplication) return sum;
 
@@ -94,9 +94,9 @@ export class GetCashClosurePreviewUseCase {
             const userIds = [...new Set(movements.map(m => m.createdBy))];
             const users = await prisma.user.findMany({
                 where: { id: { in: userIds } },
-                select: { id: true, name: true }
+                select: { id: true, username: true }
             });
-            const userMap = Object.fromEntries(users.map(u => [u.id, u.name]));
+            const userMap = Object.fromEntries(users.map(u => [u.id, u.username]));
 
             let totalIncome = 0;
             let totalExpense = 0;

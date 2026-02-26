@@ -9,35 +9,42 @@ export class PaymentController {
 
     registerPayment = async (req: AuthRequest, res: Response) => {
         try {
-            const orderId = req.body.order_id || req.body.orderId;
+            const orderId = req.body.orderId || req.body.order_id;
             const amount = req.body.amount;
-            const creditAmount = req.body.credit_amount ?? req.body.creditAmount ?? 0;
-            const method = req.body.method;
-            const referenceNumber = req.body.reference_number || req.body.referenceNumber;
-            const bankAccountId = req.body.bank_account_id || req.body.bankAccountId;
+            const creditAmount = req.body.creditAmount ?? req.body.credit_amount;
+            const method = req.body.method || req.body.payment_method;
+            const referenceNumber = req.body.referenceNumber || req.body.reference_number;
+            const bankAccountId = req.body.bankAccountId || req.body.bank_account_id;
             const notes = req.body.notes;
-
-            if (!orderId || (amount === undefined && creditAmount === undefined)) {
-                return HttpResponse.badRequest(res, 'Missing required fields: orderId and amount (or creditAmount) are required.');
-            }
 
             console.log("PAYMENT REQ BODY:", req.body);
 
-            if (Number(amount) > 0 && (!method || !bankAccountId)) {
+            if (!orderId) {
+                return HttpResponse.badRequest(res, 'Missing required field: orderId is required.');
+            }
+
+            const parsedAmount = Number(amount || 0);
+            const parsedCreditAmount = Number(creditAmount || 0);
+
+            if (parsedAmount <= 0 && parsedCreditAmount <= 0) {
+                return HttpResponse.badRequest(res, 'At least one of amount or creditAmount must be greater than zero.');
+            }
+
+            if (parsedAmount > 0 && (!method || !bankAccountId)) {
                 return HttpResponse.badRequest(res, 'Missing required fields: method and bankAccountId are required for manual payments.');
             }
 
             const dto = {
                 orderId,
-                amount: Number(amount) || 0,
+                amount: parsedAmount,
                 method: method || 'EFECTIVO',
                 referenceNumber,
                 bankAccountId,
                 notes,
-                creditAmount: Number(creditAmount)
+                creditAmount: parsedCreditAmount
             };
 
-            const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.email);
+            const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username);
 
             if (result.isFailure) {
                 console.error('[PaymentController] Registration failure:', result.error);

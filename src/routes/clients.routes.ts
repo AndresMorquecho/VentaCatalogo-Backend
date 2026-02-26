@@ -1,20 +1,17 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
-import { authenticate, AuthRequest } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
 
 const router = Router();
 
-// Temporary implementation until Clients feature is migrated to hexagonal architecture
-router.get('/', authenticate, async (req: AuthRequest, res, next) => {
+router.get('/', authenticate, requirePermission('clients.view'), async (req, res, next) => {
   try {
     const search = req.query.search as string;
     const active = req.query.active;
 
     const where: any = {};
-    // Only filter by isActive if explicitly provided
     if (active === 'true') where.isActive = true;
     if (active === 'false') where.isActive = false;
-    // If active is undefined, don't filter by isActive (show all)
 
     if (search) {
       where.OR = [
@@ -36,7 +33,7 @@ router.get('/', authenticate, async (req: AuthRequest, res, next) => {
   }
 });
 
-router.get('/:id', authenticate, async (req: AuthRequest, res, next) => {
+router.get('/:id', authenticate, requirePermission('clients.view'), async (req: any, res, next) => {
   try {
     const client = await prisma.client.findUnique({
       where: { id: req.params.id },
@@ -63,9 +60,8 @@ router.get('/:id', authenticate, async (req: AuthRequest, res, next) => {
   }
 });
 
-router.post('/', authenticate, async (req: AuthRequest, res, next) => {
+router.post('/', authenticate, requirePermission('clients.create'), async (req: any, res, next) => {
   try {
-    // Convert snake_case to camelCase for Prisma
     const clientData: any = {};
     if (req.body.identification_type) clientData.identificationType = req.body.identification_type;
     if (req.body.identification_number) clientData.identificationNumber = req.body.identification_number;
@@ -96,9 +92,8 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
   }
 });
 
-router.put('/:id', authenticate, async (req: AuthRequest, res, next) => {
+router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: any, res, next) => {
   try {
-    // Convert snake_case to camelCase for Prisma
     const data: any = {};
     if (req.body.identification_type !== undefined) data.identificationType = req.body.identification_type;
     if (req.body.identification_number !== undefined) data.identificationNumber = req.body.identification_number;
@@ -123,7 +118,6 @@ router.put('/:id', authenticate, async (req: AuthRequest, res, next) => {
       data
     });
 
-    // Sync client name if changed
     if (data.firstName) {
       await prisma.order.updateMany({
         where: { clientId: req.params.id },
@@ -141,13 +135,42 @@ router.put('/:id', authenticate, async (req: AuthRequest, res, next) => {
   }
 });
 
-router.delete('/:id', authenticate, async (req: AuthRequest, res, next) => {
+router.delete('/:id', authenticate, requirePermission('clients.delete'), async (req: any, res, next) => {
   try {
-    const client = await prisma.client.update({
-      where: { id: req.params.id },
-      data: { isActive: false }
-    });
-    res.json({ success: true, data: client });
+    const { id } = req.params;
+
+    // Check if client has orders
+    const orderCount = await prisma.order.count({ where: { clientId: id } });
+    if (orderCount > 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'REFERENTIAL_INTEGRITY',
+          message: 'No se puede eliminar la empresaria porque tiene pedidos asociados. Desactívela en su lugar.'
+        }
+      });
+    }
+
+    // Check if client has financial records
+    const financialCount = await prisma.financialRecord.count({ where: { clientId: id } });
+    if (financialCount > 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'REFERENTIAL_INTEGRITY',
+          message: 'No se puede eliminar la empresaria porque tiene historial financiero. Desactívela en su lugar.'
+        }
+      });
+    }
+
+    // Perform real deletion (ClientAccount will be orphan if not deleted, but schema has no cascade)
+    // Actually ClientAccount has clientId unique and Client has clientAccount relation.
+    await prisma.$transaction([
+      prisma.clientAccount.deleteMany({ where: { clientId: id } }),
+      prisma.client.delete({ where: { id } })
+    ]);
+
+    return res.json({ success: true, message: 'Empresaria eliminada permanentemente' });
   } catch (error) {
     next(error);
   }

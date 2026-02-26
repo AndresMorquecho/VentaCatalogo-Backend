@@ -9,6 +9,7 @@ export interface ReceiveOrderDTO {
   bankAccountId?: string;
   paymentMethod?: string;
   reference?: string;
+  receivedByName?: string; // Username del que recibe en bodega
 }
 
 export class ReceiveOrderUseCase {
@@ -66,6 +67,7 @@ export class ReceiveOrderUseCase {
           realInvoiceTotal: data.finalTotal,
           invoiceNumber: data.invoiceNumber || null,
           receptionDate: new Date(),
+          receivedByName: data.receivedByName || null,
           updatedAt: new Date(),
           version: { increment: 1 }
         },

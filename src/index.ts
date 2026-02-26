@@ -23,6 +23,8 @@ import loyaltyRouter from './routes/loyalty.routes';
 import clientCreditsRouter from './routes/clientCredits.routes';
 import cashClosureRoutes from './features/cash-closures/infrastructure/cash-closures.routes';
 import usersRouter from './routes/users.routes';
+import rolesRouter from './routes/roles.routes';
+import auditRouter from './routes/audit.routes';
 
 dotenv.config();
 
@@ -66,6 +68,8 @@ app.use('/api/loyalty', loyaltyRouter);
 app.use('/api/client-credits', clientCreditsRouter);
 app.use('/api/cash-closures', cashClosureRoutes);
 app.use('/api/users', usersRouter);
+app.use('/api/roles', rolesRouter);
+app.use('/api/audit', auditRouter);
 
 // Error handling
 app.use(errorHandler);

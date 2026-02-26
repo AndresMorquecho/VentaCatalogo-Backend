@@ -14,14 +14,14 @@ export interface UpdateCallDTO {
 export class UpdateCallUseCase {
     constructor(private callRepository: ICallRepository) { }
 
-    async execute(id: string, data: UpdateCallDTO): Promise<Result<Call>> {
+    async execute(id: string, data: UpdateCallDTO, updatedBy: string): Promise<Result<Call>> {
         try {
             const call = await this.callRepository.findById(id);
             if (!call) {
                 return Result.fail('Llamada no encontrada');
             }
 
-            call.update(data);
+            call.update({ ...data, updatedBy });
             const updatedCall = await this.callRepository.update(call);
             return Result.ok(updatedCall);
         } catch (error) {

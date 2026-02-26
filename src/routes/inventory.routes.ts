@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
-import { authenticate } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
 
 const router = Router();
 
-router.get('/movements', authenticate, async (req, res, next) => {
+router.get('/movements', authenticate, requirePermission('inventory.view'), async (req, res, next) => {
   try {
     const movements = await prisma.inventoryMovement.findMany({
       where: {

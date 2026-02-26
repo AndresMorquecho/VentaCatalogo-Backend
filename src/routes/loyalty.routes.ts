@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
-import { authenticate } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
 
 const router = Router();
 
-router.get('/rules', authenticate, async (req, res, next) => {
+router.get('/rules', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
         const rules = await prisma.loyaltyRule.findMany({
             orderBy: { createdAt: 'desc' }
@@ -15,7 +15,7 @@ router.get('/rules', authenticate, async (req, res, next) => {
     }
 });
 
-router.post('/rules', authenticate, async (req, res, next) => {
+router.post('/rules', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
         const { name, type, pointsValue, points_value, condition, active, isActive } = req.body;
         const rule = await prisma.loyaltyRule.create({
@@ -33,7 +33,7 @@ router.post('/rules', authenticate, async (req, res, next) => {
     }
 });
 
-router.put('/rules/:id', authenticate, async (req, res, next) => {
+router.put('/rules/:id', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
         const { name, type, pointsValue, points_value, condition, active, isActive } = req.body;
         const dataToUpdate: any = {};
@@ -53,7 +53,7 @@ router.put('/rules/:id', authenticate, async (req, res, next) => {
     }
 });
 
-router.delete('/rules/:id', authenticate, async (req, res, next) => {
+router.delete('/rules/:id', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
         await prisma.loyaltyRule.delete({
             where: { id: req.params.id }
@@ -64,7 +64,7 @@ router.delete('/rules/:id', authenticate, async (req, res, next) => {
     }
 });
 
-router.get('/prizes', authenticate, async (req, res, next) => {
+router.get('/prizes', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
         const prizes = await prisma.loyaltyPrize.findMany({
             orderBy: { createdAt: 'desc' }
@@ -75,7 +75,7 @@ router.get('/prizes', authenticate, async (req, res, next) => {
     }
 });
 
-router.post('/prizes', authenticate, async (req, res, next) => {
+router.post('/prizes', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
     try {
         const { name, description, type, pointsRequired, points_required, isActive, is_active } = req.body;
         const prize = await prisma.loyaltyPrize.create({
@@ -93,7 +93,7 @@ router.post('/prizes', authenticate, async (req, res, next) => {
     }
 });
 
-router.put('/prizes/:id', authenticate, async (req, res, next) => {
+router.put('/prizes/:id', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
     try {
         const { name, description, type, pointsRequired, points_required, isActive, is_active } = req.body;
         const dataToUpdate: any = {};
@@ -117,7 +117,7 @@ router.put('/prizes/:id', authenticate, async (req, res, next) => {
     }
 });
 
-router.delete('/prizes/:id', authenticate, async (req, res, next) => {
+router.delete('/prizes/:id', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
     try {
         await prisma.loyaltyPrize.delete({
             where: { id: req.params.id }
@@ -128,14 +128,14 @@ router.delete('/prizes/:id', authenticate, async (req, res, next) => {
     }
 });
 
-router.post('/rules/:id/toggle', authenticate, async (req, res, next) => {
+router.post('/rules/:id/toggle', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
         const rule = await prisma.loyaltyRule.findUnique({ where: { id: req.params.id } });
         if (!rule) {
             res.status(404).json({ success: false, error: 'Regla no encontrada' });
             return;
         }
-        
+
         const toggled = await prisma.loyaltyRule.update({
             where: { id: req.params.id },
             data: { isActive: !rule.isActive }
@@ -146,14 +146,14 @@ router.post('/rules/:id/toggle', authenticate, async (req, res, next) => {
     }
 });
 
-router.post('/prizes/:id/toggle', authenticate, async (req, res, next) => {
+router.post('/prizes/:id/toggle', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
     try {
         const prize = await prisma.loyaltyPrize.findUnique({ where: { id: req.params.id } });
         if (!prize) {
             res.status(404).json({ success: false, error: 'Premio no encontrado' });
             return;
         }
-        
+
         const toggled = await prisma.loyaltyPrize.update({
             where: { id: req.params.id },
             data: { isActive: !prize.isActive }
@@ -164,26 +164,28 @@ router.post('/prizes/:id/toggle', authenticate, async (req, res, next) => {
     }
 });
 
-router.get('/redemptions', authenticate, async (req, res, next) => {
+router.get('/redemptions', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
         const redemptions = await (prisma.loyaltyRedemption as any).findMany({
             include: { author: true },
             orderBy: { date: 'desc' }
         });
-        res.json({ success: true, data: redemptions.map((r: any) => ({
-            ...r,
-            authorName: r.author?.name || 'Sistema'
-        })) });
+        res.json({
+            success: true, data: redemptions.map((r: any) => ({
+                ...r,
+                authorName: r.author?.name || 'Sistema'
+            }))
+        });
     } catch (error) {
         next(error);
     }
 });
 
-router.post('/redeem', authenticate, async (req: any, res, next) => {
+router.post('/redeem', authenticate, requirePermission('loyalty.manage_prizes'), async (req: any, res, next) => {
     try {
         const { clientId, client_id, prizeId, prize_id } = req.body;
         const authorId = req.user?.id;
-        
+
         const targetClientId = clientId ?? client_id;
         const targetPrizeId = prizeId ?? prize_id;
 
@@ -197,7 +199,7 @@ router.post('/redeem', authenticate, async (req: any, res, next) => {
             where: { id: targetClientId },
             include: { clientAccount: true }
         });
-        
+
         if (!client || !client.clientAccount) {
             res.status(404).json({ success: false, error: 'Cliente o cuenta no encontrada' });
             return;
@@ -251,7 +253,7 @@ router.post('/redeem', authenticate, async (req: any, res, next) => {
     }
 });
 
-router.get('/history/:clientId', authenticate, async (req, res, next) => {
+router.get('/history/:clientId', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
         const history = await prisma.rewardApplication.findMany({
             where: {

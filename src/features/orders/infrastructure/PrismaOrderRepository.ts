@@ -64,7 +64,7 @@ export class PrismaOrderRepository implements IOrderRepository {
 
   async save(order: Order): Promise<Order> {
     const data = this.toPersistence(order);
-    
+
     const created = await prisma.order.create({
       data: {
         ...data,
@@ -86,7 +86,7 @@ export class PrismaOrderRepository implements IOrderRepository {
 
   async update(order: Order): Promise<Order> {
     const data = this.toPersistence(order);
-    
+
     const updated = await prisma.order.update({
       where: { id: order.id },
       data,
@@ -137,6 +137,9 @@ export class PrismaOrderRepository implements IOrderRepository {
         clientId: raw.clientId,
         clientName: raw.clientName,
         notes: raw.notes,
+        createdByName: raw.createdByName || undefined,
+        receivedByName: raw.receivedByName || undefined,
+        deliveredByName: raw.deliveredByName || undefined,
         items: raw.items.map((item: any) => ({
           id: item.id,
           productName: item.productName,
@@ -183,6 +186,9 @@ export class PrismaOrderRepository implements IOrderRepository {
       clientId: json.clientId,
       clientName: json.clientName,
       notes: json.notes,
+      createdByName: json.createdByName,
+      receivedByName: json.receivedByName,
+      deliveredByName: json.deliveredByName,
       updatedAt: json.updatedAt,
       version: json.version
     };

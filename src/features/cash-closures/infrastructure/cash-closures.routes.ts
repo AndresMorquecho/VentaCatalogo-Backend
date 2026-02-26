@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate, authorize } from '../../../middleware/auth';
+import { authenticate, authorize, requirePermission } from '../../../middleware/auth';
 import { CashClosureController } from './CashClosureController';
 import { GetCashClosuresUseCase } from '../application/GetCashClosures.usecase';
 import { CreateCashClosureUseCase } from '../application/CreateCashClosure.usecase';
@@ -22,10 +22,10 @@ const controller = new CashClosureController(
 );
 
 // Routes
-router.get('/', authenticate, (req: any, res, next) => controller.getAll(req, res, next));
-router.get('/preview', authenticate, (req: any, res, next) => controller.getPreview(req, res, next));
-router.get('/:id', authenticate, (req: any, res, next) => controller.getById(req, res, next));
-router.post('/', authenticate, (req: any, res, next) => controller.create(req, res, next));
+router.get('/', authenticate, requirePermission('cash_closure.view'), (req: any, res, next) => controller.getAll(req, res, next));
+router.get('/preview', authenticate, requirePermission('cash_closure.view'), (req: any, res, next) => controller.getPreview(req, res, next));
+router.get('/:id', authenticate, requirePermission('cash_closure.view'), (req: any, res, next) => controller.getById(req, res, next));
+router.post('/', authenticate, requirePermission('cash_closure.close'), (req: any, res, next) => controller.create(req, res, next));
 router.delete('/:id', authenticate, authorize('ADMIN'), (req: any, res, next) => controller.delete(req, res, next));
 
 export default router;

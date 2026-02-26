@@ -7,7 +7,7 @@ import { DeliverOrderUseCase } from '../application/DeliverOrder.usecase';
 import { PrismaOrderRepository } from './PrismaOrderRepository';
 import { PrismaFinancialRecordRepository } from '../../financial/infrastructure/PrismaFinancialRecordRepository';
 import { PrismaBankAccountRepository } from '../../financial/infrastructure/PrismaBankAccountRepository';
-import { authenticate } from '../../../middleware/auth';
+import { authenticate, requirePermission } from '../../../middleware/auth';
 
 const router = Router();
 
@@ -31,16 +31,19 @@ const orderController = new OrderController(
   deliverOrderUseCase
 );
 
-// Routes
-router.get('/', authenticate, orderController.getAll);
-router.get('/generate-receipt-number', authenticate, orderController.generateReceiptNumber);
-router.get('/check-receipt/:receiptNumber', authenticate, orderController.checkReceiptExists);
-router.post('/', authenticate, orderController.create);
-router.post('/batch-reception', authenticate, orderController.batchReception);
-router.post('/batch-reception-simple', authenticate, orderController.batchReceptionSimple);
-router.post('/:id/receive', authenticate, orderController.receiveOrder);
-router.post('/:id/deliver', authenticate, orderController.deliverOrder);
-router.put('/:id', authenticate, orderController.update);
-router.delete('/:id', authenticate, orderController.deleteOrder);
+// Routes — READ
+router.get('/', authenticate, requirePermission('orders.view'), orderController.getAll);
+router.get('/generate-receipt-number', authenticate, requirePermission('orders.create'), orderController.generateReceiptNumber);
+router.get('/check-receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.checkReceiptExists);
+
+// Routes — WRITE (granular RBAC)
+router.post('/', authenticate, requirePermission('orders.create'), orderController.create);
+router.post('/batch-reception', authenticate, requirePermission('reception.confirm'), orderController.batchReception);
+router.post('/batch-reception-simple', authenticate, requirePermission('reception.confirm'), orderController.batchReceptionSimple);
+router.post('/:id/receive', authenticate, requirePermission('reception.confirm'), orderController.receiveOrder);
+router.post('/:id/reverse-reception', authenticate, requirePermission('reception.confirm'), orderController.reverseReception);
+router.post('/:id/deliver', authenticate, requirePermission('delivery.confirm'), orderController.deliverOrder);
+router.put('/:id', authenticate, requirePermission('orders.edit'), orderController.update);
+router.delete('/:id', authenticate, requirePermission('orders.delete'), orderController.deleteOrder);
 
 export default router;

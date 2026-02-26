@@ -28,6 +28,7 @@ export class PrismaCallRepository implements ICallRepository {
             notes: r.notes,
             followUpDate: r.followUpDate,
             createdBy: r.createdBy,
+            updatedBy: r.updatedBy || null,
             createdAt: r.createdAt,
             updatedAt: r.updatedAt,
         }, r.id));
@@ -49,6 +50,7 @@ export class PrismaCallRepository implements ICallRepository {
             notes: record.notes,
             followUpDate: record.followUpDate,
             createdBy: record.createdBy,
+            updatedBy: record.updatedBy || null,
             createdAt: record.createdAt,
             updatedAt: record.updatedAt,
         }, record.id);
@@ -76,6 +78,7 @@ export class PrismaCallRepository implements ICallRepository {
             notes: r.notes,
             followUpDate: r.followUpDate,
             createdBy: r.createdBy,
+            updatedBy: r.updatedBy || null,
             createdAt: r.createdAt,
             updatedAt: r.updatedAt,
         }, r.id);
@@ -92,6 +95,7 @@ export class PrismaCallRepository implements ICallRepository {
                 result: data.result,
                 notes: data.notes,
                 followUpDate: data.followUpDate,
+                updatedBy: data.updatedBy || null,
             },
         });
 
@@ -104,6 +108,7 @@ export class PrismaCallRepository implements ICallRepository {
             notes: record.notes,
             followUpDate: record.followUpDate,
             createdBy: record.createdBy,
+            updatedBy: record.updatedBy || null,
             createdAt: record.createdAt,
             updatedAt: record.updatedAt,
         }, record.id);

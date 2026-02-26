@@ -19,6 +19,9 @@ export interface OrderProps {
   clientId: string;
   clientName: string;
   notes?: string;
+  createdByName?: string;
+  receivedByName?: string;
+  deliveredByName?: string;
   items: OrderItem[];
   payments: OrderPayment[];
   createdAt: Date;

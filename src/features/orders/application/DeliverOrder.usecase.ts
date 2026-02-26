@@ -8,6 +8,7 @@ export interface DeliverOrderDTO {
   paymentMethod?: string;
   reference?: string;
   notes?: string;
+  deliveredByName?: string; // Username del que procesa la entrega
 }
 
 export class DeliverOrderUseCase {
@@ -179,6 +180,7 @@ export class DeliverOrderUseCase {
         data: {
           status: 'ENTREGADO',
           deliveryDate: new Date(),
+          deliveredByName: data.deliveredByName || null,
           updatedAt: new Date(),
           version: { increment: 1 }
         },
@@ -216,22 +218,22 @@ export class DeliverOrderUseCase {
 
       if (activeRules.length > 0) {
         let maxPoints = 0;
-        
+
         for (const rule of activeRules) {
           let rulePoints = 0;
-          
+
           if (rule.type === 'POR_MONTO') {
             // Ejemplo: 1 punto por cada $10 (condition="10")
             const divisor = parseFloat(rule.condition || '10');
             const safeDivisor = isNaN(divisor) || divisor <= 0 ? 10 : divisor;
             rulePoints = Math.floor(effectiveTotal / safeDivisor) * rule.pointsValue;
           }
-          
+
           if (rulePoints > maxPoints) {
             maxPoints = rulePoints;
           }
         }
-        
+
         pointsEarned = maxPoints;
       } else {
         // Fallback a lógica básica si no hay reglas configuradas
