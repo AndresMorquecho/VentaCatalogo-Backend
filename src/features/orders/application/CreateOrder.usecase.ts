@@ -50,6 +50,15 @@ export class CreateOrderUseCase {
         return Result.fail('Client ID and Brand ID are required');
       }
 
+      // Validate brand is active
+      const brand = await prisma.brand.findUnique({
+        where: { id: dto.brandId }
+      });
+
+      if (!brand || !brand.isActive) {
+        return Result.fail(`La marca ${brand?.name || ''} no está activa y no puede recibir pedidos.`);
+      }
+
       if (!dto.initialPayment || dto.initialPayment.amount === undefined) {
         return Result.fail('Initial payment information is required');
       }
@@ -130,13 +139,9 @@ export class CreateOrderUseCase {
           // Reference validation
           if (dto.initialPayment.method !== 'EFECTIVO' && dto.initialPayment.reference) {
             const existingRecord = await tx.financialRecord.findFirst({
-              where: {
-                paymentMethod: dto.initialPayment.method,
-                referenceNumber: dto.initialPayment.reference,
-                ...(dto.initialPayment.method === 'CHEQUE' ? { bankAccountId: dto.bankAccountId } : {})
-              }
+              where: { referenceNumber: dto.initialPayment.reference }
             });
-            if (existingRecord) throw new Error(`La referencia ${dto.initialPayment.reference} ya fue utilizada.`);
+            if (existingRecord) throw new Error(`La referencia ${dto.initialPayment.reference} ya fue utilizada en otro pago (${existingRecord.paymentMethod}).`);
           }
 
           const referenceNumber = dto.initialPayment.method !== 'EFECTIVO' && dto.initialPayment.reference

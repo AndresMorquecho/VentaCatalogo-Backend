@@ -46,18 +46,11 @@ export class RegisterOrderPaymentUseCase {
 
             // 2. Validate reference duplicates if not CASH
             if (dto.amount > 0 && dto.method !== 'EFECTIVO' && dto.referenceNumber) {
-                const whereClause: any = {
-                    paymentMethod: dto.method,
-                    referenceNumber: dto.referenceNumber
-                };
-                if (dto.method === 'CHEQUE') {
-                    whereClause.bankAccountId = dto.bankAccountId;
-                }
                 const existing = await prisma.financialRecord.findFirst({
-                    where: whereClause
+                    where: { referenceNumber: dto.referenceNumber }
                 });
                 if (existing) {
-                    return Result.fail(`La referencia ${dto.referenceNumber} ya fue utilizada en otro pago de tipo ${dto.method}.`);
+                    return Result.fail(`La referencia ${dto.referenceNumber} ya fue utilizada en una transacción previa (Método: ${existing.paymentMethod || 'Otro'}).`);
                 }
             }
 

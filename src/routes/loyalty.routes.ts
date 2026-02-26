@@ -17,8 +17,15 @@ router.get('/rules', authenticate, async (req, res, next) => {
 
 router.post('/rules', authenticate, async (req, res, next) => {
     try {
+        const { name, type, pointsValue, points_value, condition, active, isActive } = req.body;
         const rule = await prisma.loyaltyRule.create({
-            data: req.body
+            data: {
+                name,
+                type,
+                pointsValue: Number(pointsValue ?? points_value),
+                condition: condition !== undefined && condition !== null ? String(condition) : null,
+                isActive: isActive ?? active ?? true
+            }
         });
         res.json({ success: true, data: rule });
     } catch (error) {
@@ -28,9 +35,17 @@ router.post('/rules', authenticate, async (req, res, next) => {
 
 router.put('/rules/:id', authenticate, async (req, res, next) => {
     try {
+        const { name, type, pointsValue, points_value, condition, active, isActive } = req.body;
+        const dataToUpdate: any = {};
+        if (name !== undefined) dataToUpdate.name = name;
+        if (type !== undefined) dataToUpdate.type = type;
+        if (pointsValue !== undefined || points_value !== undefined) dataToUpdate.pointsValue = Number(pointsValue ?? points_value);
+        if (condition !== undefined) dataToUpdate.condition = condition !== null ? String(condition) : null;
+        if (isActive !== undefined || active !== undefined) dataToUpdate.isActive = isActive ?? active;
+
         const rule = await prisma.loyaltyRule.update({
             where: { id: req.params.id },
-            data: req.body
+            data: dataToUpdate
         });
         res.json({ success: true, data: rule });
     } catch (error) {
@@ -62,8 +77,15 @@ router.get('/prizes', authenticate, async (req, res, next) => {
 
 router.post('/prizes', authenticate, async (req, res, next) => {
     try {
+        const { name, description, type, pointsRequired, points_required, isActive, is_active } = req.body;
         const prize = await prisma.loyaltyPrize.create({
-            data: req.body
+            data: {
+                name,
+                description,
+                type,
+                pointsRequired: Number(pointsRequired ?? points_required),
+                isActive: isActive ?? is_active ?? true
+            }
         });
         res.json({ success: true, data: prize });
     } catch (error) {
@@ -73,9 +95,21 @@ router.post('/prizes', authenticate, async (req, res, next) => {
 
 router.put('/prizes/:id', authenticate, async (req, res, next) => {
     try {
+        const { name, description, type, pointsRequired, points_required, isActive, is_active } = req.body;
+        const dataToUpdate: any = {};
+        if (name !== undefined) dataToUpdate.name = name;
+        if (description !== undefined) dataToUpdate.description = description;
+        if (type !== undefined) dataToUpdate.type = type;
+        if (pointsRequired !== undefined || points_required !== undefined) {
+            dataToUpdate.pointsRequired = Number(pointsRequired ?? points_required);
+        }
+        if (isActive !== undefined || is_active !== undefined) {
+            dataToUpdate.isActive = isActive ?? is_active;
+        }
+
         const prize = await prisma.loyaltyPrize.update({
             where: { id: req.params.id },
-            data: req.body
+            data: dataToUpdate
         });
         res.json({ success: true, data: prize });
     } catch (error) {
@@ -89,6 +123,150 @@ router.delete('/prizes/:id', authenticate, async (req, res, next) => {
             where: { id: req.params.id }
         });
         res.json({ success: true });
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.post('/rules/:id/toggle', authenticate, async (req, res, next) => {
+    try {
+        const rule = await prisma.loyaltyRule.findUnique({ where: { id: req.params.id } });
+        if (!rule) {
+            res.status(404).json({ success: false, error: 'Regla no encontrada' });
+            return;
+        }
+        
+        const toggled = await prisma.loyaltyRule.update({
+            where: { id: req.params.id },
+            data: { isActive: !rule.isActive }
+        });
+        res.json({ success: true, data: toggled });
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.post('/prizes/:id/toggle', authenticate, async (req, res, next) => {
+    try {
+        const prize = await prisma.loyaltyPrize.findUnique({ where: { id: req.params.id } });
+        if (!prize) {
+            res.status(404).json({ success: false, error: 'Premio no encontrado' });
+            return;
+        }
+        
+        const toggled = await prisma.loyaltyPrize.update({
+            where: { id: req.params.id },
+            data: { isActive: !prize.isActive }
+        });
+        res.json({ success: true, data: toggled });
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.get('/redemptions', authenticate, async (req, res, next) => {
+    try {
+        const redemptions = await (prisma.loyaltyRedemption as any).findMany({
+            include: { author: true },
+            orderBy: { date: 'desc' }
+        });
+        res.json({ success: true, data: redemptions.map((r: any) => ({
+            ...r,
+            authorName: r.author?.name || 'Sistema'
+        })) });
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.post('/redeem', authenticate, async (req: any, res, next) => {
+    try {
+        const { clientId, client_id, prizeId, prize_id } = req.body;
+        const authorId = req.user?.id;
+        
+        const targetClientId = clientId ?? client_id;
+        const targetPrizeId = prizeId ?? prize_id;
+
+        if (!targetClientId || !targetPrizeId) {
+            res.status(400).json({ success: false, error: 'ID de cliente y premio son requeridos' });
+            return;
+        }
+
+        // Find client and account
+        const client = await prisma.client.findUnique({
+            where: { id: targetClientId },
+            include: { clientAccount: true }
+        });
+        
+        if (!client || !client.clientAccount) {
+            res.status(404).json({ success: false, error: 'Cliente o cuenta no encontrada' });
+            return;
+        }
+
+        // Find prize
+        const prize = await prisma.loyaltyPrize.findUnique({
+            where: { id: targetPrizeId }
+        });
+
+        if (!prize || !prize.isActive) {
+            res.status(400).json({ success: false, error: 'Premio inválido o inactivo' });
+            return;
+        }
+
+        if (client.clientAccount.totalRewardPoints < prize.pointsRequired) {
+            res.status(400).json({ success: false, error: 'Puntos insuficientes' });
+            return;
+        }
+
+        // Apply redemption atomically
+        const result = await prisma.$transaction(async (tx) => {
+            // Reset points to 0 as requested: "una vez reclamado los puntos sean 0"
+            await tx.clientAccount.update({
+                where: { id: client.clientAccount!.id },
+                data: {
+                    totalRewardPoints: 0,
+                    version: { increment: 1 }
+                }
+            });
+
+            // Record redemption with authorId
+            const redemption = await (tx.loyaltyRedemption as any).create({
+                data: {
+                    clientId: client.id,
+                    clientName: client.firstName.trim(),
+                    prizeId: prize.id,
+                    prizeName: prize.name,
+                    pointsUsed: prize.pointsRequired,
+                    status: 'COMPLETADO',
+                    authorId: authorId || null
+                }
+            });
+
+            return redemption;
+        });
+
+        res.json({ success: true, data: result });
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.get('/history/:clientId', authenticate, async (req, res, next) => {
+    try {
+        const history = await prisma.rewardApplication.findMany({
+            where: {
+                clientAccount: {
+                    clientId: req.params.clientId
+                }
+            },
+            include: {
+                order: true
+            },
+            orderBy: {
+                appliedAt: 'desc'
+            }
+        });
+        res.json({ success: true, data: history });
     } catch (error) {
         next(error);
     }

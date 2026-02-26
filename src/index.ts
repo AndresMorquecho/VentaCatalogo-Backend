@@ -21,6 +21,8 @@ import callsRoutes from './features/calls/infrastructure/calls.routes';
 import rewardsRouter from './routes/rewards.routes';
 import loyaltyRouter from './routes/loyalty.routes';
 import clientCreditsRouter from './routes/clientCredits.routes';
+import cashClosureRoutes from './features/cash-closures/infrastructure/cash-closures.routes';
+import usersRouter from './routes/users.routes';
 
 dotenv.config();
 
@@ -28,8 +30,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
+const origins = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:5173'];
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: origins,
   credentials: true
 }));
 app.use(express.json());
@@ -60,6 +64,8 @@ app.use('/api/calls', callsRoutes);
 app.use('/api/rewards', rewardsRouter);
 app.use('/api/loyalty', loyaltyRouter);
 app.use('/api/client-credits', clientCreditsRouter);
+app.use('/api/cash-closures', cashClosureRoutes);
+app.use('/api/users', usersRouter);
 
 // Error handling
 app.use(errorHandler);

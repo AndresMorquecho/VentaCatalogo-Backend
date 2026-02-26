@@ -15,8 +15,8 @@ SET session_replication_role = 'replica';
 -- 1. ELIMINAR TABLAS SIN DEPENDENCIAS EXTERNAS
 -- ============================================================================
 
--- Usuarios (no tiene dependencias)
-TRUNCATE TABLE users CASCADE;
+-- Usuarios (PRESERVADOS para poder hacer login)
+-- TRUNCATE TABLE users CASCADE;
 
 -- Reglas de lealtad y premios (no tienen dependencias)
 TRUNCATE TABLE loyalty_rules CASCADE;
@@ -62,6 +62,12 @@ TRUNCATE TABLE client_accounts CASCADE;
 TRUNCATE TABLE financial_records CASCADE;
 
 -- ============================================================================
+-- 7.1. RESETEAR CUENTAS BANCARIAS A 0 (efectivo y bancos del sistema)
+-- ============================================================================
+
+UPDATE bank_accounts SET balance = 0;
+
+-- ============================================================================
 -- 8. ELIMINAR PAGOS DE ÓRDENES (depende de órdenes)
 -- ============================================================================
 
@@ -96,12 +102,14 @@ DECLARE
     client_count INTEGER;
     brand_count INTEGER;
     bank_count INTEGER;
+    user_count INTEGER;
     order_count INTEGER;
     financial_count INTEGER;
 BEGIN
     SELECT COUNT(*) INTO client_count FROM clients;
     SELECT COUNT(*) INTO brand_count FROM brands;
     SELECT COUNT(*) INTO bank_count FROM bank_accounts;
+    SELECT COUNT(*) INTO user_count FROM users;
     SELECT COUNT(*) INTO order_count FROM orders;
     SELECT COUNT(*) INTO financial_count FROM financial_records;
     
@@ -110,7 +118,8 @@ BEGIN
     RAISE NOTICE '============================================';
     RAISE NOTICE 'Clientes restantes: %', client_count;
     RAISE NOTICE 'Marcas restantes: %', brand_count;
-    RAISE NOTICE 'Cuentas bancarias restantes: %', bank_count;
+    RAISE NOTICE 'Cuentas bancarias (balance en 0): %', bank_count;
+    RAISE NOTICE 'Usuarios restantes: %', user_count;
     RAISE NOTICE '--------------------------------------------';
     RAISE NOTICE 'Órdenes eliminadas: %', order_count;
     RAISE NOTICE 'Registros financieros eliminados: %', financial_count;
@@ -140,7 +149,8 @@ COMMIT;
 -- TABLAS PRESERVADAS:
 -- ✓ clients (Clientes)
 -- ✓ brands (Marcas)
--- ✓ bank_accounts (Cuentas bancarias)
+-- ✓ bank_accounts (Cuentas bancarias - balance reseteado a 0)
+-- ✓ users (Usuarios - para poder hacer login)
 --
 -- TABLAS ELIMINADAS:
 -- ✗ orders (Órdenes)
@@ -153,7 +163,6 @@ COMMIT;
 -- ✗ inventory_movements (Movimientos de inventario)
 -- ✗ cash_closures (Cierres de caja)
 -- ✗ calls (Llamadas)
--- ✗ users (Usuarios)
 -- ✗ loyalty_rules (Reglas de lealtad)
 -- ✗ loyalty_prizes (Premios de lealtad)
 -- ============================================================================

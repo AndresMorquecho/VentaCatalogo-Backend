@@ -40,22 +40,23 @@ export class PrismaCallRepository implements ICallRepository {
 
         if (!r) return null;
 
+        const record: any = r;
         return Call.create({
-            clientId: r.clientId,
-            orderId: r.orderId,
-            reason: r.reason,
-            result: r.result,
-            notes: r.notes,
-            followUpDate: r.followUpDate,
-            createdBy: r.createdBy,
-            createdAt: r.createdAt,
-            updatedAt: r.updatedAt,
-        }, r.id);
+            clientId: record.clientId,
+            orderId: record.orderId,
+            reason: record.reason,
+            result: record.result,
+            notes: record.notes,
+            followUpDate: record.followUpDate,
+            createdBy: record.createdBy,
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+        }, record.id);
     }
 
     async save(call: Call): Promise<Call> {
         const data = call.toJSON();
-        const r = await prisma.call.create({
+        const r: any = await prisma.call.create({
             data: {
                 clientId: data.clientId,
                 orderId: data.orderId,
@@ -94,17 +95,18 @@ export class PrismaCallRepository implements ICallRepository {
             },
         });
 
+        const record: any = r;
         return Call.create({
-            clientId: r.clientId,
-            orderId: r.orderId,
-            reason: r.reason,
-            result: r.result,
-            notes: r.notes,
-            followUpDate: r.followUpDate,
-            createdBy: r.createdBy,
-            createdAt: r.createdAt,
-            updatedAt: r.updatedAt,
-        }, r.id);
+            clientId: record.clientId,
+            orderId: record.orderId,
+            reason: record.reason,
+            result: record.result,
+            notes: record.notes,
+            followUpDate: record.followUpDate,
+            createdBy: record.createdBy,
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+        }, record.id);
     }
 
     async delete(id: string): Promise<void> {

@@ -209,31 +209,33 @@ export class DeliverOrderUseCase {
         where: { isActive: true }
       });
 
-      // 2. Calcular puntos ganados basados en reglas
+      // 2. Calcular puntos ganados basados en reglas (Solo se aplica la MEJOR regla para evitar duplicar puntos)
       let pointsEarned = 0;
       const newPaidAmount = paidAmount + (data.finalPayment || 0);
       const isFullPayment = newPaidAmount >= effectiveTotal - 0.01;
 
       if (activeRules.length > 0) {
+        let maxPoints = 0;
+        
         for (const rule of activeRules) {
+          let rulePoints = 0;
+          
           if (rule.type === 'POR_MONTO') {
             // Ejemplo: 1 punto por cada $10 (condition="10")
             const divisor = parseFloat(rule.condition || '10');
             const safeDivisor = isNaN(divisor) || divisor <= 0 ? 10 : divisor;
-            pointsEarned += Math.floor(effectiveTotal / safeDivisor) * rule.pointsValue;
-          } else if (rule.type === 'POR_PEDIDO') {
-            // Ejemplo: 5 puntos fijos por pedido
-            pointsEarned += rule.pointsValue;
-          } else if (rule.type === 'BONUS_PAGO_COMPLETO' && isFullPayment) {
-            // Ejemplo: 10 puntos extra por pagar todo
-            pointsEarned += rule.pointsValue;
+            rulePoints = Math.floor(effectiveTotal / safeDivisor) * rule.pointsValue;
+          }
+          
+          if (rulePoints > maxPoints) {
+            maxPoints = rulePoints;
           }
         }
+        
+        pointsEarned = maxPoints;
       } else {
         // Fallback a lógica básica si no hay reglas configuradas
         pointsEarned += Math.floor(effectiveTotal / 10);
-        pointsEarned += 5;
-        if (isFullPayment) pointsEarned += 10;
       }
 
       // Obtener o crear cuenta del cliente

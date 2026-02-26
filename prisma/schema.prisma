@@ -294,16 +294,18 @@ model InventoryMovement {
 // ============================================================================
 
 model CashClosure {
-  id            String   @id @default(uuid())
-  fromDate      DateTime @map("from_date")
-  toDate        DateTime @map("to_date")
-  notes         String?
-  totalIncome   Decimal  @map("total_income") @db.Decimal(10, 2)
-  totalExpense  Decimal  @map("total_expense") @db.Decimal(10, 2)
-  netTotal      Decimal  @map("net_total") @db.Decimal(10, 2)
-  movementCount Int      @map("movement_count")
-  closedBy      String   @map("closed_by")
-  closedAt      DateTime @default(now()) @map("closed_at")
+  id             String   @id @default(uuid())
+  fromDate       DateTime @map("from_date")
+  toDate         DateTime @map("to_date")
+  notes          String?
+  totalIncome    Decimal  @map("total_income") @db.Decimal(10, 2)
+  totalExpense   Decimal  @map("total_expense") @db.Decimal(10, 2)
+  expectedAmount Decimal  @map("expected_amount") @db.Decimal(10, 2) // Current balance of cash account
+  actualAmount   Decimal  @map("actual_amount") @db.Decimal(10, 2)   // Amount counted by user
+  difference     Decimal  @db.Decimal(10, 2)                        // difference = actual - expected
+  movementCount  Int      @map("movement_count")
+  closedBy       String   @map("closed_by")
+  closedAt       DateTime @default(now()) @map("closed_at")
 
   // Detailed report stored as JSON
   detailedReport Json? @map("detailed_report")
@@ -328,7 +330,7 @@ model Call {
   followUpDate DateTime? @map("follow_up_date")
   createdBy    String    @map("created_by")
   createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
 
   // Relations
   client Client @relation(fields: [clientId], references: [id])
@@ -344,14 +346,16 @@ model Call {
 // ============================================================================
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  role      String   @default("USER") // ADMIN, USER
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id           String    @id @default(uuid())
+  username     String    @unique
+  password     String
+  role         String    @default("USER") // ADMIN, USER, CAJERA, etc.
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  lastAccessAt DateTime? @map("last_access_at")
+
+  redemptions LoyaltyRedemption[] @relation("RedemptionAuthor")
 
   @@map("users")
 }
@@ -385,3 +389,20 @@ model LoyaltyPrize {
 
   @@map("loyalty_prizes")
 }
+
+model LoyaltyRedemption {
+  id             String   @id @default(uuid())
+  clientId       String   @map("client_id")
+  clientName     String   @map("client_name")
+  prizeId        String   @map("prize_id")
+  prizeName      String   @map("prize_name")
+  pointsUsed     Int      @map("points_used")
+  status         String   @default("COMPLETADO") // PENDIENTE, COMPLETADO, CANCELADO
+  date           DateTime @default(now()) @map("date")
+
+  authorId       String?  @map("author_id")
+  author         User?    @relation("RedemptionAuthor", fields: [authorId], references: [id])
+
+  @@map("loyalty_redemptions")
+}
+

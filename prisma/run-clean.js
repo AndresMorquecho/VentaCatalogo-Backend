@@ -52,14 +52,14 @@ async function cleanDatabase() {
     log('Se eliminarán TODOS los datos excepto:', 'yellow');
     log('  ✓ Clientes', 'green');
     log('  ✓ Marcas', 'green');
-    log('  ✓ Cuentas Bancarias', 'green');
+    log('  ✓ Cuentas Bancarias (balance reseteado a 0)', 'green');
+    log('  ✓ Usuarios (para poder hacer login)', 'green');
     log('\nSe eliminarán:', 'red');
     log('  ✗ Todas las órdenes', 'red');
     log('  ✗ Todos los pagos', 'red');
     log('  ✗ Todos los registros financieros', 'red');
     log('  ✗ Todos los movimientos de inventario', 'red');
     log('  ✗ Todas las llamadas', 'red');
-    log('  ✗ Todos los usuarios', 'red');
     log('  ✗ Todas las cuentas de clientes', 'red');
     log('  ✗ Todos los créditos', 'red');
     log('  ✗ Todos los cierres de caja', 'red');
@@ -106,9 +106,9 @@ async function cleanDatabase() {
     // Ejecutar eliminaciones en orden correcto
     log('\n🗑️  Eliminando datos...', 'blue');
 
-    // 1. Usuarios
-    log('  → Eliminando usuarios...', 'yellow');
-    await prisma.user.deleteMany({});
+    // 1. Usuarios (PRESERVADOS - comentado)
+    // log('  → Eliminando usuarios...', 'yellow');
+    // await prisma.user.deleteMany({});
 
     // 2. Reglas de lealtad y premios
     log('  → Eliminando reglas de lealtad...', 'yellow');
@@ -143,6 +143,12 @@ async function cleanDatabase() {
     log('  → Eliminando registros financieros...', 'yellow');
     await prisma.financialRecord.deleteMany({});
 
+    // 9.1. Resetear cuentas bancarias a 0
+    log('  → Reseteando cuentas bancarias a 0...', 'yellow');
+    await prisma.bankAccount.updateMany({
+      data: { balance: 0 }
+    });
+
     // 10. Pagos de órdenes
     log('  → Eliminando pagos de órdenes...', 'yellow');
     await prisma.orderPayment.deleteMany({});
@@ -171,7 +177,8 @@ async function cleanDatabase() {
     log('\nRegistros preservados:', 'cyan');
     log(`  ✓ Clientes: ${afterCounts.clients}`, 'green');
     log(`  ✓ Marcas: ${afterCounts.brands}`, 'green');
-    log(`  ✓ Cuentas bancarias: ${afterCounts.bankAccounts}`, 'green');
+    log(`  ✓ Cuentas bancarias (balance en 0): ${afterCounts.bankAccounts}`, 'green');
+    log(`  ✓ Usuarios: ${beforeCounts.users}`, 'green');
     log('\nRegistros eliminados:', 'cyan');
     log(`  ✗ Órdenes: ${beforeCounts.orders} → ${afterCounts.orders}`, 'red');
     log(`  ✗ Registros financieros: ${beforeCounts.financialRecords} → ${afterCounts.financialRecords}`, 'red');
@@ -181,7 +188,6 @@ async function cleanDatabase() {
     log(`  ✗ Movimientos de inventario: ${beforeCounts.inventoryMovements}`, 'red');
     log(`  ✗ Cuentas de clientes: ${beforeCounts.clientAccounts}`, 'red');
     log(`  ✗ Créditos: ${beforeCounts.clientCredits}`, 'red');
-    log(`  ✗ Usuarios: ${beforeCounts.users}`, 'red');
     log('============================================\n', 'green');
 
   } catch (error) {

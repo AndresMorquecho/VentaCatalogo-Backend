@@ -8,9 +8,9 @@ const router = Router();
 
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { username, password } = req.body;
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { username } });
     if (!user || !user.isActive) {
       throw new AppError(401, 'Invalid credentials', 'INVALID_CREDENTIALS');
     }
@@ -20,8 +20,14 @@ router.post('/login', async (req, res, next) => {
       throw new AppError(401, 'Invalid credentials', 'INVALID_CREDENTIALS');
     }
 
+    // Update lastAccessAt
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastAccessAt: new Date() }
+    });
+
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      { id: user.id, username: user.username, role: user.role },
       process.env.JWT_SECRET || 'secret',
       { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as any }
     );
@@ -32,9 +38,9 @@ router.post('/login', async (req, res, next) => {
         token,
         user: {
           id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role
+          username: user.username,
+          role: user.role,
+          lastAccessAt: new Date()
         }
       }
     });
@@ -45,16 +51,15 @@ router.post('/login', async (req, res, next) => {
 
 router.post('/register', async (req, res, next) => {
   try {
-    const { email, password, name } = req.body;
+    const { username, password, role } = req.body;
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
       data: {
-        email,
+        username,
         password: hashedPassword,
-        name,
-        role: 'USER'
+        role: role || 'USER'
       }
     });
 
@@ -62,8 +67,8 @@ router.post('/register', async (req, res, next) => {
       success: true,
       data: {
         id: user.id,
-        email: user.email,
-        name: user.name
+        username: user.username,
+        role: user.role
       }
     });
   } catch (error) {
