@@ -226,7 +226,8 @@ export class DeliverOrderUseCase {
             // Ejemplo: 1 punto por cada $10 (condition="10")
             const divisor = parseFloat(rule.condition || '10');
             const safeDivisor = isNaN(divisor) || divisor <= 0 ? 10 : divisor;
-            rulePoints = Math.floor(effectiveTotal / safeDivisor) * rule.pointsValue;
+            // Se calculan con lo que el cliente realmente ha pagado (newPaidAmount)
+            rulePoints = Math.floor(newPaidAmount / safeDivisor) * rule.pointsValue;
           }
 
           if (rulePoints > maxPoints) {
@@ -235,9 +236,6 @@ export class DeliverOrderUseCase {
         }
 
         pointsEarned = maxPoints;
-      } else {
-        // Fallback a lógica básica si no hay reglas configuradas
-        pointsEarned += Math.floor(effectiveTotal / 10);
       }
 
       // Obtener o crear cuenta del cliente

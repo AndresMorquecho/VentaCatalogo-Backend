@@ -10,7 +10,7 @@ export interface CreateCashClosureDTO {
 }
 
 export class CreateCashClosureUseCase {
-    constructor(private cashClosureRepository: ICashClosureRepository) {}
+    constructor(private cashClosureRepository: ICashClosureRepository) { }
 
     async execute(dto: CreateCashClosureDTO, closedBy: string): Promise<Result<CashClosure>> {
         try {
@@ -89,9 +89,9 @@ export class CreateCashClosureUseCase {
             const userIds = [...new Set([closedBy, ...allRangeRecords.map(m => m.createdBy)])];
             const users = await prisma.user.findMany({
                 where: { id: { in: userIds } },
-                select: { id: true, name: true }
+                select: { id: true, username: true }
             });
-            const userMap = Object.fromEntries(users.map(u => [u.id, u.name]));
+            const userMap = Object.fromEntries(users.map(u => [u.id, u.username]));
 
             const reportTotalIncome = allRangeRecords
                 .filter(r => r.movementType === 'INCOME')
@@ -99,9 +99,9 @@ export class CreateCashClosureUseCase {
             const reportTotalExpense = allRangeRecords
                 .filter(r => r.movementType === 'EXPENSE')
                 .reduce((sum, r) => sum + Number(r.amount), 0);
-            
+
             const incomeRecords = allRangeRecords.filter(r => r.movementType === 'INCOME');
-            
+
             const incomeBySource = {
                 orderPayments: incomeRecords
                     .filter(r => r.source === 'ORDER_PAYMENT' && r.notes?.toLowerCase().includes('inicial'))

@@ -146,7 +146,7 @@ async function cleanDatabase() {
     // 9.1. Resetear cuentas bancarias a 0
     log('  → Reseteando cuentas bancarias a 0...', 'yellow');
     await prisma.bankAccount.updateMany({
-      data: { balance: 0 }
+      data: { currentBalance: 0 }
     });
 
     // 10. Pagos de órdenes

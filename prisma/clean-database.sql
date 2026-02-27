@@ -65,7 +65,7 @@ TRUNCATE TABLE financial_records CASCADE;
 -- 7.1. RESETEAR CUENTAS BANCARIAS A 0 (efectivo y bancos del sistema)
 -- ============================================================================
 
-UPDATE bank_accounts SET balance = 0;
+UPDATE bank_accounts SET current_balance = 0;
 
 -- ============================================================================
 -- 8. ELIMINAR PAGOS DE ÓRDENES (depende de órdenes)
