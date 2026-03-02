@@ -66,7 +66,7 @@ export class CashClosureController {
 
             const result = await this.createCashClosureUseCase.execute(
                 dto,
-                req.user?.name || req.user?.email || 'Sistema'
+                req.user!.username
             );
 
             if (result.isFailure) {

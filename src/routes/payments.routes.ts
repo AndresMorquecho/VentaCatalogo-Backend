@@ -49,7 +49,7 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
             referenceNumber,
             notes
           },
-          req.user!.email,
+          req.user!.username,
           tx
         );
       }
@@ -111,7 +111,7 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
             referenceNumber: `REF-CRED-${Date.now()}`,
             notes: 'Abono con saldo a favor'
           },
-          req.user!.email,
+          req.user!.username,
           tx
         );
       }

@@ -129,9 +129,9 @@ router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: 
       });
     }
 
-    res.json({ success: true, data: client });
+    return res.json({ success: true, data: client });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
@@ -172,7 +172,7 @@ router.delete('/:id', authenticate, requirePermission('clients.delete'), async (
 
     return res.json({ success: true, message: 'Empresaria eliminada permanentemente' });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 

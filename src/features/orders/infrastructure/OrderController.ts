@@ -471,7 +471,12 @@ export class OrderController {
           include: {
             payments: true,
             financialRecords: true,
-            inventoryMovements: true
+            inventoryMovements: true,
+            client: {
+              include: {
+                clientAccount: true
+              }
+            }
           }
         });
 
@@ -525,6 +530,27 @@ export class OrderController {
         await tx.inventoryMovement.deleteMany({
           where: { orderId: id, type: 'ENTRY' }
         });
+
+        // 4. Revert Client Credits generated during this reception
+        const receptionCredits = await tx.clientCredit.findMany({
+          where: { 
+            originOrderId: id,
+            status: 'AVAILABLE' // Only revert if not yet used
+          }
+        });
+
+        for (const credit of receptionCredits) {
+          if (order.client?.clientAccount) {
+            await tx.clientAccount.update({
+              where: { id: order.client.clientAccount.id },
+              data: {
+                totalCreditAvailable: { decrement: credit.remainingAmount },
+                version: { increment: 1 }
+              }
+            });
+          }
+          await tx.clientCredit.delete({ where: { id: credit.id } });
+        }
 
         // 4. Update Order Status back to POR_RECIBIR
         await tx.order.update({

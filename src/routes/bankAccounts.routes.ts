@@ -112,9 +112,9 @@ router.put('/:id', authenticate, requirePermission('bank_accounts.edit'), async 
       data: updateData
     });
 
-    res.json({ success: true, data: account });
+    return res.json({ success: true, data: account });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
@@ -123,13 +123,12 @@ router.delete('/:id', authenticate, requirePermission('bank_accounts.delete'), a
     await prisma.bankAccount.delete({
       where: { id: req.params.id }
     });
-    res.json({ success: true, message: 'Cuenta bancaria eliminada' });
+    return res.json({ success: true, message: 'Cuenta bancaria eliminada' });
   } catch (error: any) {
     if (error.code === 'P2003') {
-      res.status(400).json({ success: false, error: { message: 'No se puede eliminar la cuenta porque posee registros financieros. Intenta desactivarla.' } });
-      return;
+      return res.status(400).json({ success: false, error: { message: 'No se puede eliminar la cuenta porque posee registros financieros. Intenta desactivarla.' } });
     }
-    next(error);
+    return next(error);
   }
 });
 
