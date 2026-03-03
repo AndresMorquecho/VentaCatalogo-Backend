@@ -29,6 +29,7 @@ export interface CreateOrderDTO {
   }>;
   notes?: string;
   createdByName?: string; // Username del que crea el pedido
+  createdAt?: Date; // Optional manual registration date
   initialPayment: {
     amount: number;
     method: string;
@@ -36,6 +37,7 @@ export interface CreateOrderDTO {
   };
   creditAmount?: number;
 }
+
 
 export class CreateOrderUseCase {
   constructor(
@@ -101,12 +103,13 @@ export class CreateOrderUseCase {
           notes: dto.notes,
           items,
           payments: [], // Will be populated in transaction
-          createdAt: new Date(),
+          createdAt: dto.createdAt ? new Date(dto.createdAt) : new Date(),
           updatedAt: new Date(),
           version: 1
         },
         crypto.randomUUID()
       );
+
 
       // Execute everything in a transaction for atomicity
       const savedOrder = await prisma.$transaction(async (tx) => {
@@ -129,8 +132,10 @@ export class CreateOrderUseCase {
             clientName: rawOrder.clientName,
             notes: rawOrder.notes,
             createdByName: dto.createdByName || createdBy || null,
+            createdAt: rawOrder.createdAt,
             version: rawOrder.version,
             items: {
+
               create: order.items
             }
           },

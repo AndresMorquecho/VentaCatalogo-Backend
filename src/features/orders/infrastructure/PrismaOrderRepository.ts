@@ -189,8 +189,10 @@ export class PrismaOrderRepository implements IOrderRepository {
       createdByName: json.createdByName,
       receivedByName: json.receivedByName,
       deliveredByName: json.deliveredByName,
+      createdAt: json.createdAt,
       updatedAt: json.updatedAt,
       version: json.version
     };
+
   }
 }

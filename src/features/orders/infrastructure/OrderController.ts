@@ -92,7 +92,9 @@ export class OrderController {
         })) || [],
         notes: req.body.notes,
         createdByName: req.user!.username,
+        createdAt: req.body.created_at ? new Date(req.body.created_at) : undefined,
         initialPayment: {
+
           amount: Number(req.body.deposit || 0),
           method: req.body.payment_method,
           reference: req.body.transaction_reference || ''
@@ -163,9 +165,11 @@ export class OrderController {
         clientId: req.body.client_id,
         clientName: req.body.client_name,
         notes: req.body.notes,
+        createdAt: req.body.created_at ? new Date(req.body.created_at) : undefined,
         updatedAt: new Date(),
         version: { increment: 1 }
       };
+
 
       // Remove undefined fields
       Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
