@@ -120,14 +120,48 @@ router.put('/:id', authenticate, requirePermission('bank_accounts.edit'), async 
 
 router.delete('/:id', authenticate, requirePermission('bank_accounts.delete'), async (req, res, next) => {
   try {
-    await prisma.bankAccount.delete({
-      where: { id: req.params.id }
+    const { id } = req.params;
+
+    // 1. Buscar la cuenta
+    const account = await prisma.bankAccount.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            financialRecords: true,
+            orders: true
+          }
+        }
+      }
     });
-    return res.json({ success: true, message: 'Cuenta bancaria eliminada' });
-  } catch (error: any) {
-    if (error.code === 'P2003') {
-      return res.status(400).json({ success: false, error: { message: 'No se puede eliminar la cuenta porque posee registros financieros. Intenta desactivarla.' } });
+
+    if (!account) {
+      return res.status(404).json({ success: false, error: { message: 'Cuenta no encontrada' } });
     }
+
+    // 2. REGLA DE SEGURIDAD: No borrar si tiene saldo
+    if (Number(account.currentBalance) !== 0) {
+      return res.status(400).json({
+        success: false,
+        error: { message: `No se puede eliminar la cuenta '${account.name}' porque tiene un saldo de $${Number(account.currentBalance).toFixed(2)}. Primero debe transferir el dinero o realizar un ajuste a cero.` }
+      });
+    }
+
+    // 3. REGLA DE INTEGRIDAD: No borrar si tiene historial
+    if (account._count.financialRecords > 0 || account._count.orders > 0) {
+      return res.status(400).json({
+        success: false,
+        error: { message: `La cuenta '${account.name}' tiene historial de transacciones o pedidos vinculados. Para mantener la integridad de los reportes, no puede ser eliminada. Por favor, desáctivala en su lugar.` }
+      });
+    }
+
+    // 4. Proceder con el borrado (si está limpia)
+    await prisma.bankAccount.delete({
+      where: { id }
+    });
+
+    return res.json({ success: true, message: 'Cuenta eliminada exitosamente' });
+  } catch (error: any) {
     return next(error);
   }
 });

@@ -206,36 +206,22 @@ export class DeliverOrderUseCase {
       });
 
       // SISTEMA DE LEALTAD
-      // 1. Obtener reglas activas
-      const activeRules = await tx.loyaltyRule.findMany({
-        where: { isActive: true }
+      // 1. Obtener regla única activa de tipo POR_MONTO
+      const rule = await tx.loyaltyRule.findFirst({
+        where: { isActive: true, type: 'POR_MONTO' }
       });
 
-      // 2. Calcular puntos ganados basados en reglas (Solo se aplica la MEJOR regla para evitar duplicar puntos)
+      // 2. Calcular puntos ganados basándose en lo pagado realmente
       let pointsEarned = 0;
       const newPaidAmount = paidAmount + (data.finalPayment || 0);
-      const isFullPayment = newPaidAmount >= effectiveTotal - 0.01;
 
-      if (activeRules.length > 0) {
-        let maxPoints = 0;
-
-        for (const rule of activeRules) {
-          let rulePoints = 0;
-
-          if (rule.type === 'POR_MONTO') {
-            // Ejemplo: 1 punto por cada $10 (condition="10")
-            const divisor = parseFloat(rule.condition || '10');
-            const safeDivisor = isNaN(divisor) || divisor <= 0 ? 10 : divisor;
-            // Se calculan con lo que el cliente realmente ha pagado (newPaidAmount)
-            rulePoints = Math.floor(newPaidAmount / safeDivisor) * rule.pointsValue;
-          }
-
-          if (rulePoints > maxPoints) {
-            maxPoints = rulePoints;
-          }
-        }
-
-        pointsEarned = maxPoints;
+      if (rule) {
+        // Ejemplo: 1 punto por cada $10 (condition="10")
+        const divisor = parseFloat(rule.condition || '10');
+        const safeDivisor = isNaN(divisor) || divisor <= 0 ? 10 : divisor;
+        
+        // Se calculan puntos basados en el monto pagado
+        pointsEarned = Math.floor(newPaidAmount / safeDivisor) * rule.pointsValue;
       }
 
       // Obtener o crear cuenta del cliente

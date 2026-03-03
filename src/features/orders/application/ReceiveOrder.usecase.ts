@@ -92,9 +92,23 @@ export class ReceiveOrderUseCase {
         }
       });
 
-      // 4. Calcular saldo actual
+      // 4. Calcular saldo actual y validaciones de seguridad
       const paidAmount = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const pendingBeforeAbono = data.finalTotal - paidAmount;
       let newPaidAmount = paidAmount;
+
+      // VALIDACIÓN DE SEGURIDAD: Evitar abonos accidentales gigantes (ej: escaneo de código de barras)
+      if (data.abonoRecepcion && data.abonoRecepcion > 0) {
+        // Límite absoluto de seguridad para evitar errores groseros
+        if (data.abonoRecepcion > 1000) {
+          throw new Error(`Abono bloqueado: El monto de $${data.abonoRecepcion} es inusualmente alto. Verifique si escaneó un código por error o contacte al administrador.`);
+        }
+
+        // Si el abono es mucho mayor a lo que debe (ej: debe $10 y abona $1200)
+        if (pendingBeforeAbono > 0 && data.abonoRecepcion > (pendingBeforeAbono * 5) && data.abonoRecepcion > 100) {
+          throw new Error(`Abono sospechoso: Está intentando abonar $${data.abonoRecepcion} para un saldo de $${pendingBeforeAbono.toFixed(2)}. Si es correcto, realice el abono en el módulo de pagos.`);
+        }
+      }
 
       // 5. Si hay abono adicional en recepción
       if (data.abonoRecepcion && data.abonoRecepcion > 0) {

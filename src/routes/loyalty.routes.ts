@@ -17,6 +17,13 @@ router.get('/rules', authenticate, requirePermission('loyalty.view'), async (req
 
 router.post('/rules', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
+        // Enforce single rule policy
+        const existingRulesCount = await prisma.loyaltyRule.count();
+        if (existingRulesCount >= 1) {
+            res.status(400).json({ success: false, error: 'Ya existe una regla configurada. Elimine la actual antes de crear una nueva.' });
+            return;
+        }
+
         const { name, type, pointsValue, points_value, condition, active, isActive } = req.body;
         const rule = await prisma.loyaltyRule.create({
             data: {
