@@ -1,5 +1,4 @@
 import { Router } from 'express';
-// Trigger backend reload
 import { prisma } from '../lib/prisma';
 import bcrypt from 'bcryptjs';
 import { AppError } from '../middleware/errorHandler';

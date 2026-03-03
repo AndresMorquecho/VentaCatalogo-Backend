@@ -161,6 +161,20 @@ export class DeliverOrderUseCase {
           if (remainingToSubtract > 0.01) {
             throw new Error(`Saldo a favor insuficiente. Faltan $${remainingToSubtract.toFixed(2)}`);
           }
+
+          // TASK-4.2: Sync ClientAccount.totalCreditAvailable
+          const deliveryClientAccount = await tx.clientAccount.findUnique({
+            where: { clientId: order.clientId }
+          });
+          if (deliveryClientAccount) {
+            await tx.clientAccount.update({
+              where: { id: deliveryClientAccount.id },
+              data: {
+                totalCreditAvailable: { decrement: data.finalPayment },
+                version: { increment: 1 }
+              }
+            });
+          }
         } else if (bankAccountId) {
           // Actualizar saldo de cuenta bancaria
           await tx.bankAccount.update({
@@ -219,7 +233,7 @@ export class DeliverOrderUseCase {
         // Ejemplo: 1 punto por cada $10 (condition="10")
         const divisor = parseFloat(rule.condition || '10');
         const safeDivisor = isNaN(divisor) || divisor <= 0 ? 10 : divisor;
-        
+
         // Se calculan puntos basados en el monto pagado
         pointsEarned = Math.floor(newPaidAmount / safeDivisor) * rule.pointsValue;
       }
@@ -249,8 +263,9 @@ export class DeliverOrderUseCase {
       else if (updatedPoints >= 300) newLevel = 'ORO';
       else if (updatedPoints >= 100) newLevel = 'PLATA';
 
-      await tx.clientAccount.update({
-        where: { id: clientAccount.id },
+      // TASK-7.1: Optimistic Locking on loyalty account update
+      const loyaltyUpdateResult = await tx.clientAccount.updateMany({
+        where: { id: clientAccount.id, version: clientAccount.version },
         data: {
           totalRewardPoints: updatedPoints,
           totalOrders: updatedOrders,
@@ -259,6 +274,13 @@ export class DeliverOrderUseCase {
           version: { increment: 1 }
         }
       });
+
+      if (loyaltyUpdateResult.count === 0) {
+        throw new Error(
+          'Conflicto de concurrencia: La cuenta del cliente fue modificada simultáneamente. ' +
+          'Por favor, intente la operación de nuevo.'
+        );
+      }
 
       // Registrar aplicación de puntos
       await tx.rewardApplication.create({

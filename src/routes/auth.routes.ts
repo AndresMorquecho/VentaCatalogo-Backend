@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { AppError } from '../middleware/errorHandler';
+import { env } from '../config/env';
 
 const router = Router();
 
@@ -31,10 +32,12 @@ router.post('/login', async (req, res, next) => {
       data: { lastAccessAt: new Date() }
     });
 
-    // Fetch role permissions
-    const roleData = await prisma.role.findUnique({
-      where: { name: user.role }
+    // Fetch role permissions - Case-insensitive lookup for safety
+    const roles = await prisma.role.findMany({
+      where: { isActive: true }
     });
+
+    const roleData = roles.find(r => r.name.toUpperCase() === user.role.toUpperCase());
 
     const token = jwt.sign(
       {
@@ -43,8 +46,8 @@ router.post('/login', async (req, res, next) => {
         role: user.role,
         permissions: roleData?.permissions || []
       },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as any }
+      env.JWT_SECRET,
+      { expiresIn: env.JWT_EXPIRES_IN as any }
     );
 
     res.json({

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AppError } from './errorHandler';
+import { env } from '../config/env';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -20,7 +21,7 @@ export const authenticate = (req: AuthRequest, res: Response, next: NextFunction
       throw new AppError(401, 'Authentication required', 'UNAUTHORIZED');
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any;
+    const decoded = jwt.verify(token, env.JWT_SECRET) as any;
     req.user = decoded;
     next();
   } catch (error) {
@@ -35,7 +36,7 @@ export const authorize = (...roles: string[]) => {
     }
 
     const normalizedRole = req.user.role.toUpperCase();
-    if (normalizedRole === 'ADMIN') {
+    if (normalizedRole === 'ADMIN' || normalizedRole === 'ADMINISTRADOR') {
       return next();
     }
 
@@ -60,7 +61,8 @@ export const requirePermission = (permission: string) => {
     }
 
     // ADMIN bypasses all granular permission checks
-    if (req.user.role.toUpperCase() === 'ADMIN') {
+    const normalizedRole = req.user.role.toUpperCase();
+    if (normalizedRole === 'ADMIN' || normalizedRole === 'ADMINISTRADOR') {
       return next();
     }
 

@@ -4,6 +4,7 @@ import { CreateOrderUseCase } from '../application/CreateOrder.usecase';
 import { GetOrdersUseCase } from '../application/GetOrders.usecase';
 import { ReceiveOrderUseCase } from '../application/ReceiveOrder.usecase';
 import { DeliverOrderUseCase } from '../application/DeliverOrder.usecase';
+import { DeleteOrderUseCase } from '../application/DeleteOrder.usecase';
 import { IOrderRepository } from '../domain/IOrderRepository';
 import { Order } from '../domain/Order.entity';
 import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
@@ -15,7 +16,8 @@ export class OrderController {
     private getOrdersUseCase: GetOrdersUseCase,
     private orderRepository: IOrderRepository,
     private receiveOrderUseCase?: ReceiveOrderUseCase,
-    private deliverOrderUseCase?: DeliverOrderUseCase
+    private deliverOrderUseCase?: DeliverOrderUseCase,
+    private deleteOrderUseCase?: DeleteOrderUseCase
   ) { }
 
   getAll = async (req: Request, res: Response) => {
@@ -182,73 +184,18 @@ export class OrderController {
 
   deleteOrder = async (req: Request, res: Response) => {
     try {
+      if (!this.deleteOrderUseCase) {
+        return HttpResponse.fail(res, 'DeleteOrderUseCase not initialized');
+      }
+
       const { id } = req.params;
+      const result = await this.deleteOrderUseCase.execute(id);
 
-      // 1. Transactional Atomic Rollback & Deletion
-      await prisma.$transaction(async (tx) => {
-        // Find existing order with relations
-        const order = await tx.order.findUnique({
-          where: { id },
-          include: {
-            payments: true,
-            financialRecords: true
-          }
-        });
+      if (result.isFailure) {
+        return HttpResponse.badRequest(res, result.error!);
+      }
 
-        if (!order) {
-          throw new Error('Order not found');
-        }
-
-        // Integrity Check: Delivered orders cannot be deleted
-        if (order.status === 'ENTREGADO') {
-          throw new Error('No se puede eliminar un pedido que ya ha sido entregado. Realice una devolución si es necesario.');
-        }
-
-        // Integrity Check: Consolidated orders in closed cash periods
-        const lastClosure = await tx.cashClosure.findFirst({
-          orderBy: { toDate: 'desc' }
-        });
-
-        if (lastClosure && order.transactionDate <= lastClosure.toDate) {
-          throw new Error('No se puede eliminar un pedido de un periodo de caja ya cerrado. Requiere reversión contable manual.');
-        }
-
-        // 2. Revert Financial Impacts
-        for (const payment of order.payments) {
-          // If it had a bank account and was income, decrement balance
-          // Note: Source source typically marks if it hit a bank account. 
-          // FinancialRecord has the real movement info.
-          const relatedFinancial = order.financialRecords.filter(fr => fr.bankAccountId);
-
-          for (const fr of relatedFinancial) {
-            // MovementType: INCOME -> Decrement balance
-            if (fr.movementType === 'INCOME') {
-              await tx.bankAccount.update({
-                where: { id: fr.bankAccountId },
-                data: { currentBalance: { decrement: fr.amount }, version: { increment: 1 } }
-              });
-            } else if (fr.movementType === 'EXPENSE') {
-              await tx.bankAccount.update({
-                where: { id: fr.bankAccountId },
-                data: { currentBalance: { increment: fr.amount }, version: { increment: 1 } }
-              });
-            }
-          }
-        }
-
-        // 3. Clear all related records
-        await tx.financialRecord.deleteMany({ where: { orderId: id } });
-        await tx.inventoryMovement.deleteMany({ where: { orderId: id } });
-        await tx.rewardApplication.deleteMany({ where: { orderId: id } });
-        await tx.orderItem.deleteMany({ where: { orderId: id } });
-        await tx.orderPayment.deleteMany({ where: { orderId: id } });
-        await tx.call.updateMany({ where: { orderId: id }, data: { orderId: null } });
-
-        // Final Deletion
-        await tx.order.delete({ where: { id } });
-      });
-
-      return HttpResponse.ok(res, { message: 'Pedido y registros asociados eliminados permanentemente' });
+      return HttpResponse.ok(res, { message: 'Pedido y registros asociados eliminados permanentemente, incluyendo saldos y créditos generados.' });
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to delete order');
     }
@@ -504,13 +451,13 @@ export class OrderController {
 
         // 2. Identify and reversa abono de recepción (Added during reception)
         const receptionPayments = order.payments.filter((p: any) =>
-          order.receptionDate && p.createdAt.getTime() >= order.receptionDate.getTime() - 10000 // Buffer 10s
+          p.description === 'Abono en recepción de bodega'
         );
 
         for (const payment of receptionPayments) {
           const relatedFr = order.financialRecords.find((fr: any) =>
             Number(fr.amount) === Number(payment.amount) &&
-            Math.abs(fr.date.getTime() - payment.createdAt.getTime()) < 5000
+            fr.notes && fr.notes.includes('Abono en recepción')
           );
 
           if (relatedFr && relatedFr.bankAccountId) {
@@ -533,7 +480,7 @@ export class OrderController {
 
         // 4. Revert Client Credits generated during this reception
         const receptionCredits = await tx.clientCredit.findMany({
-          where: { 
+          where: {
             originOrderId: id,
             status: 'AVAILABLE' // Only revert if not yet used
           }

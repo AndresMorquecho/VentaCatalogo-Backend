@@ -173,15 +173,22 @@ router.post('/prizes/:id/toggle', authenticate, requirePermission('loyalty.manag
 
 router.get('/redemptions', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
+        const skip = (page - 1) * limit;
+
         const redemptions = await (prisma.loyaltyRedemption as any).findMany({
             include: { author: true },
-            orderBy: { date: 'desc' }
+            orderBy: { date: 'desc' },
+            skip,
+            take: limit
         });
         res.json({
             success: true, data: redemptions.map((r: any) => ({
                 ...r,
                 authorName: r.author?.name || 'Sistema'
-            }))
+            })),
+            pagination: { page, limit }
         });
     } catch (error) {
         next(error);
@@ -239,7 +246,7 @@ router.post('/redeem', authenticate, requirePermission('loyalty.manage_prizes'),
             });
 
             // Record redemption with authorId
-            const redemption = await (tx.loyaltyRedemption as any).create({
+            const redemption = await tx.loyaltyRedemption.create({
                 data: {
                     clientId: client.id,
                     clientName: client.firstName.trim(),

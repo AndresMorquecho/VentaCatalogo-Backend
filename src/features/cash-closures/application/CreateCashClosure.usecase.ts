@@ -2,6 +2,7 @@ import { ICashClosureRepository } from '../domain/ICashClosureRepository';
 import { CashClosure } from '../domain/CashClosure.entity';
 import { Result } from '../../../shared/domain/Result';
 import { prisma } from '../../../lib/prisma';
+import Decimal from 'decimal.js';
 
 export interface CreateCashClosureDTO {
     toDate: Date | string;
@@ -33,19 +34,21 @@ export class CreateCashClosureUseCase {
                 return Result.fail('Ya existe un cierre de caja para este periodo o parte de él.');
             }
 
-            // 3. Find Cash Bank Account
-            const cashAccount = await prisma.bankAccount.findFirst({
+            // 3. Find ALL Cash Bank Accounts
+            const cashAccounts = await prisma.bankAccount.findMany({
                 where: { type: 'CASH', isActive: true }
             });
 
-            if (!cashAccount) {
-                return Result.fail('No se encontró una cuenta de tipo EFECTIVO/CAJA activa.');
+            if (cashAccounts.length === 0) {
+                return Result.fail('No se encontró ninguna cuenta de tipo EFECTIVO/CAJA activa.');
             }
 
-            // 4. Calculate movements in range for CASH account (for physical count limit)
+            const cashAccountIds = cashAccounts.map(a => a.id);
+
+            // 4. Calculate movements in range for ALL CASH accounts (for physical count limit)
             const cashMovements = await prisma.financialRecord.findMany({
                 where: {
-                    bankAccountId: cashAccount.id,
+                    bankAccountId: { in: cashAccountIds },
                     date: {
                         gte: fromDate,
                         lte: toDate
@@ -53,27 +56,28 @@ export class CreateCashClosureUseCase {
                 }
             });
 
-            let cashTotalIncome = 0;
-            let cashTotalExpense = 0;
+            let cashTotalIncome = new Decimal(0);
+            let cashTotalExpense = new Decimal(0);
 
             cashMovements.forEach(m => {
-                const amount = Number(m.amount);
+                const amount = new Decimal(m.amount.toString()); // Use .toString() to prevent float coercion
                 const isCreditApplication = m.paymentMethod === 'CREDITO_CLIENTE';
 
                 // Professional Logic: Only sum to physical cash if it's NOT a credit application
                 if (!isCreditApplication) {
                     if (m.movementType === 'INCOME') {
-                        cashTotalIncome += amount;
+                        cashTotalIncome = cashTotalIncome.plus(amount);
                     } else {
-                        cashTotalExpense += amount;
+                        cashTotalExpense = cashTotalExpense.plus(amount);
                     }
                 }
             });
 
-            // 5. Calculate Expected Amount (Physical Cash)
-            const startingBalance = lastClosure ? Number(lastClosure.actualAmount) : 0;
-            const expectedAmount = startingBalance + cashTotalIncome - cashTotalExpense;
-            const difference = dto.actualAmount - expectedAmount;
+            // 5. Calculate Expected Amount (Physical Cash) — Decimal precision
+            const startingBalance = new Decimal(lastClosure ? lastClosure.actualAmount.toString() : '0');
+            const expectedAmountDecimal = startingBalance.plus(cashTotalIncome).minus(cashTotalExpense);
+            const expectedAmount = expectedAmountDecimal.toNumber();
+            const difference = new Decimal(dto.actualAmount.toString()).minus(expectedAmountDecimal).toNumber();
 
             // 6. Build Comprehensive Detailed Report
             const activeBankAccounts = await prisma.bankAccount.findMany({ where: { isActive: true } });
@@ -191,8 +195,8 @@ export class CreateCashClosureUseCase {
                 fromDate,
                 toDate,
                 notes: dto.notes,
-                totalIncome: cashTotalIncome,
-                totalExpense: cashTotalExpense,
+                totalIncome: cashTotalIncome.toNumber(),
+                totalExpense: cashTotalExpense.toNumber(),
                 expectedAmount,
                 actualAmount: dto.actualAmount,
                 difference,

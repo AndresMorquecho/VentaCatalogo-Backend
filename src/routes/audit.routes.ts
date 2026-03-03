@@ -8,7 +8,7 @@ const router = Router();
 // ─── GET audit logs (Admin only) ──────────────────────────────────────────────
 router.get('/', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-        if (req.user?.role !== 'ADMIN') {
+        if (req.user?.role?.toUpperCase() !== 'ADMIN') {
             res.status(403).json({ success: false, message: 'Forbidden: Admin access required' });
             return;
         }
@@ -18,7 +18,7 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response, next: Next
             take: 1000
         });
 
-        res.json(logs);
+        res.json({ success: true, data: logs });
     } catch (error) {
         next(error);
     }
@@ -51,7 +51,7 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response, next: Nex
             }
         });
 
-        res.status(201).json(log);
+        res.status(201).json({ success: true, data: log });
     } catch (error) {
         next(error);
     }

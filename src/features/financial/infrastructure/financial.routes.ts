@@ -11,6 +11,9 @@ const repository = new PrismaFinancialRecordRepository();
 router.get('/', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { clientId, orderId, bankAccountId, startDate, endDate, type, movementType } = req.query;
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 100));
+    const skip = (page - 1) * limit;
 
     const filters: any = {};
     if (clientId) filters.clientId = clientId as string;
@@ -21,8 +24,11 @@ router.get('/', authenticate, async (req: Request, res: Response, next: NextFunc
     if (startDate) filters.startDate = new Date(startDate as string);
     if (endDate) filters.endDate = new Date(endDate as string);
 
-    const records = await repository.findAll(filters);
-    return HttpResponse.ok(res, records.map(r => r.toJSON()));
+    const records = await repository.findAll(filters, { skip, take: limit });
+    return HttpResponse.ok(res, {
+      data: records.map(r => r.toJSON()),
+      pagination: { page, limit, hasMore: records.length === limit }
+    });
   } catch (error) {
     next(error);
     return;

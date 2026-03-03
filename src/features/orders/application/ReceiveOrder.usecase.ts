@@ -99,10 +99,7 @@ export class ReceiveOrderUseCase {
 
       // VALIDACIÓN DE SEGURIDAD: Evitar abonos accidentales gigantes (ej: escaneo de código de barras)
       if (data.abonoRecepcion && data.abonoRecepcion > 0) {
-        // Límite absoluto de seguridad para evitar errores groseros
-        if (data.abonoRecepcion > 1000) {
-          throw new Error(`Abono bloqueado: El monto de $${data.abonoRecepcion} es inusualmente alto. Verifique si escaneó un código por error o contacte al administrador.`);
-        }
+
 
         // Si el abono es mucho mayor a lo que debe (ej: debe $10 y abona $1200)
         if (pendingBeforeAbono > 0 && data.abonoRecepcion > (pendingBeforeAbono * 5) && data.abonoRecepcion > 100) {
@@ -223,15 +220,22 @@ export class ReceiveOrderUseCase {
           }
         });
 
-        // Actualizar cuenta del cliente
-        await tx.clientAccount.update({
-          where: { id: clientAccount.id },
+        // TASK-7.1: Optimistic Locking — use updateMany with version check to prevent concurrent corruption
+        const updateResult = await tx.clientAccount.updateMany({
+          where: { id: clientAccount.id, version: clientAccount.version }, // version guard
           data: {
             totalCreditAvailable: { increment: creditAmount },
             updatedAt: new Date(),
             version: { increment: 1 }
           }
         });
+
+        if (updateResult.count === 0) {
+          throw new Error(
+            'Conflicto de concurrencia: La cuenta del cliente fue modificada simultáneamente. ' +
+            'Por favor, intente la operación de nuevo.'
+          );
+        }
       }
 
       // Retornar pedido actualizado con cálculos

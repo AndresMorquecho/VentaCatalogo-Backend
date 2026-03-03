@@ -198,15 +198,17 @@ model FinancialRecord {
   version   Int      @default(1)
 
   // Relations
-  client      Client      @relation(fields: [clientId], references: [id])
-  order       Order?      @relation(fields: [orderId], references: [id])
-  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id])
+  client      Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  order       Order?      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
 
   @@index([clientId])
   @@index([orderId])
   @@index([bankAccountId])
   @@index([date])
   @@index([referenceNumber])
+  @@index([date, movementType])
+  @@index([createdAt, movementType])
   @@map("financial_records")
 }
 
@@ -246,10 +248,11 @@ model ClientCredit {
   usedAt              DateTime? @map("used_at")
 
   // Relations
-  clientAccount ClientAccount @relation(fields: [clientAccountId], references: [id])
+  clientAccount ClientAccount @relation(fields: [clientAccountId], references: [id], onDelete: Restrict)
 
   @@index([clientAccountId])
   @@index([status])
+  @@index([clientAccountId, status]) // TASK-5.3: Composite for AVAILABLE credit queries
   @@map("client_credits")
 }
 
@@ -261,8 +264,8 @@ model RewardApplication {
   appliedAt       DateTime @default(now()) @map("applied_at")
 
   // Relations
-  clientAccount ClientAccount @relation(fields: [clientAccountId], references: [id])
-  order         Order         @relation(fields: [orderId], references: [id])
+  clientAccount ClientAccount @relation(fields: [clientAccountId], references: [id], onDelete: Restrict)
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
 
   @@index([clientAccountId])
   @@map("reward_applications")
@@ -283,9 +286,9 @@ model InventoryMovement {
   createdAt DateTime @default(now()) @map("created_at")
 
   // Relations
-  order  Order  @relation(fields: [orderId], references: [id])
-  client Client @relation(fields: [clientId], references: [id])
-  brand  Brand  @relation(fields: [brandId], references: [id])
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  brand  Brand  @relation(fields: [brandId], references: [id], onDelete: Restrict)
 
   @@index([orderId])
   @@index([type])
@@ -440,5 +443,6 @@ model AuditLog {
 
   @@index([userId])
   @@index([timestamp])
+  @@index([module]) // TASK-5.2: Module filter is the most common query in the audit UI
   @@map("audit_logs")
 }

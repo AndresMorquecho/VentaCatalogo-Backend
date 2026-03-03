@@ -64,6 +64,15 @@ export class CreateOrderUseCase {
         return Result.fail('Initial payment information is required');
       }
 
+      // Fix 3: Validate closed period for Go-Live Safety
+      const lastClosure = await prisma.cashClosure.findFirst({
+        orderBy: { toDate: 'desc' }
+      });
+
+      if (lastClosure && new Date(dto.transactionDate) <= lastClosure.toDate) {
+        return Result.fail('No se puede crear un pedido con fecha de transacción en un periodo de caja ya cerrado.');
+      }
+
       // Generate or use manual receipt number
       const receiptNumber = dto.receiptNumber || await this.orderRepository.generateReceiptNumber();
 

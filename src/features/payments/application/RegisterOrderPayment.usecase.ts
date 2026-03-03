@@ -34,7 +34,6 @@ export class RegisterOrderPaymentUseCase {
             }
 
             if (dto.amount === 0 && (!dto.creditAmount || dto.creditAmount <= 0)) {
-                console.log("FAILING VALIDATION: amount=0, creditAmount=", dto.creditAmount);
                 return Result.fail(`Must provide an amount or creditAmount to register a payment`);
             }
 
@@ -129,6 +128,20 @@ export class RegisterOrderPaymentUseCase {
 
                     if (remainingToSubtract > 0.01) {
                         throw new Error(`Saldo a favor insuficiente para cubrir $${dto.creditAmount.toFixed(2)}`);
+                    }
+
+                    // TASK-4.2: Sync ClientAccount.totalCreditAvailable after consuming credit
+                    const clientAccount = await tx.clientAccount.findUnique({
+                        where: { clientId: order.clientId }
+                    });
+                    if (clientAccount) {
+                        await tx.clientAccount.update({
+                            where: { id: clientAccount.id },
+                            data: {
+                                totalCreditAvailable: { decrement: dto.creditAmount },
+                                version: { increment: 1 }
+                            }
+                        });
                     }
 
                     creditPayment = await tx.orderPayment.create({

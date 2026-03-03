@@ -8,6 +8,9 @@ router.get('/', authenticate, requirePermission('clients.view'), async (req, res
   try {
     const search = req.query.search as string;
     const active = req.query.active;
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit as string) || 200));
+    const skip = (page - 1) * limit;
 
     const where: any = {};
     if (active === 'true') where.isActive = true;
@@ -21,13 +24,12 @@ router.get('/', authenticate, requirePermission('clients.view'), async (req, res
       ];
     }
 
-    const clients = await prisma.client.findMany({
-      where,
-      orderBy: { createdAt: 'desc' }
-    });
+    const [clients, total] = await Promise.all([
+      prisma.client.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: limit }),
+      prisma.client.count({ where })
+    ]);
 
-    console.log(`GET /api/clients - Found ${clients.length} clients`);
-    res.json({ success: true, data: clients });
+    res.json({ success: true, data: clients, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
   } catch (error) {
     next(error);
   }

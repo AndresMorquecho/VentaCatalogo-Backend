@@ -17,7 +17,6 @@ export class PaymentController {
             const bankAccountId = req.body.bankAccountId || req.body.bank_account_id;
             const notes = req.body.notes;
 
-            console.log("PAYMENT REQ BODY:", req.body);
 
             if (!orderId) {
                 return HttpResponse.badRequest(res, 'Missing required field: orderId is required.');
@@ -47,13 +46,11 @@ export class PaymentController {
             const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username);
 
             if (result.isFailure) {
-                console.error('[PaymentController] Registration failure:', result.error);
                 return HttpResponse.fail(res, result.error!);
             }
 
             return HttpResponse.created(res, result.getValue());
         } catch (error) {
-            console.error('[PaymentController] Unexpected error during payment registration:', error);
             return HttpResponse.fail(res, error instanceof Error ? error.message : 'An unexpected error occurred during payment registration.');
         }
     };

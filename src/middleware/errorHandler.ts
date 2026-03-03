@@ -40,8 +40,8 @@ export const errorHandler = (
         success: false,
         error: {
           code: 'UNIQUE_CONSTRAINT',
-          message: 'A record with this value already exists',
-          details: err.meta
+          message: 'Ya existe un registro con este valor.',
+          ...(process.env.NODE_ENV !== 'production' && { details: err.meta })
         }
       });
     }
@@ -50,8 +50,8 @@ export const errorHandler = (
         success: false,
         error: {
           code: 'NOT_FOUND',
-          message: 'Record not found',
-          details: err.meta
+          message: 'Registro no encontrado.',
+          ...(process.env.NODE_ENV !== 'production' && { details: err.meta })
         }
       });
     }

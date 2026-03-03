@@ -26,6 +26,6 @@ router.get('/', authenticate, requirePermission('cash_closure.view'), (req: any,
 router.get('/preview', authenticate, requirePermission('cash_closure.view'), (req: any, res, next) => controller.getPreview(req, res, next));
 router.get('/:id', authenticate, requirePermission('cash_closure.view'), (req: any, res, next) => controller.getById(req, res, next));
 router.post('/', authenticate, requirePermission('cash_closure.close'), (req: any, res, next) => controller.create(req, res, next));
-router.delete('/:id', authenticate, authorize('ADMIN'), (req: any, res, next) => controller.delete(req, res, next));
+router.delete('/:id', authenticate, requirePermission('cash_closure.delete'), (req: any, res, next) => controller.delete(req, res, next));
 
 export default router;

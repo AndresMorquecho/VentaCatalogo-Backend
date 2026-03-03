@@ -1,7 +1,11 @@
 import 'reflect-metadata';
+import './config/env'; // Loads dotenv and validates critical env vars
+
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { env } from './config/env';
 import { errorHandler } from './middleware/errorHandler';
 import { requestLogger } from './middleware/requestLogger';
 
@@ -9,30 +13,49 @@ import { requestLogger } from './middleware/requestLogger';
 import orderRoutes from './features/orders/infrastructure/order.routes';
 import financialRoutes from './features/financial/infrastructure/financial.routes';
 import paymentRoutes from './features/payments/infrastructure/payment.routes';
+import inventoryRoutes from './features/inventory/infrastructure/inventory.routes';
+import dashboardRoutes from './features/dashboard/infrastructure/dashboard.routes';
+import callsRoutes from './features/calls/infrastructure/calls.routes';
+import cashClosureRoutes from './features/cash-closures/infrastructure/cash-closures.routes';
 
-// Legacy routes (to be migrated)
+// Legacy routes (pending hexagonal migration)
 import authRouter from './routes/auth.routes';
 import clientsRouter from './routes/clients.routes';
 import brandsRouter from './routes/brands.routes';
 import bankAccountsRouter from './routes/bankAccounts.routes';
-import dashboardRouter from './routes/dashboard.routes';
-import inventoryRouter from './routes/inventory.routes';
-import callsRoutes from './features/calls/infrastructure/calls.routes';
 import rewardsRouter from './routes/rewards.routes';
 import loyaltyRouter from './routes/loyalty.routes';
 import clientCreditsRouter from './routes/clientCredits.routes';
-import cashClosureRoutes from './features/cash-closures/infrastructure/cash-closures.routes';
 import usersRouter from './routes/users.routes';
 import rolesRouter from './routes/roles.routes';
 import auditRouter from './routes/audit.routes';
 
-dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = env.PORT;
 
-// Middleware
-const origins = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:5173'];
+// Fix 1: Add Helmet for HTTP headers security
+app.use(helmet());
+
+// Rate Limiters
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // limit each IP to 20 requests per windowMs
+  message: { success: false, error: { message: 'Demasiados intentos de inicio de sesión. Intente más tarde.' } }
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 200, // limit each IP to 200 requests per minute
+  message: { success: false, error: { message: 'Demasiadas peticiones desde esta IP. Intente más tarde.' } },
+  skip: (req) => req.path.startsWith('/api/auth') // Let authLimiter handle /api/auth
+});
+
+// Applicar límites
+app.use('/api/auth', authLimiter);
+app.use('/api', apiLimiter);
+
+// CORS with validated config
+const origins = env.CORS_ORIGIN.split(',');
 
 app.use(cors({
   origin: origins,
@@ -54,19 +77,19 @@ app.get('/health', (_req, res) => {
 app.use('/api/orders', orderRoutes);
 app.use('/api/financial-records', financialRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/calls', callsRoutes);
+app.use('/api/cash-closures', cashClosureRoutes);
 
 // API Routes - Legacy (to be migrated)
 app.use('/api/auth', authRouter);
 app.use('/api/clients', clientsRouter);
 app.use('/api/brands', brandsRouter);
 app.use('/api/bank-accounts', bankAccountsRouter);
-app.use('/api/dashboard', dashboardRouter);
-app.use('/api/inventory', inventoryRouter);
-app.use('/api/calls', callsRoutes);
 app.use('/api/rewards', rewardsRouter);
 app.use('/api/loyalty', loyaltyRouter);
 app.use('/api/client-credits', clientCreditsRouter);
-app.use('/api/cash-closures', cashClosureRoutes);
 app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);
 app.use('/api/audit', auditRouter);
@@ -76,6 +99,7 @@ app.use(errorHandler);
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`📊 Environment: ${env.NODE_ENV}`);
+  console.log(`🌐 CORS Origins: ${origins.join(', ')}`);
   console.log(`🏗️  Architecture: Hexagonal (Feature-based)`);
 });

@@ -66,9 +66,9 @@ export class GetCashClosurePreviewUseCase {
                 };
             }));
 
-            const cashAccount = allAccounts.find(a => a.type === 'CASH');
-            if (!cashAccount) {
-                return Result.fail('No se encontró una cuenta de tipo EFECTIVO/CAJA activa.');
+            const cashAccounts = allAccounts.filter(a => a.type === 'CASH');
+            if (cashAccounts.length === 0) {
+                return Result.fail('No se encontró ninguna cuenta de tipo EFECTIVO/CAJA activa.');
             }
 
             // Fetch movements from ALL active accounts for full audit visibility

@@ -4,6 +4,7 @@ import { CreateOrderUseCase } from '../application/CreateOrder.usecase';
 import { GetOrdersUseCase } from '../application/GetOrders.usecase';
 import { ReceiveOrderUseCase } from '../application/ReceiveOrder.usecase';
 import { DeliverOrderUseCase } from '../application/DeliverOrder.usecase';
+import { DeleteOrderUseCase } from '../application/DeleteOrder.usecase';
 import { PrismaOrderRepository } from './PrismaOrderRepository';
 import { PrismaFinancialRecordRepository } from '../../financial/infrastructure/PrismaFinancialRecordRepository';
 import { PrismaBankAccountRepository } from '../../financial/infrastructure/PrismaBankAccountRepository';
@@ -21,6 +22,7 @@ const createOrderUseCase = new CreateOrderUseCase(orderRepository, financialRepo
 const getOrdersUseCase = new GetOrdersUseCase(orderRepository);
 const receiveOrderUseCase = new ReceiveOrderUseCase(orderRepository, financialRepository);
 const deliverOrderUseCase = new DeliverOrderUseCase(orderRepository, financialRepository);
+const deleteOrderUseCase = new DeleteOrderUseCase();
 
 // Controller
 const orderController = new OrderController(
@@ -28,7 +30,8 @@ const orderController = new OrderController(
   getOrdersUseCase,
   orderRepository,
   receiveOrderUseCase,
-  deliverOrderUseCase
+  deliverOrderUseCase,
+  deleteOrderUseCase
 );
 
 // Routes — READ

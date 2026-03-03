@@ -11,7 +11,7 @@ export class CashClosureController {
         private createCashClosureUseCase: CreateCashClosureUseCase,
         private getCashClosurePreviewUseCase: GetCashClosurePreviewUseCase,
         private cashClosureRepository: ICashClosureRepository
-    ) {}
+    ) { }
 
     async getAll(req: AuthRequest, res: Response, next: NextFunction) {
         try {
@@ -57,7 +57,7 @@ export class CashClosureController {
     async create(req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const { to_date, toDate, actual_amount, actualAmount, notes } = req.body;
-            
+
             const dto = {
                 toDate: toDate || to_date,
                 actualAmount: actualAmount !== undefined ? actualAmount : actual_amount,
@@ -81,8 +81,8 @@ export class CashClosureController {
 
     async delete(req: AuthRequest, res: Response, next: NextFunction) {
         try {
-            // Only admin is allowed (this is reinforced by routes.ts but good to check)
-            if (req.user?.role !== 'ADMIN') {
+            const userRole = req.user?.role?.toUpperCase() || '';
+            if (userRole !== 'ADMIN' && userRole !== 'ADMINISTRADOR') {
                 return res.status(403).json({ success: false, error: { message: 'Solo los administradores pueden borrar cierres de caja.' } });
             }
 
