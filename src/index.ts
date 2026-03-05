@@ -33,6 +33,9 @@ import auditRouter from './routes/audit.routes';
 const app = express();
 const PORT = env.PORT;
 
+// Fix for Render/Proxies: Trust the first proxy (Render uses a load balancer)
+app.set('trust proxy', 1);
+
 // Fix 1: Add Helmet for HTTP headers security
 app.use(helmet());
 
