@@ -5,6 +5,61 @@ import { HttpResponse } from '../shared/infrastructure/http/HttpResponse';
 
 const router = Router();
 
+// GET /api/client-credits/summary
+router.get('/summary', authenticate, async (req: AuthRequest, res) => {
+    try {
+        const clientAccounts = await prisma.clientAccount.findMany({
+            where: {
+                credits: {
+                    some: {
+                        status: 'AVAILABLE'
+                    }
+                }
+            },
+            include: {
+                client: true,
+                credits: {
+                    orderBy: { createdAt: 'desc' }
+                }
+            }
+        });
+
+        const summaries = clientAccounts.map(account => {
+            const credits = account.credits;
+            const availableCredits = credits.filter(c => c.status === 'AVAILABLE');
+
+            const totalCredit = availableCredits.reduce((sum, c) => sum + Number(c.remainingAmount), 0);
+            const totalGenerated = credits.reduce((sum, c) => sum + Number(c.amount), 0);
+            const totalUsed = totalGenerated - totalCredit;
+
+            return {
+                clientId: account.clientId,
+                clientName: account.client.firstName,
+                clientIdentification: account.client.identificationNumber,
+                clientPhone: account.client.phone1,
+                totalCredit,
+                totalGenerated,
+                totalUsed,
+                lastUpdated: credits.length > 0 ? credits[0].createdAt : account.updatedAt,
+                credits: availableCredits.map(c => ({
+                    id: c.id,
+                    amount: Number(c.remainingAmount),
+                    originTransactionId: c.originTransactionId,
+                    createdAt: c.createdAt
+                }))
+            };
+        });
+
+        const filteredSummaries = summaries
+            .filter(s => s.totalCredit > 0.01)
+            .sort((a, b) => b.totalCredit - a.totalCredit);
+
+        return HttpResponse.ok(res, filteredSummaries);
+    } catch (error) {
+        return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error fetching client credits summary');
+    }
+});
+
 // GET /api/client-credits
 router.get('/', authenticate, async (req: AuthRequest, res) => {
     try {
