@@ -4,7 +4,7 @@ import { Order, OrderStatus } from '../domain/Order.entity';
 import { Prisma } from '@prisma/client';
 
 export class PrismaOrderRepository implements IOrderRepository {
-  async findAll(filters: OrderFilters): Promise<Order[]> {
+  async findAll(filters: OrderFilters): Promise<{ data: Order[]; total: number }> {
     const where: Prisma.OrderWhereInput = {};
 
     if (filters.status) where.status = filters.status;
@@ -23,17 +23,29 @@ export class PrismaOrderRepository implements IOrderRepository {
       if (filters.endDate) where.transactionDate.lte = filters.endDate;
     }
 
-    const orders = await prisma.order.findMany({
-      where,
-      include: {
-        items: true,
-        payments: true,
-        brand: true
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+    const { page, limit } = filters;
+    const skip = page && limit ? (page - 1) * limit : undefined;
+    const take = limit || undefined;
 
-    return orders.map(this.toDomain);
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where,
+        include: {
+          items: true,
+          payments: true,
+          brand: true
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.order.count({ where })
+    ]);
+
+    return {
+      data: orders.map(this.toDomain),
+      total
+    };
   }
 
   async findById(id: string): Promise<Order | null> {

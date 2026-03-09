@@ -12,11 +12,31 @@ router.use(authorize('ADMIN'));
 // GET all roles
 router.get('/', async (req, res, next) => {
     try {
-        const roles = await prisma.role.findMany({
-            orderBy: { name: 'asc' }
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+        const skip = (page - 1) * limit;
+
+        const [roles, total] = await Promise.all([
+            prisma.role.findMany({
+                orderBy: { name: 'asc' },
+                skip,
+                take: limit
+            }),
+            prisma.role.count()
+        ]);
+
+        res.json({
+            success: true,
+            data: roles,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
         });
-        res.json({ success: true, data: roles });
     } catch (error) {
+
         next(error);
     }
 });

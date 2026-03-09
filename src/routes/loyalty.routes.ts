@@ -6,14 +6,33 @@ const router = Router();
 
 router.get('/rules', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
-        const rules = await prisma.loyaltyRule.findMany({
-            orderBy: { createdAt: 'desc' }
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 100));
+        const skip = (page - 1) * limit;
+
+        const [rules, total] = await Promise.all([
+            prisma.loyaltyRule.findMany({
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.loyaltyRule.count()
+        ]);
+        res.json({
+            success: true,
+            data: rules,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
         });
-        res.json({ success: true, data: rules });
     } catch (error) {
         next(error);
     }
 });
+
 
 router.post('/rules', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
@@ -73,14 +92,33 @@ router.delete('/rules/:id', authenticate, requirePermission('loyalty.manage_rule
 
 router.get('/prizes', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
-        const prizes = await prisma.loyaltyPrize.findMany({
-            orderBy: { createdAt: 'desc' }
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 100));
+        const skip = (page - 1) * limit;
+
+        const [prizes, total] = await Promise.all([
+            prisma.loyaltyPrize.findMany({
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.loyaltyPrize.count()
+        ]);
+        res.json({
+            success: true,
+            data: prizes,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
         });
-        res.json({ success: true, data: prizes });
     } catch (error) {
         next(error);
     }
 });
+
 
 router.post('/prizes', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
     try {
@@ -177,19 +215,29 @@ router.get('/redemptions', authenticate, requirePermission('loyalty.view'), asyn
         const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
         const skip = (page - 1) * limit;
 
-        const redemptions = await (prisma.loyaltyRedemption as any).findMany({
-            include: { author: true },
-            orderBy: { date: 'desc' },
-            skip,
-            take: limit
-        });
+        const [redemptions, total] = await Promise.all([
+            (prisma.loyaltyRedemption as any).findMany({
+                include: { author: true },
+                orderBy: { date: 'desc' },
+                skip,
+                take: limit
+            }),
+            (prisma.loyaltyRedemption as any).count()
+        ]);
         res.json({
-            success: true, data: redemptions.map((r: any) => ({
+            success: true,
+            data: redemptions.map((r: any) => ({
                 ...r,
                 authorName: r.author?.name || 'Sistema'
             })),
-            pagination: { page, limit }
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
         });
+
     } catch (error) {
         next(error);
     }
@@ -269,23 +317,48 @@ router.post('/redeem', authenticate, requirePermission('loyalty.manage_prizes'),
 
 router.get('/history/:clientId', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
-        const history = await prisma.rewardApplication.findMany({
-            where: {
-                clientAccount: {
-                    clientId: req.params.clientId
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
+        const skip = (page - 1) * limit;
+
+        const [history, total] = await Promise.all([
+            prisma.rewardApplication.findMany({
+                where: {
+                    clientAccount: {
+                        clientId: req.params.clientId
+                    }
+                },
+                include: {
+                    order: true
+                },
+                orderBy: {
+                    appliedAt: 'desc'
+                },
+                skip,
+                take: limit
+            }),
+            prisma.rewardApplication.count({
+                where: {
+                    clientAccount: {
+                        clientId: req.params.clientId
+                    }
                 }
-            },
-            include: {
-                order: true
-            },
-            orderBy: {
-                appliedAt: 'desc'
+            })
+        ]);
+        res.json({
+            success: true,
+            data: history,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
             }
         });
-        res.json({ success: true, data: history });
     } catch (error) {
         next(error);
     }
 });
+
 
 export default router;

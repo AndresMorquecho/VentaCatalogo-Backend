@@ -21,13 +21,18 @@ export class OrderController {
   ) { }
 
   getAll = async (req: Request, res: Response) => {
+    const page = req.query.page ? parseInt(req.query.page as string) : undefined;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+
     const filters = {
       status: req.query.status as string,
       clientId: req.query.clientId as string,
       brandId: req.query.brandId as string,
       startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
       endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
-      search: req.query.search as string
+      search: req.query.search as string,
+      page,
+      limit
     };
 
     const result = await this.getOrdersUseCase.execute(filters);
@@ -36,7 +41,22 @@ export class OrderController {
       return HttpResponse.fail(res, result.error!);
     }
 
-    const orders = result.getValue().map(order => order.toJSON());
+    const { data, total } = result.getValue();
+    const orders = data.map(order => order.toJSON());
+
+    if (page && limit) {
+      return res.json({
+        success: true,
+        data: orders,
+        pagination: {
+          page,
+          limit,
+          total,
+          pages: Math.ceil(total / limit)
+        }
+      });
+    }
+
     return HttpResponse.ok(res, orders);
   };
 
@@ -223,7 +243,8 @@ export class OrderController {
         bankAccountId: req.body.bank_account_id || req.body.bankAccountId,
         paymentMethod: req.body.payment_method || req.body.paymentMethod,
         reference: req.body.reference || req.body.transaction_reference || undefined,
-        receivedByName: req.user!.username
+        receivedByName: req.user!.username,
+        reprogrammedItemIds: req.body.reprogrammedItemIds || []
       };
 
       const result = await this.receiveOrderUseCase.execute(id, dto, req.user!.username);

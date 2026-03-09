@@ -16,16 +16,31 @@ export class CashClosureController {
     async getAll(req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const { startDate, endDate } = req.query;
+            const page = Math.max(1, parseInt(req.query.page as string) || 1);
+            const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+            const skip = (page - 1) * limit;
+
             const filters = {
                 startDate: startDate ? new Date(startDate as string) : undefined,
                 endDate: endDate ? new Date(endDate as string) : undefined,
             };
-            const closures = await this.getCashClosuresUseCase.execute(filters);
-            return res.json({ success: true, data: closures });
+            const { data, total } = await this.getCashClosuresUseCase.execute(filters, { skip, take: limit });
+
+            return res.json({
+                success: true,
+                data,
+                pagination: {
+                    page,
+                    limit,
+                    total,
+                    pages: Math.ceil(total / limit)
+                }
+            });
         } catch (error) {
             return next(error);
         }
     }
+
 
     async getById(req: AuthRequest, res: Response, next: NextFunction) {
         try {

@@ -3,12 +3,12 @@ import { Order } from '../domain/Order.entity';
 import { Result } from '../../../shared/domain/Result';
 
 export class GetOrdersUseCase {
-  constructor(private orderRepository: IOrderRepository) {}
+  constructor(private orderRepository: IOrderRepository) { }
 
-  async execute(filters: OrderFilters): Promise<Result<Order[]>> {
+  async execute(filters: OrderFilters): Promise<Result<{ data: Order[]; total: number }>> {
     try {
-      const orders = await this.orderRepository.findAll(filters);
-      return Result.ok(orders);
+      const result = await this.orderRepository.findAll(filters);
+      return Result.ok(result);
     } catch (error) {
       return Result.fail(error instanceof Error ? error.message : 'Failed to get orders');
     }

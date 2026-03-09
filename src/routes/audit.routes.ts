@@ -13,12 +13,54 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response, next: Next
             return;
         }
 
-        const logs = await (prisma as any).auditLog.findMany({
-            orderBy: { timestamp: 'desc' },
-            take: 1000
-        });
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string) || 100));
+        const skip = (page - 1) * limit;
 
-        res.json({ success: true, data: logs });
+        const where: any = {};
+        if (req.query.userName) where.userName = req.query.userName;
+        if (req.query.module) where.module = req.query.module;
+        if (req.query.severity) where.severity = req.query.severity;
+
+        if (req.query.startDate || req.query.endDate) {
+            where.timestamp = {};
+            if (req.query.startDate) where.timestamp.gte = new Date(req.query.startDate as string);
+            if (req.query.endDate) {
+                const to = new Date(req.query.endDate as string);
+                to.setHours(23, 59, 59, 999);
+                where.timestamp.lte = to;
+            }
+        }
+
+        if (req.query.search) {
+            const search = req.query.search as string;
+            where.OR = [
+                { detail: { contains: search, mode: 'insensitive' } },
+                { action: { contains: search, mode: 'insensitive' } },
+                { userName: { contains: search, mode: 'insensitive' } }
+            ];
+        }
+
+        const [logs, total] = await Promise.all([
+            (prisma as any).auditLog.findMany({
+                where,
+                orderBy: { timestamp: 'desc' },
+                skip,
+                take: limit
+            }),
+            (prisma as any).auditLog.count({ where })
+        ]);
+
+        res.json({
+            success: true,
+            data: logs,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
+        });
     } catch (error) {
         next(error);
     }

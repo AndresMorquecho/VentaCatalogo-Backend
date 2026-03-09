@@ -3,19 +3,26 @@ import { CashClosure } from '../domain/CashClosure.entity';
 import { ICashClosureRepository, CashClosureFilters } from '../domain/ICashClosureRepository';
 
 export class PrismaCashClosureRepository implements ICashClosureRepository {
-    async findAll(filters: CashClosureFilters): Promise<CashClosure[]> {
+    async findAll(filters: CashClosureFilters, pagination?: { skip: number; take: number }): Promise<{ data: CashClosure[]; total: number }> {
         const db = prisma as any;
-        const records = await db.cashClosure.findMany({
-            where: {
-                closedAt: {
-                    gte: filters.startDate,
-                    lte: filters.endDate,
-                },
+        const where = {
+            closedAt: {
+                gte: filters.startDate,
+                lte: filters.endDate,
             },
-            orderBy: { closedAt: 'desc' },
-        });
+        };
 
-        return records.map((r: any) => CashClosure.create({
+        const [records, total] = await Promise.all([
+            db.cashClosure.findMany({
+                where,
+                orderBy: { closedAt: 'desc' },
+                skip: pagination?.skip,
+                take: pagination?.take,
+            }),
+            db.cashClosure.count({ where })
+        ]);
+
+        const data = records.map((r: any) => CashClosure.create({
             fromDate: r.fromDate,
             toDate: r.toDate,
             notes: r.notes || undefined,
@@ -29,7 +36,10 @@ export class PrismaCashClosureRepository implements ICashClosureRepository {
             closedAt: r.closedAt,
             detailedReport: r.detailedReport,
         }, r.id));
+
+        return { data, total };
     }
+
 
     async findById(id: string): Promise<CashClosure | null> {
         const db = prisma as any;

@@ -22,6 +22,10 @@ export interface OrderProps {
   createdByName?: string;
   receivedByName?: string;
   deliveredByName?: string;
+  parentOrderId?: string;
+  orderNumber?: string;
+  trackingGuide?: string;
+  changeStatus?: string;
   items: OrderItem[];
   payments: OrderPayment[];
   createdAt: Date;
@@ -44,6 +48,8 @@ export interface OrderItem {
   brandId: string;
   brandName: string;
   link?: string;
+  status?: string;
+  possibleDeliveryDate?: Date;
 }
 
 export interface OrderPayment {

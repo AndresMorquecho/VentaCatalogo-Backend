@@ -19,8 +19,12 @@ export class CallController {
             clientId: req.query.client_id as string || req.query.clientId as string,
             orderId: req.query.order_id as string || req.query.orderId as string,
             reason: req.query.reason as string,
+            result: req.query.result as string,
             startDate: req.query.start_date ? new Date(req.query.start_date as string) : (req.query.startDate ? new Date(req.query.startDate as string) : undefined),
             endDate: req.query.end_date ? new Date(req.query.end_date as string) : (req.query.endDate ? new Date(req.query.endDate as string) : undefined),
+            search: req.query.search as string,
+            page: parseInt(req.query.page as string) || 1,
+            limit: parseInt(req.query.limit as string) || 50
         };
 
         const result = await this.getCallsUseCase.execute(filters);
@@ -29,7 +33,13 @@ export class CallController {
             return HttpResponse.fail(res, result.error!);
         }
 
-        return HttpResponse.ok(res, result.getValue());
+        const { data, ...pagination } = result.getValue();
+
+        return res.json({
+            success: true,
+            data,
+            pagination
+        });
     };
 
     create = async (req: AuthRequest, res: Response) => {

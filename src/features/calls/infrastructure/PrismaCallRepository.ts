@@ -3,24 +3,49 @@ import { Call } from '../domain/Call.entity';
 import { ICallRepository, CallFilters } from '../domain/ICallRepository';
 
 export class PrismaCallRepository implements ICallRepository {
-    async findAll(filters: CallFilters): Promise<Call[]> {
-        const records = await prisma.call.findMany({
-            where: {
-                clientId: filters.clientId,
-                orderId: filters.orderId,
-                createdAt: {
-                    gte: filters.startDate,
-                    lte: filters.endDate,
-                },
-            },
-            orderBy: { createdAt: 'desc' },
-            include: {
-                client: true,
-                order: true
-            }
-        });
+    async findAll(filters: CallFilters): Promise<{ data: Call[], total: number }> {
+        const page = Math.max(1, filters.page || 1);
+        const limit = Math.max(1, filters.limit || 50);
+        const skip = (page - 1) * limit;
 
-        return records.map((r: any) => Call.create({
+        const where: any = {
+            clientId: filters.clientId,
+            orderId: filters.orderId,
+            reason: filters.reason,
+            result: filters.result,
+            createdAt: {
+                gte: filters.startDate,
+                lte: filters.endDate,
+            },
+        };
+
+        if (filters.search) {
+            where.OR = [
+                { client: { firstName: { contains: filters.search, mode: 'insensitive' } } },
+                { client: { identificationNumber: { contains: filters.search, mode: 'insensitive' } } },
+                { notes: { contains: filters.search, mode: 'insensitive' } }
+            ];
+        }
+
+        // Clean up undefined filters
+        Object.keys(where).forEach(key => where[key] === undefined && delete where[key]);
+
+
+        const [records, total] = await Promise.all([
+            prisma.call.findMany({
+                where,
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit,
+                include: {
+                    client: true,
+                    order: true
+                }
+            }),
+            prisma.call.count({ where })
+        ]);
+
+        const data = records.map((r: any) => Call.create({
             clientId: r.clientId,
             orderId: r.orderId,
             reason: r.reason,
@@ -32,6 +57,8 @@ export class PrismaCallRepository implements ICallRepository {
             createdAt: r.createdAt,
             updatedAt: r.updatedAt,
         }, r.id));
+
+        return { data, total };
     }
 
     async findById(id: string): Promise<Call | null> {

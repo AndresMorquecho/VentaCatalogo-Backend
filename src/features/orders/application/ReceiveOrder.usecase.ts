@@ -9,7 +9,8 @@ export interface ReceiveOrderDTO {
   bankAccountId?: string;
   paymentMethod?: string;
   reference?: string;
-  receivedByName?: string; // Username del que recibe en bodega
+  receivedByName?: string;
+  reprogrammedItemIds?: string[];
 }
 
 export class ReceiveOrderUseCase {
@@ -80,6 +81,48 @@ export class ReceiveOrderUseCase {
         }
       });
 
+      // --- LÓGICA DE REPROGRAMACIÓN ---
+      if (data.reprogrammedItemIds && data.reprogrammedItemIds.length > 0) {
+        const itemsToReprogram = updatedOrder.items.filter(item =>
+          data.reprogrammedItemIds?.includes(item.id)
+        );
+
+        for (const item of itemsToReprogram) {
+          // 1. Eliminar del original
+          await tx.orderItem.delete({ where: { id: item.id } });
+
+          // 2. Crear nuevo pedido (Recibo Madre Reprogramado)
+          await tx.order.create({
+            data: {
+              id: `REPRO-${Date.now()}-${item.id.slice(0, 8)}`,
+              receiptNumber: order.receiptNumber,
+              salesChannel: order.salesChannel,
+              type: 'REPROGRAMACION',
+              brandId: item.brandId,
+              total: item.unitPrice.mul(item.quantity),
+              paymentMethod: 'EFECTIVO', // No importa mucho para el nuevo
+              transactionDate: order.transactionDate,
+              possibleDeliveryDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000), // 15 días después
+              status: 'POR_RECIBIR',
+              clientId: order.clientId,
+              clientName: order.clientName,
+              parentOrderId: order.id,
+              notes: `Reprogramado desde recepción de bodega. Ref: ${order.receiptNumber}`,
+              items: {
+                create: [{
+                  productName: item.productName,
+                  quantity: item.quantity,
+                  unitPrice: item.unitPrice,
+                  brandId: item.brandId,
+                  brandName: item.brandName,
+                  status: 'REPROGRAMADO'
+                } as any]
+              }
+            }
+          });
+        }
+      }
+
       // 3. Crear movimiento de inventario (ENTRY)
       await tx.inventoryMovement.create({
         data: {
@@ -138,14 +181,28 @@ export class ReceiveOrderUseCase {
           }
         }
 
+        // Generar número de recibo para el abono
+        const lastPayment = await (tx.orderPayment as any).findFirst({
+          where: { receiptNumber: { startsWith: 'REC-ABO-' } },
+          orderBy: { createdAt: 'desc' }
+        });
+
+        let nextNumber = 1;
+        if (lastPayment && (lastPayment as any).receiptNumber) {
+          const match = (lastPayment as any).receiptNumber.match(/(\d+)$/);
+          if (match) nextNumber = parseInt(match[1]) + 1;
+        }
+        const abonoReceiptNumber = `REC-ABO-${nextNumber.toString().padStart(6, '0')}`;
+
         // Crear pago en el pedido
-        await tx.orderPayment.create({
+        await (tx.orderPayment as any).create({
           data: {
             orderId: order.id,
             amount: data.abonoRecepcion,
             method: data.paymentMethod!,
             reference: data.reference || null,
-            description: 'Abono en recepción de bodega'
+            receiptNumber: abonoReceiptNumber,
+            description: 'Abono en recepción de bodega (Packing)'
           }
         });
 
@@ -238,9 +295,21 @@ export class ReceiveOrderUseCase {
         }
       }
 
+      // 8. Refetch order to include new payments/credits
+      const finalOrder = await tx.order.findUnique({
+        where: { id: orderId },
+        include: {
+          client: true,
+          brand: true,
+          bankAccount: true,
+          items: true,
+          payments: true
+        }
+      });
+
       // Retornar pedido actualizado con cálculos
       return {
-        ...updatedOrder,
+        ...finalOrder,
         paidAmount: newPaidAmount,
         pendingAmount: data.finalTotal - newPaidAmount
       };

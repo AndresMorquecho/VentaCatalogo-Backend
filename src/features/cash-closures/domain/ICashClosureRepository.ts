@@ -6,7 +6,8 @@ export interface CashClosureFilters {
 }
 
 export interface ICashClosureRepository {
-    findAll(filters: CashClosureFilters): Promise<CashClosure[]>;
+    findAll(filters: CashClosureFilters, pagination?: { skip: number; take: number }): Promise<{ data: CashClosure[]; total: number }>;
+
     findById(id: string): Promise<CashClosure | null>;
     save(cashClosure: CashClosure): Promise<CashClosure>;
     delete(id: string): Promise<void>;

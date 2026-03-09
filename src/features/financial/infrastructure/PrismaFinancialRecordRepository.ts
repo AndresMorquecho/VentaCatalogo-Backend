@@ -4,7 +4,7 @@ import { FinancialRecord, FinancialRecordType, FinancialSource, MovementType, Pa
 import { Prisma } from '@prisma/client';
 
 export class PrismaFinancialRecordRepository implements IFinancialRecordRepository {
-  async findAll(filters: FinancialRecordFilters, pagination?: { skip?: number; take?: number }): Promise<FinancialRecord[]> {
+  async findAll(filters: FinancialRecordFilters, pagination?: { skip?: number; take?: number }): Promise<{ data: FinancialRecord[]; total: number }> {
     const where: Prisma.FinancialRecordWhereInput = {};
 
     if (filters.clientId) where.clientId = filters.clientId;
@@ -19,14 +19,20 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
       if (filters.endDate) where.date.lte = filters.endDate;
     }
 
-    const records = await prisma.financialRecord.findMany({
-      where,
-      orderBy: { date: 'desc' },
-      skip: pagination?.skip,
-      take: pagination?.take
-    });
+    const [records, total] = await Promise.all([
+      prisma.financialRecord.findMany({
+        where,
+        orderBy: { date: 'desc' },
+        skip: pagination?.skip,
+        take: pagination?.take
+      }),
+      prisma.financialRecord.count({ where })
+    ]);
 
-    return records.map(this.toDomain);
+    return {
+      data: records.map(this.toDomain),
+      total
+    };
   }
 
   async findById(id: string): Promise<FinancialRecord | null> {

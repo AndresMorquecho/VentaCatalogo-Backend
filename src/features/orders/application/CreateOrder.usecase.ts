@@ -36,6 +36,8 @@ export interface CreateOrderDTO {
     reference?: string;
   };
   creditAmount?: number;
+  parentOrderId?: string;
+  orderNumber?: string;
 }
 
 
@@ -60,6 +62,26 @@ export class CreateOrderUseCase {
 
       if (!brand || !brand.isActive) {
         return Result.fail(`La marca ${brand?.name || ''} no está activa y no puede recibir pedidos.`);
+      }
+
+      // Validar si el cliente está bloqueado o tiene restricciones
+      const client = await prisma.client.findUnique({
+        where: { id: dto.clientId }
+      });
+
+      if (!client) {
+        return Result.fail('Cliente no encontrado');
+      }
+
+      if (client.isBlocked) {
+        return Result.fail('La empresaria está bloqueada y no puede realizar nuevos pedidos.');
+      }
+
+      if (client.paymentPreference === 'SOLO_CONTADO') {
+        const totalAbono = (dto.initialPayment.amount || 0) + (dto.creditAmount || 0);
+        if (totalAbono < dto.total) {
+          return Result.fail('Esta empresaria tiene restricción de SOLO CONTADO. El abono debe ser igual al total del pedido.');
+        }
       }
 
       if (!dto.initialPayment || dto.initialPayment.amount === undefined) {
@@ -102,7 +124,9 @@ export class CreateOrderUseCase {
           clientName: dto.clientName,
           notes: dto.notes,
           items,
-          payments: [], // Will be populated in transaction
+          payments: [],
+          parentOrderId: dto.parentOrderId,
+          orderNumber: dto.orderNumber,
           createdAt: dto.createdAt ? new Date(dto.createdAt) : new Date(),
           updatedAt: new Date(),
           version: 1
@@ -128,6 +152,8 @@ export class CreateOrderUseCase {
             transactionDate: rawOrder.transactionDate,
             possibleDeliveryDate: rawOrder.possibleDeliveryDate,
             status: rawOrder.status as any,
+            parentOrderId: rawOrder.parentOrderId,
+            orderNumber: rawOrder.orderNumber,
             clientId: rawOrder.clientId,
             clientName: rawOrder.clientName,
             notes: rawOrder.notes,
@@ -164,13 +190,27 @@ export class CreateOrderUseCase {
             ? dto.initialPayment.reference
             : `REF-INI-${Date.now()}`;
 
+          // Generar número de recibo para el abono inicial
+          const lastPayment = await (tx.orderPayment as any).findFirst({
+            where: { receiptNumber: { startsWith: 'REC-ABO-' } },
+            orderBy: { createdAt: 'desc' }
+          });
+
+          let nextNumber = 1;
+          if (lastPayment && (lastPayment as any).receiptNumber) {
+            const match = (lastPayment as any).receiptNumber.match(/(\d+)$/);
+            if (match) nextNumber = parseInt(match[1]) + 1;
+          }
+          const initialAbonoReceiptNumber = `REC-ABO-${nextNumber.toString().padStart(6, '0')}`;
+
           // Create order payment record
-          await tx.orderPayment.create({
+          await (tx.orderPayment as any).create({
             data: {
               orderId: createdOrder.id,
               amount: dto.initialPayment.amount,
               method: dto.initialPayment.method,
               reference: dto.initialPayment.reference,
+              receiptNumber: initialAbonoReceiptNumber,
               description: 'Abono inicial'
             }
           });
@@ -207,12 +247,26 @@ export class CreateOrderUseCase {
 
         // Handle separate credit usage
         if (dto.creditAmount && dto.creditAmount > 0) {
+          // Generar número de recibo para el abono de crédito
+          const lastCreditPayment = await (tx.orderPayment as any).findFirst({
+            where: { receiptNumber: { startsWith: 'REC-ABO-' } },
+            orderBy: { createdAt: 'desc' }
+          });
+
+          let nextCreditNumber = 1;
+          if (lastCreditPayment && (lastCreditPayment as any).receiptNumber) {
+            const match = (lastCreditPayment as any).receiptNumber.match(/(\d+)$/);
+            if (match) nextCreditNumber = parseInt(match[1]) + 1;
+          }
+          const creditAbonoReceiptNumber = `REC-ABO-${nextCreditNumber.toString().padStart(6, '0')}`;
+
           // Create credit payment in order
-          await tx.orderPayment.create({
+          await (tx.orderPayment as any).create({
             data: {
               orderId: createdOrder.id,
               amount: dto.creditAmount,
               method: 'CREDITO_CLIENTE',
+              receiptNumber: creditAbonoReceiptNumber,
               description: 'Saldo a favor aplicado'
             }
           });
@@ -295,6 +349,7 @@ export class CreateOrderUseCase {
         transactionDate: savedOrder.transactionDate,
         possibleDeliveryDate: savedOrder.possibleDeliveryDate,
         status: savedOrder.status as any,
+        orderNumber: savedOrder.orderNumber || undefined,
         clientId: savedOrder.clientId,
         clientName: savedOrder.clientName,
         notes: savedOrder.notes || undefined,
@@ -311,6 +366,7 @@ export class CreateOrderUseCase {
           amount: Number(p.amount),
           method: p.method,
           reference: p.reference || undefined,
+          receiptNumber: (p as any).receiptNumber || undefined,
           description: p.description || undefined,
           createdAt: p.createdAt
         })),

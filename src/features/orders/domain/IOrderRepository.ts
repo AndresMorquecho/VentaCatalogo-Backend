@@ -7,10 +7,12 @@ export interface OrderFilters {
   startDate?: Date;
   endDate?: Date;
   search?: string;
+  page?: number;
+  limit?: number;
 }
 
 export interface IOrderRepository {
-  findAll(filters: OrderFilters): Promise<Order[]>;
+  findAll(filters: OrderFilters): Promise<{ data: Order[]; total: number }>;
   findById(id: string): Promise<Order | null>;
   findByReceiptNumber(receiptNumber: string): Promise<Order | null>;
   save(order: Order): Promise<Order>;

@@ -82,6 +82,14 @@ router.post('/', authenticate, requirePermission('clients.create'), async (req: 
     if (req.body.reference) clientData.reference = req.body.reference;
     if (req.body.is_active !== undefined) clientData.isActive = req.body.is_active;
 
+    // Nuevos campos FASE 1 & 2
+    if (req.body.birth_date) clientData.birthDate = new Date(req.body.birth_date);
+    if (req.body.is_whatsapp !== undefined) clientData.isWhatsApp = req.body.is_whatsapp;
+    if (req.body.referred_by_id) clientData.referredById = req.body.referred_by_id;
+    if (req.body.is_blocked !== undefined) clientData.isBlocked = req.body.is_blocked;
+    if (req.body.payment_preference) clientData.paymentPreference = req.body.payment_preference;
+    clientData.lastDataUpdate = new Date();
+
     const client = await prisma.$transaction(async (tx) => {
       const newClient = await tx.client.create({ data: clientData });
       await tx.clientAccount.create({ data: { clientId: newClient.id } });
@@ -113,6 +121,16 @@ router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: 
     if (req.body.operator2 !== undefined) data.operator2 = req.body.operator2;
     if (req.body.reference !== undefined) data.reference = req.body.reference;
     if (req.body.is_active !== undefined) data.isActive = req.body.is_active;
+
+    // Nuevos campos FASE 1 & 2
+    if (req.body.birth_date !== undefined) data.birthDate = req.body.birth_date ? new Date(req.body.birth_date) : null;
+    if (req.body.is_whatsapp !== undefined) data.isWhatsApp = req.body.is_whatsapp;
+    if (req.body.referred_by_id !== undefined) data.referredById = req.body.referred_by_id;
+    if (req.body.is_blocked !== undefined) data.isBlocked = req.body.is_blocked;
+    if (req.body.payment_preference !== undefined) data.paymentPreference = req.body.payment_preference;
+
+    // Siempre que se edite, actualizamos la fecha de última actualización de datos
+    data.lastDataUpdate = new Date();
     data.updatedAt = new Date();
 
     const client = await prisma.client.update({

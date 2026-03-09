@@ -8,21 +8,43 @@ const router = Router();
 // GET /api/client-credits/summary
 router.get('/summary', authenticate, async (req: AuthRequest, res) => {
     try {
-        const clientAccounts = await prisma.clientAccount.findMany({
-            where: {
-                credits: {
-                    some: {
-                        status: 'AVAILABLE'
-                    }
-                }
-            },
-            include: {
-                client: true,
-                credits: {
-                    orderBy: { createdAt: 'desc' }
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
+        const skip = (page - 1) * limit;
+        const { search } = req.query;
+
+        const whereClause: any = {
+            credits: {
+                some: {
+                    status: 'AVAILABLE'
                 }
             }
-        });
+        };
+
+        if (search) {
+            whereClause.client = {
+                OR: [
+                    { firstName: { contains: search as string, mode: 'insensitive' } },
+                    { identificationNumber: { contains: search as string, mode: 'insensitive' } }
+                ]
+            };
+        }
+
+        const [clientAccounts, total] = await Promise.all([
+            prisma.clientAccount.findMany({
+                where: whereClause,
+                include: {
+                    client: true,
+                    credits: {
+                        orderBy: { createdAt: 'desc' }
+                    }
+                },
+                skip,
+                take: limit
+            }),
+            prisma.clientAccount.count({ where: whereClause })
+        ]);
+
 
         const summaries = clientAccounts.map(account => {
             const credits = account.credits;
@@ -54,7 +76,16 @@ router.get('/summary', authenticate, async (req: AuthRequest, res) => {
             .filter(s => s.totalCredit > 0.01)
             .sort((a, b) => b.totalCredit - a.totalCredit);
 
-        return HttpResponse.ok(res, filteredSummaries);
+        return res.json({
+            success: true,
+            data: filteredSummaries,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
+        });
     } catch (error) {
         return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error fetching client credits summary');
     }
@@ -63,6 +94,10 @@ router.get('/summary', authenticate, async (req: AuthRequest, res) => {
 // GET /api/client-credits
 router.get('/', authenticate, async (req: AuthRequest, res) => {
     try {
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
+        const skip = (page - 1) * limit;
+
         const clientId = req.query.clientId as string;
         const status = req.query.status as string;
 
@@ -73,16 +108,31 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
         }
         if (status) where.status = status;
 
-        const credits = await prisma.clientCredit.findMany({
-            where,
-            orderBy: { createdAt: 'desc' }
-        });
+        const [credits, total] = await Promise.all([
+            prisma.clientCredit.findMany({
+                where,
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.clientCredit.count({ where })
+        ]);
 
-        return HttpResponse.ok(res, credits);
+        return res.json({
+            success: true,
+            data: credits,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
+        });
     } catch (error) {
         return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error fetching client credits');
     }
 });
+
 
 // POST /api/client-credits
 router.post('/', authenticate, async (req: AuthRequest, res) => {

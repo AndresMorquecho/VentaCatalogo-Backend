@@ -11,7 +11,7 @@ export interface FinancialRecordFilters {
 }
 
 export interface IFinancialRecordRepository {
-  findAll(filters: FinancialRecordFilters): Promise<FinancialRecord[]>;
+  findAll(filters: FinancialRecordFilters, pagination?: { skip?: number; take?: number }): Promise<{ data: FinancialRecord[]; total: number }>;
   findById(id: string): Promise<FinancialRecord | null>;
   findByClient(clientId: string): Promise<FinancialRecord[]>;
   findByOrder(orderId: string): Promise<FinancialRecord[]>;

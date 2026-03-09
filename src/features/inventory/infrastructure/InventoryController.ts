@@ -6,10 +6,15 @@ export class InventoryController {
     constructor(private getInventoryMovementsUseCase: GetInventoryMovementsUseCase) { }
 
     getMovements = async (req: Request, res: Response) => {
+        const page = req.query.page ? parseInt(req.query.page as string) : undefined;
+        const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+
         const filters = {
             type: req.query.type as string | undefined,
             brandId: req.query.brandId as string | undefined,
-            orderId: req.query.orderId as string | undefined
+            orderId: req.query.orderId as string | undefined,
+            page,
+            limit
         };
 
         const result = await this.getInventoryMovementsUseCase.execute(filters);
@@ -18,6 +23,21 @@ export class InventoryController {
             return HttpResponse.fail(res, result.error!);
         }
 
-        return HttpResponse.ok(res, result.getValue());
+        const { data, total } = result.getValue();
+
+        if (page && limit) {
+            return res.json({
+                success: true,
+                data,
+                pagination: {
+                    page,
+                    limit,
+                    total,
+                    pages: Math.ceil(total / limit)
+                }
+            });
+        }
+
+        return HttpResponse.ok(res, data);
     };
 }

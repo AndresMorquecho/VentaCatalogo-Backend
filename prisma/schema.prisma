@@ -32,6 +32,16 @@ model Client {
   operator2            String?  @map("operator2")
   reference            String?
   isActive             Boolean  @default(true) @map("is_active")
+  
+  // Nuevos campos FASE 1 & 2
+  birthDate            DateTime? @map("birth_date")
+  isWhatsApp           Boolean   @default(false) @map("is_whatsapp")
+  referredById         String?   @map("referred_by_id")
+  lastDataUpdate       DateTime  @default(now()) @map("last_data_update")
+  lastOrderDate        DateTime? @map("last_order_date")
+  isBlocked            Boolean   @default(false) @map("is_blocked")
+  paymentPreference    String    @default("NORMAL") @map("payment_preference") // NORMAL, SOLO_CONTADO
+
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
@@ -41,6 +51,9 @@ model Client {
   financialRecords   FinancialRecord[]
   calls              Call[]
   inventoryMovements InventoryMovement[]
+  
+  referredBy         Client?   @relation("ClientReferral", fields: [referredById], references: [id])
+  referrals          Client[]  @relation("ClientReferral")
 
   @@index([firstName])
   @@index([email])
@@ -59,6 +72,7 @@ model Brand {
   orders             Order[]
   orderItems         OrderItem[]
   inventoryMovements InventoryMovement[]
+  loyaltyRules       LoyaltyRule[]
 
   @@map("brands")
 }
@@ -92,7 +106,7 @@ model BankAccount {
 
 model Order {
   id                   String    @id @default(uuid())
-  receiptNumber        String    @unique @map("receipt_number")
+  receiptNumber        String    @map("receipt_number")
   salesChannel         String    @map("sales_channel") // OFICINA, WHATSAPP, DOMICILIO
   type                 String // NORMAL, PREVENTA, REPROGRAMACION
   brandId              String    @map("brand_id")
@@ -112,6 +126,13 @@ model Order {
   createdByName        String?   @map("created_by_name")   // Usuario que creó el pedido
   receivedByName       String?   @map("received_by_name")  // Usuario que recibió en bodega
   deliveredByName      String?   @map("delivered_by_name") // Usuario que procesó la entrega
+  
+  // Nuevos campos FASE 1 & 3 & 4
+  parentOrderId        String?   @map("parent_order_id")
+  orderNumber          String?   @map("order_number")
+  trackingGuide        String?   @map("tracking_guide")
+  changeStatus         String?   @map("change_status") // OFICINA, EMPRESA, RECIBIDO
+
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
   version              Int       @default(1)
@@ -126,6 +147,9 @@ model Order {
   inventoryMovements InventoryMovement[]
   calls              Call[]
   rewardApplications RewardApplication[]
+  
+  parentOrder        Order?              @relation("OrderHeirs", fields: [parentOrderId], references: [id])
+  childOrders        Order[]             @relation("OrderHeirs")
 
   @@index([clientId])
   @@index([brandId])
@@ -144,6 +168,8 @@ model OrderItem {
   brandId     String  @map("brand_id")
   brandName   String  @map("brand_name")
   link        String?
+  status      String? // NORMAL, REPROGRAMADO
+  possibleDeliveryDate DateTime? @map("possible_delivery_date")
 
   // Relations
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -159,6 +185,7 @@ model OrderPayment {
   amount      Decimal  @db.Decimal(10, 2)
   method      String // EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE, CREDITO_CLIENTE
   reference   String?
+  receiptNumber String? @map("receipt_number") // Consecutivo propio del abono
   description String?
   createdAt   DateTime @default(now()) @map("created_at")
 
@@ -389,9 +416,12 @@ model LoyaltyRule {
   type        String // POR_MONTO, POR_PEDIDO, OTRO
   pointsValue Int      @map("points_value")
   condition   String?
+  brandId     String?  @map("brand_id")
   isActive    Boolean  @default(true) @map("is_active")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
+
+  brand       Brand?   @relation(fields: [brandId], references: [id])
 
   @@map("loyalty_rules")
 }

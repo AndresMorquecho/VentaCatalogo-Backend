@@ -24,10 +24,16 @@ router.get('/', authenticate, async (req: Request, res: Response, next: NextFunc
     if (startDate) filters.startDate = new Date(startDate as string);
     if (endDate) filters.endDate = new Date(endDate as string);
 
-    const records = await repository.findAll(filters, { skip, take: limit });
-    return HttpResponse.ok(res, {
+    const { data: records, total } = await repository.findAll(filters, { skip, take: limit });
+    return res.json({
+      success: true,
       data: records.map(r => r.toJSON()),
-      pagination: { page, limit, hasMore: records.length === limit }
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
     });
   } catch (error) {
     next(error);

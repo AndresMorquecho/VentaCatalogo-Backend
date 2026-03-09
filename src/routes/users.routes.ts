@@ -12,22 +12,53 @@ router.use(authenticate);
 // GET all users
 router.get('/', requirePermission('users.view'), async (req, res, next) => {
   try {
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        username: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-        lastAccessAt: true
+    const { search } = req.query;
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (search) {
+      where.OR = [
+        { username: { contains: search as string, mode: 'insensitive' } },
+        { role: { contains: search as string, mode: 'insensitive' } }
+      ];
+    }
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          username: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          lastAccessAt: true
+        },
+        orderBy: { username: 'asc' },
+        skip,
+        take: limit
+      }),
+      prisma.user.count({ where })
+    ]);
+
+
+    res.json({
+      success: true,
+      data: users,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
       }
     });
-
-    res.json({ success: true, data: users });
   } catch (error) {
     next(error);
   }
 });
+
 
 // CREATE user
 router.post('/', requirePermission('users.create'), async (req, res, next) => {

@@ -6,12 +6,39 @@ const router = Router();
 
 router.get('/', authenticate, requirePermission('brands.view'), async (req, res, next) => {
   try {
-    const { include_inactive } = req.query;
-    const brands = await prisma.brand.findMany({
-      where: include_inactive === 'true' ? {} : { isActive: true },
-      orderBy: { name: 'asc' }
+    const { include_inactive, search } = req.query;
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const skip = (page - 1) * limit;
+
+    const where: any = include_inactive === 'true' ? {} : { isActive: true };
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { description: { contains: search as string, mode: 'insensitive' } }
+      ];
+    }
+
+    const [brands, total] = await Promise.all([
+      prisma.brand.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit
+      }),
+      prisma.brand.count({ where })
+    ]);
+
+    return res.json({
+      success: true,
+      data: brands,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
     });
-    return res.json({ success: true, data: brands });
   } catch (error) {
     return next(error);
   }

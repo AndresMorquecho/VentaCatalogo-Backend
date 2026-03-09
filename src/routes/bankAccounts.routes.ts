@@ -6,17 +6,37 @@ const router = Router();
 
 router.get('/', authenticate, requirePermission('bank_accounts.view'), async (req, res, next) => {
   try {
-    const accounts = await prisma.bankAccount.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' }
-    });
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit as string) || 500));
+    const skip = (page - 1) * limit;
+
+    const where = { isActive: true };
+
+    const [accounts, total] = await Promise.all([
+      prisma.bankAccount.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit
+      }),
+      prisma.bankAccount.count({ where })
+    ]);
 
     const formattedAccounts = accounts.map(acc => ({
       ...acc,
       currentBalance: Number(acc.currentBalance)
     }));
 
-    res.json({ success: true, data: formattedAccounts });
+    res.json({
+      success: true,
+      data: formattedAccounts,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     next(error);
   }
