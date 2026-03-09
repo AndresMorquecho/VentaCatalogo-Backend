@@ -106,7 +106,7 @@ model BankAccount {
 
 model Order {
   id                   String    @id @default(uuid())
-  receiptNumber        String    @map("receipt_number")
+  receiptNumber        String    @unique @map("receipt_number")
   salesChannel         String    @map("sales_channel") // OFICINA, WHATSAPP, DOMICILIO
   type                 String // NORMAL, PREVENTA, REPROGRAMACION
   brandId              String    @map("brand_id")

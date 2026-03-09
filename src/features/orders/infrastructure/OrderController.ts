@@ -114,12 +114,13 @@ export class OrderController {
         createdByName: req.user!.username,
         createdAt: req.body.created_at ? new Date(req.body.created_at) : undefined,
         initialPayment: {
-
           amount: Number(req.body.deposit || 0),
           method: req.body.payment_method,
           reference: req.body.transaction_reference || ''
         },
-        creditAmount: Number(req.body.credit_to_use ?? req.body.creditToUse ?? 0)
+        creditAmount: Number(req.body.credit_to_use ?? req.body.creditToUse ?? 0),
+        parentOrderId: req.body.parentOrderId || req.body.parent_order_id,
+        orderNumber: req.body.orderNumber || req.body.order_number
       };
 
       const result = await this.createOrderUseCase.execute(dto, req.user!.username);

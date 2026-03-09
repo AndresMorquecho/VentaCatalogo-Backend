@@ -153,7 +153,7 @@ export class CreateOrderUseCase {
             possibleDeliveryDate: rawOrder.possibleDeliveryDate,
             status: rawOrder.status as any,
             parentOrderId: rawOrder.parentOrderId,
-            orderNumber: rawOrder.orderNumber,
+            orderNumber: (rawOrder as any).orderNumber,
             clientId: rawOrder.clientId,
             clientName: rawOrder.clientName,
             notes: rawOrder.notes,
@@ -161,10 +161,9 @@ export class CreateOrderUseCase {
             createdAt: rawOrder.createdAt,
             version: rawOrder.version,
             items: {
-
               create: order.items
             }
-          },
+          } as any,
           include: {
             items: true,
             payments: true,
@@ -349,7 +348,8 @@ export class CreateOrderUseCase {
         transactionDate: savedOrder.transactionDate,
         possibleDeliveryDate: savedOrder.possibleDeliveryDate,
         status: savedOrder.status as any,
-        orderNumber: savedOrder.orderNumber || undefined,
+        parentOrderId: savedOrder.parentOrderId || undefined,
+        orderNumber: (savedOrder as any).orderNumber || undefined,
         clientId: savedOrder.clientId,
         clientName: savedOrder.clientName,
         notes: savedOrder.notes || undefined,

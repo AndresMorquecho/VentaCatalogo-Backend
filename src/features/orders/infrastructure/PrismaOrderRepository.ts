@@ -62,7 +62,7 @@ export class PrismaOrderRepository implements IOrderRepository {
   }
 
   async findByReceiptNumber(receiptNumber: string): Promise<Order | null> {
-    const order = await prisma.order.findUnique({
+    const order = await prisma.order.findFirst({
       where: { receiptNumber },
       include: {
         items: true,
@@ -152,6 +152,8 @@ export class PrismaOrderRepository implements IOrderRepository {
         createdByName: raw.createdByName || undefined,
         receivedByName: raw.receivedByName || undefined,
         deliveredByName: raw.deliveredByName || undefined,
+        parentOrderId: raw.parentOrderId || undefined,
+        orderNumber: raw.orderNumber || undefined,
         items: raw.items.map((item: any) => ({
           id: item.id,
           productName: item.productName,
@@ -201,6 +203,8 @@ export class PrismaOrderRepository implements IOrderRepository {
       createdByName: json.createdByName,
       receivedByName: json.receivedByName,
       deliveredByName: json.deliveredByName,
+      parentOrderId: json.parentOrderId,
+      orderNumber: json.orderNumber,
       createdAt: json.createdAt,
       updatedAt: json.updatedAt,
       version: json.version
