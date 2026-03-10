@@ -9,6 +9,7 @@ import { IOrderRepository } from '../domain/IOrderRepository';
 import { Order } from '../domain/Order.entity';
 import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
 import { AuthRequest } from '../../../middleware/auth';
+import { BatchUpdateOrdersUseCase } from '../application/BatchUpdateOrders.usecase';
 
 export class OrderController {
   constructor(
@@ -18,7 +19,8 @@ export class OrderController {
     private receiveOrderUseCase?: ReceiveOrderUseCase,
     private deliverOrderUseCase?: DeliverOrderUseCase,
     private deleteOrderUseCase?: DeleteOrderUseCase,
-    private batchCreateOrderUseCase?: any // Added for batch support
+    private batchCreateOrderUseCase?: any,
+    private batchUpdateOrdersUseCase?: BatchUpdateOrdersUseCase
   ) { }
 
   getAll = async (req: Request, res: Response) => {
@@ -177,16 +179,62 @@ export class OrderController {
       if (result.isFailure) {
         return HttpResponse.badRequest(res, result.error!);
       }
-
       return HttpResponse.created(res, result.getValue().toJSON());
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to create order');
     }
   };
 
+  getById = async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const order = await this.orderRepository.findById(id);
+
+      if (!order) {
+        return HttpResponse.notFound(res, 'Order not found');
+      }
+
+      return HttpResponse.ok(res, order.toJSON());
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to get order');
+    }
+  };
+
+  getByReceiptNumber = async (req: Request, res: Response) => {
+    try {
+      const { receiptNumber } = req.params;
+      console.log(`[OrderController] getByReceiptNumber called for: ${receiptNumber}`);
+      const orders = await prisma.order.findMany({
+        where: { receiptNumber },
+        include: {
+          items: true,
+          payments: true,
+          brand: true,
+          childOrders: {
+            include: {
+              items: true,
+              payments: true,
+              brand: true
+            }
+          }
+        },
+        orderBy: { createdAt: 'asc' }
+      });
+
+      if (orders.length === 0) {
+        return HttpResponse.notFound(res, 'Receipt group not found');
+      }
+
+      return HttpResponse.ok(res, orders);
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to get receipt group');
+    }
+  };
+
   update = async (req: AuthRequest, res: Response) => {
     try {
       const { id } = req.params;
+      console.log(`[OrderController] update called for ID: ${id}`);
 
       // Find existing order with full details
       const order = await prisma.order.findUnique({
@@ -232,22 +280,118 @@ export class OrderController {
         bankAccountId: req.body.bank_account_id,
         transactionDate: req.body.transaction_date ? new Date(req.body.transaction_date) : undefined,
         possibleDeliveryDate: req.body.possible_delivery_date ? new Date(req.body.possible_delivery_date) : undefined,
+        orderNumber: req.body.orderNumber || req.body.order_number,
         clientId: req.body.client_id,
         clientName: req.body.client_name,
         notes: req.body.notes,
         createdAt: req.body.created_at ? new Date(req.body.created_at) : undefined,
-        updatedAt: new Date(),
-        version: { increment: 1 }
+        updatedAt: new Date()
       };
-
 
       // Remove undefined fields
       Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
 
-      const savedOrder = await prisma.order.update({
-        where: { id },
-        data: updateData,
-        include: { items: true, payments: true }
+      const savedOrder = await prisma.$transaction(async (tx) => {
+        // Update Order
+        const updated = await tx.order.update({
+          where: { id },
+          data: updateData,
+          include: { items: true, payments: true }
+        });
+
+        // 4. Update items if provided
+        if (req.body.items && Array.isArray(req.body.items)) {
+          // Simplificación: eliminar y recrear items para este pedido individual
+          await tx.orderItem.deleteMany({ where: { orderId: id } });
+          for (const item of req.body.items) {
+            await tx.orderItem.create({
+              data: {
+                id: item.id || crypto.randomUUID(),
+                orderId: id,
+                productName: item.productName || item.brand_name || item.brandName,
+                quantity: Number(item.quantity) || 1,
+                unitPrice: Number(item.unitPrice) || Number(item.unit_price) || 0,
+                brandId: item.brandId || item.brand_id || updateData.brandId || updated.brandId,
+                brandName: item.brandName || item.brand_name || ""
+              }
+            });
+          }
+        }
+
+        // 5. Update deposit if provided
+        if (req.body.deposit !== undefined) {
+          const newDeposit = Number(req.body.deposit);
+          const currentDeposit = updated.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+          const diff = newDeposit - currentDeposit;
+
+          if (Math.abs(diff) > 0.01) {
+            // Must have only one payment or no payments
+            if (updated.payments.length > 1) {
+              throw new Error('No se puede editar el abono porque ya existen múltiples abonos vinculados.');
+            }
+
+            if (updated.payments.length === 1) {
+              const payment = updated.payments[0];
+              await tx.orderPayment.update({
+                where: { id: payment.id },
+                data: { amount: newDeposit }
+              });
+
+              if (updated.bankAccountId) {
+                await tx.bankAccount.update({
+                  where: { id: updated.bankAccountId },
+                  data: { currentBalance: { increment: diff } }
+                });
+              }
+
+              // Update Financial Record
+              await tx.financialRecord.updateMany({
+                where: { orderId: id, amount: payment.amount, type: 'PAYMENT' },
+                data: { amount: newDeposit }
+              });
+            } else if (newDeposit > 0) {
+              // Create new payment if it had none
+              const paymentReceipt = `REC-ABO-${Date.now().toString().slice(-6)}`;
+              await tx.orderPayment.create({
+                data: {
+                  id: crypto.randomUUID(),
+                  orderId: id,
+                  amount: newDeposit,
+                  method: updated.paymentMethod,
+                  receiptNumber: paymentReceipt,
+                  description: 'Abono inicial (Edit)'
+                }
+              });
+
+              if (updated.bankAccountId) {
+                await tx.bankAccount.update({
+                  where: { id: updated.bankAccountId },
+                  data: { currentBalance: { increment: newDeposit } }
+                });
+                await tx.financialRecord.create({
+                  data: {
+                    type: 'PAYMENT',
+                    source: 'ORDER_PAYMENT',
+                    movementType: 'INCOME',
+                    referenceNumber: `REF-EDIT-${Date.now()}`,
+                    amount: newDeposit,
+                    date: new Date(),
+                    clientId: updated.clientId,
+                    clientName: updated.clientName,
+                    orderId: id,
+                    createdBy: req.user!.username,
+                    notes: `Abono inicial editado ${updated.receiptNumber}`,
+                    bankAccountId: updated.bankAccountId,
+                    paymentMethod: updated.paymentMethod,
+                    version: 1
+                  }
+                });
+              }
+            }
+          }
+        }
+
+        return updated;
       });
 
       return HttpResponse.ok(res, savedOrder);
@@ -272,6 +416,52 @@ export class OrderController {
       return HttpResponse.ok(res, { message: 'Pedido y registros asociados eliminados permanentemente, incluyendo saldos y créditos generados.' });
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to delete order');
+    }
+  };
+
+  batchUpdate = async (req: AuthRequest, res: Response) => {
+    try {
+      const { receiptNumber } = req.params;
+      console.log(`[OrderController] batchUpdate called for receipt: ${receiptNumber}`);
+
+      if (!this.batchUpdateOrdersUseCase) {
+        return HttpResponse.fail(res, 'BatchUpdateOrdersUseCase not initialized');
+      }
+
+      const dto = {
+        receiptNumber: receiptNumber || req.body.receipt_number,
+        clientId: req.body.client_id,
+        salesChannel: req.body.sales_channel,
+        createdAt: req.body.created_at ? new Date(req.body.created_at) : new Date(),
+        paymentMethod: req.body.payment_method,
+        bankAccountId: req.body.bank_account_id,
+        transactionDate: req.body.transaction_date ? new Date(req.body.transaction_date) : new Date(),
+        notes: req.body.notes,
+        toDelete: req.body.to_delete || [],
+        creditAmount: Number(req.body.credit_amount || 0),
+        orders: req.body.orders.map((o: any) => ({
+          id: o.id,
+          brandId: o.brandId || o.brand_id,
+          brandName: o.brandName || o.brand_name,
+          total: Number(o.total || 0),
+          deposit: Number(o.deposit || 0),
+          type: o.type,
+          possibleDeliveryDate: new Date(o.possibleDeliveryDate || o.possible_delivery_date),
+          orderNumber: o.orderNumber || o.order_number,
+          quantity: Number(o.quantity || 1)
+        }))
+      };
+
+      const result = await this.batchUpdateOrdersUseCase.execute(dto, req.user!.username);
+
+      if (result.isFailure) {
+        return HttpResponse.badRequest(res, result.error!);
+      }
+
+      return HttpResponse.ok(res, result.getValue());
+    } catch (error) {
+      console.error('Batch update error in controller:', error);
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Batch update failed');
     }
   };
 
