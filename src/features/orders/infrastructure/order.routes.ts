@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { OrderController } from './OrderController';
 import { CreateOrderUseCase } from '../application/CreateOrder.usecase';
+import { BatchCreateOrderUseCase } from '../application/BatchCreateOrder.usecase';
 import { GetOrdersUseCase } from '../application/GetOrders.usecase';
 import { ReceiveOrderUseCase } from '../application/ReceiveOrder.usecase';
 import { DeliverOrderUseCase } from '../application/DeliverOrder.usecase';
@@ -19,6 +20,7 @@ const bankAccountRepository = new PrismaBankAccountRepository();
 
 // Use Cases
 const createOrderUseCase = new CreateOrderUseCase(orderRepository, financialRepository, bankAccountRepository);
+const batchCreateOrderUseCase = new BatchCreateOrderUseCase(orderRepository);
 const getOrdersUseCase = new GetOrdersUseCase(orderRepository);
 const receiveOrderUseCase = new ReceiveOrderUseCase(orderRepository, financialRepository);
 const deliverOrderUseCase = new DeliverOrderUseCase(orderRepository, financialRepository);
@@ -31,7 +33,8 @@ const orderController = new OrderController(
   orderRepository,
   receiveOrderUseCase,
   deliverOrderUseCase,
-  deleteOrderUseCase
+  deleteOrderUseCase,
+  batchCreateOrderUseCase
 );
 
 // Routes — READ
@@ -41,6 +44,7 @@ router.get('/check-receipt/:receiptNumber', authenticate, requirePermission('ord
 
 // Routes — WRITE (granular RBAC)
 router.post('/', authenticate, requirePermission('orders.create'), orderController.create);
+router.post('/batch', authenticate, requirePermission('orders.create'), orderController.batchCreate);
 router.post('/batch-reception', authenticate, requirePermission('reception.confirm'), orderController.batchReception);
 router.post('/batch-reception-simple', authenticate, requirePermission('reception.confirm'), orderController.batchReceptionSimple);
 router.post('/:id/receive', authenticate, requirePermission('reception.confirm'), orderController.receiveOrder);

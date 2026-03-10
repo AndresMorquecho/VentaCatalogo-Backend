@@ -10,11 +10,15 @@ export class PrismaOrderRepository implements IOrderRepository {
     if (filters.status) where.status = filters.status;
     if (filters.clientId) where.clientId = filters.clientId;
     if (filters.brandId) where.brandId = filters.brandId;
+    if (filters.onlyParents) {
+      where.parentOrderId = null;
+    }
     if (filters.search) {
       where.OR = [
         { receiptNumber: { contains: filters.search, mode: 'insensitive' } },
         { clientName: { contains: filters.search, mode: 'insensitive' } },
-        { invoiceNumber: { contains: filters.search, mode: 'insensitive' } }
+        { invoiceNumber: { contains: filters.search, mode: 'insensitive' } },
+        { orderNumber: { contains: filters.search, mode: 'insensitive' } }
       ];
     }
     if (filters.startDate || filters.endDate) {
@@ -33,7 +37,17 @@ export class PrismaOrderRepository implements IOrderRepository {
         include: {
           items: true,
           payments: true,
-          brand: true
+          brand: true,
+          childOrders: {
+            include: {
+              items: true,
+              payments: true,
+              brand: true
+            }
+          },
+          _count: {
+            select: { childOrders: true }
+          }
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -43,7 +57,7 @@ export class PrismaOrderRepository implements IOrderRepository {
     ]);
 
     return {
-      data: orders.map(this.toDomain),
+      data: orders.map(order => this.toDomain(order)),
       total
     };
   }
@@ -54,7 +68,14 @@ export class PrismaOrderRepository implements IOrderRepository {
       include: {
         items: true,
         payments: true,
-        brand: true
+        brand: true,
+        childOrders: {
+          include: {
+            items: true,
+            payments: true,
+            brand: true
+          }
+        }
       }
     });
 
@@ -67,7 +88,14 @@ export class PrismaOrderRepository implements IOrderRepository {
       include: {
         items: true,
         payments: true,
-        brand: true
+        brand: true,
+        childOrders: {
+          include: {
+            items: true,
+            payments: true,
+            brand: true
+          }
+        }
       }
     });
 
@@ -171,6 +199,8 @@ export class PrismaOrderRepository implements IOrderRepository {
           description: payment.description,
           createdAt: payment.createdAt
         })),
+        childOrders: raw.childOrders ? raw.childOrders.map((child: any) => this.toDomain(child)) : undefined,
+        childOrdersCount: raw._count?.childOrders,
         createdAt: raw.createdAt,
         updatedAt: raw.updatedAt,
         version: raw.version

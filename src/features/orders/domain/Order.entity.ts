@@ -28,6 +28,8 @@ export interface OrderProps {
   changeStatus?: string;
   items: OrderItem[];
   payments: OrderPayment[];
+  childOrders?: Order[];
+  childOrdersCount?: number;
   createdAt: Date;
   updatedAt: Date;
   version: number;

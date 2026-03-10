@@ -9,6 +9,7 @@ export interface OrderFilters {
   search?: string;
   page?: number;
   limit?: number;
+  onlyParents?: boolean;
 }
 
 export interface IOrderRepository {

@@ -17,7 +17,8 @@ export class OrderController {
     private orderRepository: IOrderRepository,
     private receiveOrderUseCase?: ReceiveOrderUseCase,
     private deliverOrderUseCase?: DeliverOrderUseCase,
-    private deleteOrderUseCase?: DeleteOrderUseCase
+    private deleteOrderUseCase?: DeleteOrderUseCase,
+    private batchCreateOrderUseCase?: any // Added for batch support
   ) { }
 
   getAll = async (req: Request, res: Response) => {
@@ -31,6 +32,7 @@ export class OrderController {
       startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
       endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
       search: req.query.search as string,
+      onlyParents: req.query.onlyParents === 'true',
       page,
       limit
     };
@@ -76,6 +78,53 @@ export class OrderController {
       return HttpResponse.ok(res, { exists: !!order });
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to check receipt number');
+    }
+  };
+
+  batchCreate = async (req: AuthRequest, res: Response) => {
+    try {
+      const dto = {
+        receiptNumber: req.body.receipt_number,
+        clientId: req.body.client_id,
+        salesChannel: req.body.sales_channel,
+        createdAt: req.body.created_at ? new Date(req.body.created_at) : new Date(),
+        paymentMethod: req.body.payment_method,
+        bankAccountId: req.body.bank_account_id,
+        transactionDate: new Date(req.body.transaction_date),
+        createdByName: req.user!.username,
+        initialPayment: {
+          amount: Number(req.body.deposit || 0),
+          method: req.body.payment_method,
+          reference: req.body.transaction_reference || ''
+        },
+        creditAmount: Number(req.body.credit_to_use ?? 0),
+        orders: req.body.orders.map((o: any) => ({
+          brandId: o.brand_id,
+          brandName: o.brand_name,
+          total: Number(o.total),
+          type: o.type,
+          possibleDeliveryDate: new Date(o.possible_delivery_date),
+          items: o.items.map((i: any) => ({
+            productName: i.product_name,
+            quantity: Number(i.quantity),
+            unitPrice: Number(i.unit_price)
+          }))
+        }))
+      };
+
+      if (!this.batchCreateOrderUseCase) {
+        return HttpResponse.fail(res, 'BatchCreateOrderUseCase not initialized');
+      }
+
+      const result = await this.batchCreateOrderUseCase.execute(dto, req.user!.username);
+
+      if (result.isFailure) {
+        return HttpResponse.badRequest(res, result.error!);
+      }
+
+      return HttpResponse.created(res, result.getValue().map((o: any) => o.toJSON()));
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to batch create orders');
     }
   };
 
