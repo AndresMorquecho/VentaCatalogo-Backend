@@ -62,12 +62,14 @@ export class RegisterOrderPaymentUseCase {
                         ? dto.referenceNumber
                         : await this.financialRepository.generateReferenceNumber();
 
+                    const payRef = await this.financialRepository.generatePaymentReceiptNumber();
                     mainPayment = await tx.orderPayment.create({
                         data: {
                             orderId: dto.orderId,
                             amount: dto.amount,
                             method: dto.method,
                             reference: dto.referenceNumber || null,
+                            receiptNumber: payRef,
                             description: dto.notes || 'Abono posterior'
                         }
                     });
@@ -145,11 +147,13 @@ export class RegisterOrderPaymentUseCase {
                         });
                     }
 
+                    const creditPayRef = await this.financialRepository.generatePaymentReceiptNumber();
                     creditPayment = await tx.orderPayment.create({
                         data: {
                             orderId: dto.orderId,
                             amount: dto.creditAmount,
                             method: 'CREDITO_CLIENTE',
+                            receiptNumber: creditPayRef,
                             description: 'Abono con saldo a favor'
                         }
                     });

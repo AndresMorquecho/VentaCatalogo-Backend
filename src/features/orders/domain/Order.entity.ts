@@ -59,6 +59,7 @@ export interface OrderPayment {
   amount: number;
   method: string;
   reference?: string;
+  receiptNumber?: string;
   description?: string;
   createdAt: Date;
 }

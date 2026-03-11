@@ -10,6 +10,10 @@ export interface ReceiveOrderDTO {
   paymentMethod?: string;
   reference?: string;
   receivedByName?: string;
+  documentType?: string;
+  entryDate?: string; // Optional custom entry date
+  packingNumber?: string;
+  packingTotal?: number;
   reprogrammedItemIds?: string[];
 }
 
@@ -21,8 +25,8 @@ export class ReceiveOrderUseCase {
 
   async execute(orderId: string, data: ReceiveOrderDTO, userId: string) {
     // Validaciones iniciales
-    if (!data.finalTotal || data.finalTotal <= 0) {
-      throw new Error('El valor real de factura debe ser mayor a 0');
+    if (data.finalTotal === undefined || data.finalTotal === null || data.finalTotal < 0) {
+      throw new Error('El valor real de factura debe ser mayor o igual a 0');
     }
 
     if (data.abonoRecepcion && data.abonoRecepcion > 0) {
@@ -67,7 +71,10 @@ export class ReceiveOrderUseCase {
           status: 'RECIBIDO_EN_BODEGA',
           realInvoiceTotal: data.finalTotal,
           invoiceNumber: data.invoiceNumber || null,
-          receptionDate: new Date(),
+          documentType: data.documentType || 'FACTURA',
+          packingNumber: data.packingNumber || null,
+          packingTotal: data.packingTotal || null,
+          receptionDate: data.entryDate ? new Date(data.entryDate) : new Date(),
           receivedByName: data.receivedByName || null,
           updatedAt: new Date(),
           version: { increment: 1 }

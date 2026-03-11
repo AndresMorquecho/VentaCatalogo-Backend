@@ -20,5 +20,6 @@ export interface IFinancialRecordRepository {
   update(record: FinancialRecord): Promise<FinancialRecord>;
   delete(id: string): Promise<void>;
   generateReferenceNumber(): Promise<string>;
+  generatePaymentReceiptNumber(): Promise<string>;
   createOrderPaymentRecord(data: any, createdBy: string, tx?: any): Promise<void>;
 }

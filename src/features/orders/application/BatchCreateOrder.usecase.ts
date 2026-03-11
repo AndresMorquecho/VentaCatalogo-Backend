@@ -83,18 +83,33 @@ export class BatchCreateOrderUseCase {
           where: { receiptNumber }
         });
 
+        const clientName = (client as any).lastName 
+          ? `${client.firstName} ${(client as any).lastName}`
+          : client.firstName;
+
         if (existingReceipt) {
           receiptId = existingReceipt.id;
         } else {
           receiptId = crypto.randomUUID();
+          
+          // Fix: Ensure createdAt has full timestamp even if only date was provided
+          let receiptCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
+          // If the date provided is exactly at midnight UTC, it likely came from a date-only input.
+          // In that case, we should use the current time but keep the same date if possible,
+          // or at least ensure it's not exactly midnight if it's meant for TODAY.
+          const now = new Date();
+          if (receiptCreatedAt.getHours() === 0 && receiptCreatedAt.getMinutes() === 0 && receiptCreatedAt.toDateString() === now.toDateString()) {
+             receiptCreatedAt = now;
+          }
+
           await (tx as any).orderReceipt.create({
             data: {
               id: receiptId,
               receiptNumber,
               clientId: dto.clientId,
-              clientName: client.firstName,
+              clientName: clientName,
               salesChannel: dto.salesChannel,
-              createdAt: dto.createdAt || new Date(),
+              createdAt: receiptCreatedAt,
               transactionDate: dto.transactionDate,
               paymentMethod: dto.paymentMethod,
               bankAccountId: dto.bankAccountId || null,
@@ -107,18 +122,19 @@ export class BatchCreateOrderUseCase {
         }
 
         // Generar consecutivos de recibo para abonos dentro de la transacción
-        const lastPayment = await (tx.orderPayment as any).findFirst({
-          where: { receiptNumber: { startsWith: 'REC-ABO-' } },
-          orderBy: { createdAt: 'desc' }
+        const lastPayment = await prisma.orderPayment.findFirst({
+          orderBy: { createdAt: 'desc' },
+          select: { receiptNumber: true }
         });
 
-        let nextPayNum = 1;
-        if (lastPayment && (lastPayment as any).receiptNumber) {
-          const match = (lastPayment as any).receiptNumber.match(/(\d+)$/);
-          if (match) nextPayNum = parseInt(match[1], 10) + 1;
+        let nextPaymentNumber = 1;
+        if (lastPayment && lastPayment.receiptNumber && lastPayment.receiptNumber.startsWith('AB')) {
+          nextPaymentNumber = parseInt(lastPayment.receiptNumber.replace('AB', '')) + 1;
         }
 
-        const nextPaymentReceiptNumber = () => `REC-ABO-${(nextPayNum++).toString().padStart(6, '0')}`;
+        const nextPaymentReceiptNumber = () => {
+          return `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`;
+        };
 
         for (let i = 0; i < dto.orders.length; i++) {
           const orderDto = dto.orders[i];
@@ -163,6 +179,13 @@ export class BatchCreateOrderUseCase {
             });
           }
 
+          // Fix: Ensure Order createdAt has full timestamp
+          let orderCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
+          const now = new Date();
+          if (orderCreatedAt.getHours() === 0 && orderCreatedAt.getMinutes() === 0 && orderCreatedAt.toDateString() === now.toDateString()) {
+             orderCreatedAt = now;
+          }
+
           // Create order in DB (incluye payments anidados)
           const createdOrder = await tx.order.create({
             data: {
@@ -181,10 +204,10 @@ export class BatchCreateOrderUseCase {
               parentOrderId: i > 0 ? parentId : null,
               orderNumber: orderDto.orderNumber || null,
               clientId: dto.clientId,
-              clientName: client.firstName,
+              clientName: clientName,
               notes: '',
               createdByName: dto.createdByName || createdBy,
-              createdAt: dto.createdAt || new Date(),
+              createdAt: orderCreatedAt,
               version: 1,
               items: {
                 create: itemsData
@@ -215,11 +238,11 @@ export class BatchCreateOrderUseCase {
                 movementType: 'INCOME',
                 referenceNumber: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
                   ? dto.initialPayment.reference
-                  : `REF-INI-${Date.now()}-${i}`,
+                  : `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
                 amount: rowDeposit,
                 date: new Date(),
                 clientId: dto.clientId,
-                clientName: client.firstName,
+                clientName: clientName,
                 orderId,
                 orderPaymentId: rowPaymentId,
                 createdBy,

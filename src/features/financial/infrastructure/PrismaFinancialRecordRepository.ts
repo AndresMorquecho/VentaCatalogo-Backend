@@ -112,6 +112,22 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
     return `FIN-${today}-${String(count + 1).padStart(4, '0')}`;
   }
 
+  async generatePaymentReceiptNumber(): Promise<string> {
+    const lastPayment = await prisma.orderPayment.findFirst({
+      where: { receiptNumber: { startsWith: 'AB' } },
+      orderBy: { receiptNumber: 'desc' },
+      select: { receiptNumber: true }
+    });
+
+    let count = 0;
+    if (lastPayment && lastPayment.receiptNumber) {
+      const match = lastPayment.receiptNumber.match(/\d+/);
+      if (match) count = parseInt(match[0], 10);
+    }
+
+    return `AB${String(count + 1).padStart(3, '0')}`;
+  }
+
   async createOrderPaymentRecord(data: any, createdBy: string, tx?: any): Promise<void> {
     const client = tx || prisma;
     const ref = data.referenceNumber || await this.generateReferenceNumber();

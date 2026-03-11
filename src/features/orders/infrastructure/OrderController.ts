@@ -48,20 +48,18 @@ export class OrderController {
     const { data, total } = result.getValue();
     const orders = data.map(order => order.toJSON());
 
-    if (page && limit) {
-      return res.json({
-        success: true,
-        data: orders,
-        pagination: {
-          page,
-          limit,
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      });
-    }
-
-    return HttpResponse.ok(res, orders);
+    // Always return a paginated-like structure so httpClient.ts doesn't unwrap the data field
+    // and the frontend hooks can consistently access .data
+    return res.json({
+      success: true,
+      data: orders,
+      pagination: {
+        page: page || 1,
+        limit: limit || total,
+        total,
+        pages: limit ? Math.ceil(total / limit) : 1
+      }
+    });
   };
 
   generateReceiptNumber = async (req: Request, res: Response) => {
@@ -510,7 +508,7 @@ export class OrderController {
         return HttpResponse.fail(res, 'ReceiveOrderUseCase not initialized');
       }
 
-      const { items } = req.body;
+      const { items, packingNumber, packingTotal } = req.body;
 
       if (!Array.isArray(items) || items.length === 0) {
         return HttpResponse.badRequest(res, 'Items array is required and must not be empty');
@@ -531,6 +529,10 @@ export class OrderController {
             bankAccountId: item.bankAccountId || item.bank_account_id,
             paymentMethod: item.paymentMethod || item.payment_method,
             reference: item.referenceNumber || item.reference_number || undefined,
+            documentType: item.documentType || item.document_type,
+            entryDate: item.entryDate || item.entry_date,
+            packingNumber: packingNumber || item.packingNumber || item.packing_number,
+            packingTotal: packingTotal !== undefined ? Number(packingTotal) : (item.packingTotal || item.packing_total),
             receivedByName: req.user!.username
           };
 

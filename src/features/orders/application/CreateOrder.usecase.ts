@@ -318,6 +318,15 @@ export class CreateOrderUseCase {
           }
         }
 
+        // 7. Update client last order info
+        financialAndBankOps.push(tx.client.update({
+          where: { id: dto.clientId },
+          data: {
+            lastOrderDate: new Date(),
+            lastBrandName: dto.brandName
+          }
+        }));
+
         await Promise.all(financialAndBankOps);
 
         return createdOrder;

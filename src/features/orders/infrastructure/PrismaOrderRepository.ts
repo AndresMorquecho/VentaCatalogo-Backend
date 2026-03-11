@@ -206,6 +206,7 @@ export class PrismaOrderRepository implements IOrderRepository {
           amount: payment.amount ? Number(payment.amount) : 0,
           method: payment.method,
           reference: payment.reference,
+          receiptNumber: payment.receiptNumber,
           description: payment.description,
           createdAt: payment.createdAt
         })),

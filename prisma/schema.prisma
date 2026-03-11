@@ -39,6 +39,7 @@ model Client {
   referredById         String?   @map("referred_by_id")
   lastDataUpdate       DateTime  @default(now()) @map("last_data_update")
   lastOrderDate        DateTime? @map("last_order_date")
+  lastBrandName        String?   @map("last_brand_name")
   isBlocked            Boolean   @default(false) @map("is_blocked")
   paymentPreference    String    @default("NORMAL") @map("payment_preference") // NORMAL, SOLO_CONTADO
 
@@ -147,6 +148,9 @@ model Order {
   receptionDate        DateTime? @map("reception_date")
   deliveryDate         DateTime? @map("delivery_date")
   invoiceNumber        String?   @map("invoice_number")
+  documentType         String?   @map("document_type") @default("FACTURA")
+  packingNumber        String?   @map("packing_number")
+  packingTotal         Decimal?  @map("packing_total") @db.Decimal(10, 2)
   status               String    @default("POR_RECIBIR") // POR_RECIBIR, RECIBIDO_EN_BODEGA, ENTREGADO, CANCELADO
   clientId             String    @map("client_id")
   clientName           String    @map("client_name")
