@@ -347,15 +347,15 @@ export class OrderController {
                 });
               }
 
-              // Update Financial Record
-              await tx.financialRecord.updateMany({
-                where: { orderId: id, amount: payment.amount, type: 'PAYMENT' },
-                data: { amount: newDeposit }
-              });
+          // Update Financial Record (linked by orderPaymentId for O(1) consistency)
+          await tx.financialRecord.updateMany({
+            where: { orderPaymentId: payment.id, type: 'PAYMENT' },
+            data: { amount: newDeposit }
+          });
             } else if (newDeposit > 0) {
               // Create new payment if it had none
               const paymentReceipt = `REC-ABO-${Date.now().toString().slice(-6)}`;
-              await tx.orderPayment.create({
+          const createdPayment = await tx.orderPayment.create({
                 data: {
                   id: crypto.randomUUID(),
                   orderId: id,
@@ -382,6 +382,7 @@ export class OrderController {
                     clientId: updated.clientId,
                     clientName: updated.clientName,
                     orderId: id,
+                orderPaymentId: createdPayment.id,
                     createdBy: req.user!.username,
                     notes: `Abono inicial editado ${updated.receiptNumber}`,
                     bankAccountId: updated.bankAccountId,

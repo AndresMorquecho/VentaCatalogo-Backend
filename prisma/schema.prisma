@@ -47,6 +47,7 @@ model Client {
 
   // Relations
   orders             Order[]
+  orderReceipts      OrderReceipt[]
   clientAccount      ClientAccount?
   financialRecords   FinancialRecord[]
   calls              Call[]
@@ -93,6 +94,7 @@ model BankAccount {
 
   // Relations
   orders           Order[]
+  orderReceipts    OrderReceipt[]
   financialRecords FinancialRecord[]
 
   @@index([type])
@@ -104,9 +106,35 @@ model BankAccount {
 // ORDERS AGGREGATE
 // ============================================================================
 
-model Order {
+model OrderReceipt {
   id                   String    @id @default(uuid())
   receiptNumber        String    @unique @map("receipt_number")
+  clientId             String    @map("client_id")
+  clientName           String    @map("client_name")
+  salesChannel         String    @map("sales_channel")
+  createdAt            DateTime  @default(now()) @map("created_at") // fecha de registro del recibo
+  transactionDate      DateTime  @map("transaction_date")
+  paymentMethod        String    @map("payment_method")
+  bankAccountId        String?   @map("bank_account_id")
+  transactionReference String?   @map("transaction_reference")
+  notes                String?
+  createdByName        String?   @map("created_by_name")
+  version              Int       @default(1)
+
+  // Relations
+  client      Client       @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  orders      Order[]
+
+  @@index([clientId])
+  @@index([transactionDate])
+  @@map("order_receipts")
+}
+
+model Order {
+  id                   String    @id @default(uuid())
+  receiptNumber        String    @map("receipt_number") // denormalizado para consultas rápidas
+  receiptId            String?   @map("receipt_id")
   salesChannel         String    @map("sales_channel") // OFICINA, WHATSAPP, DOMICILIO
   type                 String // NORMAL, PREVENTA, REPROGRAMACION
   brandId              String    @map("brand_id")
@@ -141,6 +169,7 @@ model Order {
   client             Client              @relation(fields: [clientId], references: [id])
   brand              Brand               @relation(fields: [brandId], references: [id])
   bankAccount        BankAccount?        @relation(fields: [bankAccountId], references: [id])
+  receipt            OrderReceipt?       @relation(fields: [receiptId], references: [id], onDelete: SetNull)
   items              OrderItem[]
   payments           OrderPayment[]
   financialRecords   FinancialRecord[]
@@ -156,6 +185,7 @@ model Order {
   @@index([status])
   @@index([transactionDate])
   @@index([receiptNumber])
+  @@index([receiptId])
   @@map("orders")
 }
 
@@ -191,6 +221,7 @@ model OrderPayment {
 
   // Relations
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  financialRecords FinancialRecord[]
 
   @@index([orderId])
   @@map("order_payments")
@@ -211,6 +242,7 @@ model FinancialRecord {
   clientId   String  @map("client_id")
   clientName String  @map("client_name")
   orderId    String? @map("order_id")
+  orderPaymentId String? @map("order_payment_id")
   createdBy  String  @map("created_by")
   notes      String?
 
@@ -227,10 +259,12 @@ model FinancialRecord {
   // Relations
   client      Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
   order       Order?      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderPayment OrderPayment? @relation(fields: [orderPaymentId], references: [id], onDelete: SetNull)
   bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
 
   @@index([clientId])
   @@index([orderId])
+  @@index([orderPaymentId])
   @@index([bankAccountId])
   @@index([date])
   @@index([referenceNumber])

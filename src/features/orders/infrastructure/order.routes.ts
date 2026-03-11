@@ -11,6 +11,7 @@ import { PrismaOrderRepository } from './PrismaOrderRepository';
 import { PrismaFinancialRecordRepository } from '../../financial/infrastructure/PrismaFinancialRecordRepository';
 import { PrismaBankAccountRepository } from '../../financial/infrastructure/PrismaBankAccountRepository';
 import { authenticate, requirePermission } from '../../../middleware/auth';
+import { prisma } from '../../../lib/prisma';
 
 const router = Router();
 
@@ -42,6 +43,56 @@ const orderController = new OrderController(
 );
 
 // Routes — READ
+// Receipt header endpoints (encabezado del recibo)
+router.get('/receipt-header/:receiptNumber', authenticate, requirePermission('orders.view'), async (req, res) => {
+  const receiptNumber = req.params.receiptNumber;
+  const receipt = await (prisma as any).orderReceipt.findUnique({
+    where: { receiptNumber },
+  });
+  if (!receipt) return res.status(404).json({ success: false, error: { message: 'Receipt not found' } });
+  return res.json({ success: true, data: receipt });
+});
+
+router.put('/receipt-header/:receiptNumber', authenticate, requirePermission('orders.edit'), async (req: any, res) => {
+  const receiptNumber = req.params.receiptNumber;
+  const existing = await (prisma as any).orderReceipt.findUnique({ where: { receiptNumber } });
+  if (!existing) return res.status(404).json({ success: false, error: { message: 'Receipt not found' } });
+
+  // Validate cash closure: do not allow edits if receipt transactionDate is closed
+  const lastClosure = await prisma.cashClosure.findFirst({ orderBy: { toDate: 'desc' } });
+  if (lastClosure && existing.transactionDate <= lastClosure.toDate) {
+    return res.status(400).json({ success: false, error: { message: 'No se puede editar: El periodo de caja ya está cerrado.' } });
+  }
+
+  const updated = await (prisma as any).orderReceipt.update({
+    where: { receiptNumber },
+    data: {
+      salesChannel: req.body.sales_channel ?? req.body.salesChannel ?? undefined,
+      paymentMethod: req.body.payment_method ?? req.body.paymentMethod ?? undefined,
+      bankAccountId: req.body.bank_account_id ?? req.body.bankAccountId ?? undefined,
+      transactionDate: req.body.transaction_date ? new Date(req.body.transaction_date) : undefined,
+      transactionReference: req.body.transaction_reference ?? req.body.transactionReference ?? undefined,
+      notes: req.body.notes ?? undefined,
+      version: { increment: 1 }
+    }
+  });
+
+  // Keep denormalized fields in orders in sync (fast bulk update)
+  await prisma.order.updateMany({
+    where: { receiptNumber },
+    data: {
+      salesChannel: updated.salesChannel,
+      paymentMethod: updated.paymentMethod,
+      bankAccountId: updated.bankAccountId,
+      transactionDate: updated.transactionDate,
+      notes: updated.notes ?? undefined,
+      version: { increment: 1 }
+    }
+  });
+
+  return res.json({ success: true, data: updated });
+});
+
 router.get('/receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.getByReceiptNumber);
 router.get('/generate-receipt-number', authenticate, requirePermission('orders.create'), orderController.generateReceiptNumber);
 router.get('/check-receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.checkReceiptExists);

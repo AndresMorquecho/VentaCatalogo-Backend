@@ -129,6 +129,26 @@ export class CreateOrderUseCase {
 
       // Execute everything in a transaction for atomicity
       const savedOrder = await prisma.$transaction(async (tx) => {
+        // Crear encabezado de recibo si es un número nuevo (1 order = 1 receipt)
+        const receiptId = crypto.randomUUID();
+        await (tx as any).orderReceipt.create({
+          data: {
+            id: receiptId,
+            receiptNumber,
+            clientId: dto.clientId,
+            clientName: dto.clientName,
+            salesChannel: dto.salesChannel,
+            createdAt: dto.createdAt ? new Date(dto.createdAt) : new Date(),
+            transactionDate: dto.transactionDate,
+            paymentMethod: dto.paymentMethod,
+            bankAccountId: dto.bankAccountId || null,
+            transactionReference: dto.initialPayment?.reference || null,
+            notes: dto.notes || null,
+            createdByName: dto.createdByName || createdBy,
+            version: 1
+          }
+        });
+
         // 1. Get base receipt number for payments once inside the transaction
         const lastPayment = await (tx.orderPayment as any).findFirst({
           where: { receiptNumber: { startsWith: 'REC-ABO-' } },
@@ -219,6 +239,7 @@ export class CreateOrderUseCase {
           data: {
             id: rawOrder.id,
             receiptNumber: rawOrder.receiptNumber,
+            receiptId,
             salesChannel: rawOrder.salesChannel,
             type: rawOrder.type,
             brandId: rawOrder.brandId,

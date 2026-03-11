@@ -77,6 +77,35 @@ export class BatchCreateOrderUseCase {
       const resultOrders = await prisma.$transaction(async (tx) => {
         const finalResults = [];
 
+        // Crear encabezado (OrderReceipt) SOLO si no existe ya este receiptNumber
+        let receiptId: string;
+        const existingReceipt = await (tx as any).orderReceipt.findUnique({
+          where: { receiptNumber }
+        });
+
+        if (existingReceipt) {
+          receiptId = existingReceipt.id;
+        } else {
+          receiptId = crypto.randomUUID();
+          await (tx as any).orderReceipt.create({
+            data: {
+              id: receiptId,
+              receiptNumber,
+              clientId: dto.clientId,
+              clientName: client.firstName,
+              salesChannel: dto.salesChannel,
+              createdAt: dto.createdAt || new Date(),
+              transactionDate: dto.transactionDate,
+              paymentMethod: dto.paymentMethod,
+              bankAccountId: dto.bankAccountId || null,
+              transactionReference: dto.initialPayment?.reference || null,
+              notes: null,
+              createdByName: dto.createdByName || createdBy,
+              version: 1
+            }
+          });
+        }
+
         // Generar consecutivos de recibo para abonos dentro de la transacción
         const lastPayment = await (tx.orderPayment as any).findFirst({
           where: { receiptNumber: { startsWith: 'REC-ABO-' } },
@@ -109,9 +138,12 @@ export class BatchCreateOrderUseCase {
 
           // Preparar pagos por fila (abonos) para crear anidado y que venga en la respuesta
           const paymentsToCreate: any[] = [];
+          let rowPaymentId: string | null = null;
 
           if (orderDto.deposit && Number(orderDto.deposit) > 0) {
+            rowPaymentId = crypto.randomUUID();
             paymentsToCreate.push({
+              id: rowPaymentId,
               amount: Number(orderDto.deposit),
               method: dto.paymentMethod,
               reference: dto.initialPayment?.reference || undefined,
@@ -123,6 +155,7 @@ export class BatchCreateOrderUseCase {
           // Crédito aplicado (solo una vez al parent)
           if (i === 0 && dto.creditAmount && dto.creditAmount > 0) {
             paymentsToCreate.push({
+              id: crypto.randomUUID(),
               amount: Number(dto.creditAmount),
               method: 'CREDITO_CLIENTE',
               receiptNumber: nextPaymentReceiptNumber(),
@@ -135,6 +168,7 @@ export class BatchCreateOrderUseCase {
             data: {
               id: orderId,
               receiptNumber,
+              receiptId,
               salesChannel: dto.salesChannel,
               type: orderDto.type,
               brandId: orderDto.brandId,
@@ -170,6 +204,9 @@ export class BatchCreateOrderUseCase {
             if (!dto.bankAccountId) {
               throw new Error('Bank account is required when deposit > 0');
             }
+            if (!rowPaymentId) {
+              throw new Error('Internal error: rowPaymentId missing for deposit row');
+            }
 
             await tx.financialRecord.create({
               data: {
@@ -184,6 +221,7 @@ export class BatchCreateOrderUseCase {
                 clientId: dto.clientId,
                 clientName: client.firstName,
                 orderId,
+                orderPaymentId: rowPaymentId,
                 createdBy,
                 notes: `Abono inicial pedido ${receiptNumber} (fila ${i + 1})`,
                 bankAccountId: dto.bankAccountId,

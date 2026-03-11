@@ -26,5 +26,7 @@ const paymentController = new PaymentController(registerOrderPaymentUseCase);
 
 // Routes
 router.post('/', authenticate, requirePermission('payments.create'), paymentController.registerPayment);
+router.put('/:paymentId', authenticate, requirePermission('payments.create'), paymentController.updatePayment);
+router.delete('/:paymentId', authenticate, requirePermission('payments.delete'), paymentController.deletePayment);
 
 export default router;
