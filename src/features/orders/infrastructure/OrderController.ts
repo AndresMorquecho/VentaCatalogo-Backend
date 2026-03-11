@@ -110,7 +110,9 @@ export class OrderController {
             productName: i.product_name,
             quantity: Number(i.quantity),
             unitPrice: Number(i.unit_price)
-          }))
+          })),
+          deposit: Number(o.deposit || 0),
+          orderNumber: o.orderNumber || o.order_number
         }))
       };
 
@@ -204,7 +206,7 @@ export class OrderController {
     try {
       const { receiptNumber } = req.params;
       console.log(`[OrderController] getByReceiptNumber called for: ${receiptNumber}`);
-      const orders = await prisma.order.findMany({
+      const rawOrders = await prisma.order.findMany({
         where: { receiptNumber },
         include: {
           items: true,
@@ -221,11 +223,12 @@ export class OrderController {
         orderBy: { createdAt: 'asc' }
       });
 
-      if (orders.length === 0) {
+      if (rawOrders.length === 0) {
         return HttpResponse.notFound(res, 'Receipt group not found');
       }
 
-      return HttpResponse.ok(res, orders);
+      // Prisma ya incluye campos escalares (orderNumber) y relaciones (payments/items)
+      return HttpResponse.ok(res, rawOrders);
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to get receipt group');
     }
