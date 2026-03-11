@@ -25,9 +25,14 @@ export class DeleteOrderUseCase {
                     return Result.fail('Pedido no encontrado');
                 }
 
-                // REGLA: Pedidos entregados no se pueden borrar físicamente
-                if (order.status === 'ENTREGADO') {
-                    return Result.fail('No se puede eliminar un pedido que ya ha sido entregado. Realice una devolución.');
+                // REGLA: Solo se pueden eliminar pedidos en estado 'POR_RECIBIR' y sin abonos adicionales
+                if (order.status !== 'POR_RECIBIR' || order.payments.length > 1) {
+                    let reason = 'No se puede eliminar un pedido que ya tiene movimientos (recepción o abonos adicionales).';
+                    if (order.status === 'ENTREGADO') reason = 'No se puede eliminar un pedido que ya ha sido entregado. Realice una devolución.';
+                    if (order.status === 'RECIBIDO_EN_BODEGA') reason = 'No se puede eliminar un pedido que ya ha sido receptado en bodega.';
+                    if (order.payments.length > 1) reason = 'No se puede eliminar un pedido que ya tiene abonos adicionales vinculados.';
+                    
+                    return Result.fail(reason);
                 }
 
                 // REGLA: No borrar pedidos de periodos cerrados

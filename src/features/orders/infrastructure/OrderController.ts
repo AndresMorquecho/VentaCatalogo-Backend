@@ -249,9 +249,14 @@ export class OrderController {
         return HttpResponse.notFound(res, 'Order not found');
       }
 
-      // 1. BUSINESS RULE: Delivered orders cannot be edited
-      if (order.status === 'ENTREGADO') {
-        return HttpResponse.badRequest(res, 'No se puede editar un pedido que ya ha sido entregado.');
+      // 1. BUSINESS RULE: Only 'POR_RECIBIR' orders without extra payments can be edited
+      if (order.status !== 'POR_RECIBIR' || order.payments.length > 1) {
+        let reason = 'No se puede editar un pedido que ya tiene movimientos (recepción o abonos adicionales).';
+        if (order.status === 'ENTREGADO') reason = 'No se puede editar un pedido que ya ha sido entregado.';
+        if (order.status === 'RECIBIDO_EN_BODEGA') reason = 'No se puede editar un pedido que ya ha sido receptado en bodega.';
+        if (order.payments.length > 1) reason = 'No se puede editar un pedido que ya tiene abonos adicionales vinculados.';
+        
+        return HttpResponse.badRequest(res, reason);
       }
 
       // 2. BUSINESS RULE: Consolidated orders in closed cash periods
