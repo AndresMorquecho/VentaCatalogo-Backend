@@ -9,6 +9,7 @@ import { DeleteOrderUseCase } from '../application/DeleteOrder.usecase';
 import { BatchUpdateOrdersUseCase } from '../application/BatchUpdateOrders.usecase';
 import { CreateReceptionBatchUseCase } from '../application/CreateReceptionBatch.usecase';
 import { DeleteReceptionBatchUseCase } from '../application/DeleteReceptionBatch.usecase';
+import { BatchDeliverOrdersUseCase } from '../application/BatchDeliverOrders.usecase';
 import { PrismaOrderRepository } from './PrismaOrderRepository';
 import { PrismaFinancialRecordRepository } from '../../financial/infrastructure/PrismaFinancialRecordRepository';
 import { PrismaBankAccountRepository } from '../../financial/infrastructure/PrismaBankAccountRepository';
@@ -32,9 +33,10 @@ const deleteOrderUseCase = new DeleteOrderUseCase();
 const batchUpdateOrdersUseCase = new BatchUpdateOrdersUseCase();
 const createReceptionBatchUseCase = new CreateReceptionBatchUseCase(receiveOrderUseCase);
 const deleteReceptionBatchUseCase = new DeleteReceptionBatchUseCase();
+const batchDeliverOrdersUseCase = new BatchDeliverOrdersUseCase();
 
 // Controller
-console.log(`[OrderRoutes] Initializing OrderController with BatchUpdateOrdersUseCase: ${!!batchUpdateOrdersUseCase}`);
+console.log(`[OrderRoutes] Initializing OrderController. BatchDeliverUsecase: ${!!batchDeliverOrdersUseCase}`);
 const orderController = new OrderController(
   createOrderUseCase,
   getOrdersUseCase,
@@ -45,7 +47,8 @@ const orderController = new OrderController(
   batchCreateOrderUseCase,
   batchUpdateOrdersUseCase,
   createReceptionBatchUseCase,
-  deleteReceptionBatchUseCase
+  deleteReceptionBatchUseCase,
+  batchDeliverOrdersUseCase
 );
 
 // Routes — READ
@@ -108,6 +111,7 @@ router.get('/:id', authenticate, requirePermission('orders.view'), orderControll
 router.get('/', authenticate, requirePermission('orders.view'), orderController.getAll);
 
 // Routes — WRITE (granular RBAC)
+router.post('/batch-deliver', authenticate, requirePermission('delivery.confirm'), orderController.batchDeliver);
 router.put('/receipt/:receiptNumber/bulk-update', authenticate, requirePermission('orders.edit'), orderController.batchUpdate);
 router.post('/batch', authenticate, requirePermission('orders.create'), orderController.batchCreate);
 router.post('/batch-reception', authenticate, requirePermission('reception.confirm'), orderController.batchReception);

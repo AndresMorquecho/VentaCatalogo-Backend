@@ -76,6 +76,8 @@ app.get('/health', (_req, res) => {
   });
 });
 
+app.get('/api/ping', (_req, res) => res.json({ message: 'pong' }));
+
 // API Routes - Feature-based (Hexagonal)
 app.use('/api/orders', orderRoutes);
 app.use('/api/financial-records', financialRoutes);

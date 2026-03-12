@@ -280,8 +280,18 @@ export class BatchCreateOrderUseCase {
             }
           }
 
-          finalResults.push(createdOrder); // Insertar aquí
+          finalResults.push(createdOrder);
         }
+
+        // 8. Update client last order info
+        const lastOrder = dto.orders[dto.orders.length - 1];
+        await tx.client.update({
+          where: { id: dto.clientId },
+          data: {
+            lastOrderDate: new Date(),
+            lastBrandName: lastOrder.brandName
+          }
+        });
 
         return finalResults;
       }, {

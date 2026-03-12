@@ -13,6 +13,11 @@ export class InventoryController {
             type: req.query.type as string | undefined,
             brandId: req.query.brandId as string | undefined,
             orderId: req.query.orderId as string | undefined,
+            startDate: req.query.startDate as string | undefined,
+            endDate: req.query.endDate as string | undefined,
+            receiptNumber: req.query.receiptNumber as string | undefined,
+            orderNumber: req.query.orderNumber as string | undefined,
+            search: req.query.search as string | undefined,
             page,
             limit
         };

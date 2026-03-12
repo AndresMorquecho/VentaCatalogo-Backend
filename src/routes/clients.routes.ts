@@ -132,7 +132,7 @@ router.post('/', authenticate, requirePermission('clients.create'), async (req: 
     if (req.body.is_whatsapp !== undefined) clientData.isWhatsApp = req.body.is_whatsapp;
     if (req.body.referred_by_id) clientData.referredById = req.body.referred_by_id;
     if (req.body.is_blocked !== undefined) clientData.isBlocked = req.body.is_blocked;
-    clientData.createdByName = (req as any).user?.username || 'SISTEMA';
+    clientData.createdByName = (req as any).user?.username || 'Administrador';
     clientData.lastDataUpdate = new Date();
 
     const client = await prisma.$transaction(async (tx) => {

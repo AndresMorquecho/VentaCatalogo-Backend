@@ -12,6 +12,7 @@ import { AuthRequest } from '../../../middleware/auth';
 import { BatchUpdateOrdersUseCase } from '../application/BatchUpdateOrders.usecase';
 import { CreateReceptionBatchUseCase } from '../application/CreateReceptionBatch.usecase';
 import { DeleteReceptionBatchUseCase } from '../application/DeleteReceptionBatch.usecase';
+import { BatchDeliverOrdersUseCase } from '../application/BatchDeliverOrders.usecase';
 
 export class OrderController {
   constructor(
@@ -24,7 +25,8 @@ export class OrderController {
     private batchCreateOrderUseCase?: any,
     private batchUpdateOrdersUseCase?: BatchUpdateOrdersUseCase,
     private createReceptionBatchUseCase?: CreateReceptionBatchUseCase,
-    private deleteReceptionBatchUseCase?: DeleteReceptionBatchUseCase
+    private deleteReceptionBatchUseCase?: DeleteReceptionBatchUseCase,
+    private batchDeliverOrdersUseCase?: BatchDeliverOrdersUseCase
   ) { }
 
   getAll = async (req: Request, res: Response) => {
@@ -309,7 +311,7 @@ export class OrderController {
         const updated = await tx.order.update({
           where: { id },
           data: updateData,
-          include: { items: true, payments: true }
+          include: { items: true, payments: true, brand: true }
         });
 
         // 4. Update items if provided
@@ -404,6 +406,15 @@ export class OrderController {
             }
           }
         }
+
+        // 6. Update client last order info
+        await tx.client.update({
+          where: { id: updated.clientId },
+          data: {
+            lastOrderDate: new Date(),
+            lastBrandName: req.body.brand_name || (updated as any).brand?.name || null
+          }
+        });
 
         return updated;
       });
@@ -679,14 +690,13 @@ export class OrderController {
 
       const { id } = req.params;
 
-      // Convert snake_case to camelCase
       const dto = {
-        finalPayment: req.body.final_payment || req.body.finalPayment
-          ? Number(req.body.final_payment || req.body.finalPayment)
-          : undefined,
-        bankAccountId: req.body.bank_account_id || req.body.bankAccountId,
-        paymentMethod: req.body.payment_method || req.body.paymentMethod,
-        reference: req.body.reference,
+        payments: req.body.payments ? req.body.payments.map((p: any) => ({
+          amount: Number(p.amount),
+          bankAccountId: p.bankAccountId || p.bank_account_id,
+          paymentMethod: p.paymentMethod || p.payment_method,
+          reference: p.reference
+        })) : [],
         notes: req.body.notes,
         deliveredByName: req.user!.username
       };
@@ -808,6 +818,30 @@ export class OrderController {
       return HttpResponse.ok(res, { message: 'Recepción regresada exitosamente' });
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to reverse reception');
+    }
+  };
+
+  batchDeliver = async (req: AuthRequest, res: Response) => {
+    try {
+      if (!this.batchDeliverOrdersUseCase) {
+        return HttpResponse.fail(res, 'BatchDeliverOrdersUseCase not initialized');
+      }
+
+      const dto = {
+        orderIds: req.body.orderIds || req.body.order_ids,
+        payments: req.body.payments ? req.body.payments.map((p: any) => ({
+          amount: Number(p.amount),
+          bankAccountId: p.bankAccountId || p.bank_account_id,
+          paymentMethod: p.paymentMethod || p.payment_method,
+          reference: p.reference
+        })) : [],
+        deliveredByName: req.user!.username
+      };
+
+      const result = await this.batchDeliverOrdersUseCase.execute(dto, req.user!.username);
+      return HttpResponse.ok(res, result);
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to batch deliver orders');
     }
   };
 }

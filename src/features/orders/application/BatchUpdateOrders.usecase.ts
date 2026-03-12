@@ -325,6 +325,18 @@ export class BatchUpdateOrdersUseCase {
                     }
                 }
 
+                // 3. Update client last order info
+                const lastOrder = dto.orders[dto.orders.length - 1];
+                if (lastOrder) {
+                    await tx.client.update({
+                        where: { id: dto.clientId },
+                        data: {
+                            lastOrderDate: new Date(),
+                            lastBrandName: lastOrder.brandName
+                        }
+                    });
+                }
+
                 console.log('[BatchUpdateOrdersUseCase] Transaction completed successfully. Processed orders:', processedOrders.length);
                 return processedOrders;
             }, {

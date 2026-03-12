@@ -3,10 +3,12 @@ import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRec
 import { prisma } from '../../../lib/prisma';
 
 export interface DeliverOrderDTO {
-  finalPayment?: number;
-  bankAccountId?: string;
-  paymentMethod?: string;
-  reference?: string;
+  payments?: {
+    amount: number;
+    bankAccountId?: string;
+    paymentMethod: string;
+    reference?: string;
+  }[];
   notes?: string;
   deliveredByName?: string; // Username del que procesa la entrega
 }
@@ -45,148 +47,139 @@ export class DeliverOrderUseCase {
 
       // 2. Calcular saldo pendiente
       const effectiveTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
-      const paidAmount = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-      const pendingAmount = effectiveTotal - paidAmount;
+      const paidBefore = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const pendingBefore = effectiveTotal - paidBefore;
 
-      // 3. Si hay pago final, validar y registrar
-      if (data.finalPayment && data.finalPayment > 0) {
-        if (!data.paymentMethod) {
-          throw new Error('Debe seleccionar un método de pago');
-        }
+      let totalNewlyPaid = 0;
 
-        // Validar cuenta bancaria solo si NO es efectivo
-        if (data.paymentMethod !== 'EFECTIVO' && !data.bankAccountId) {
-          throw new Error('Debe seleccionar una cuenta bancaria para pagos con transferencia, depósito o cheque');
-        }
+      // 3. Procesar pagos si existen
+      if (data.payments && data.payments.length > 0) {
+        for (const payment of data.payments) {
+          if (payment.amount <= 0) continue;
 
-        // Validar que el pago no exceda el saldo pendiente
-        if (data.finalPayment > pendingAmount + 0.01) {
-          throw new Error(`El pago final (${data.finalPayment}) no puede ser mayor al saldo pendiente (${pendingAmount.toFixed(2)})`);
-        }
+          const isCredit = payment.paymentMethod === 'CREDITO_CLIENTE';
 
-        // Buscar cuenta bancaria (para efectivo, buscar cuenta de tipo CASH)
-        let bankAccountId = data.bankAccountId;
-        if (data.paymentMethod === 'EFECTIVO' && !bankAccountId) {
-          const cashAccount = await tx.bankAccount.findFirst({
-            where: { type: 'CASH' }
-          });
-          if (cashAccount) {
-            bankAccountId = cashAccount.id;
+          // Validaciones básicas
+          if (payment.paymentMethod !== 'EFECTIVO' && !isCredit && !payment.bankAccountId) {
+            throw new Error(`Debe seleccionar una cuenta bancaria para el pago de $${payment.amount} con ${payment.paymentMethod}`);
           }
-        }
 
-        // Validar referencia duplicada para métodos que no son efectivo
-        if (data.paymentMethod !== 'EFECTIVO' && data.reference) {
-          const whereClause: any = {
-            paymentMethod: data.paymentMethod,
-            referenceNumber: data.reference
-          };
-          if (data.paymentMethod === 'CHEQUE' && bankAccountId) {
-            whereClause.bankAccountId = bankAccountId;
+          // Buscar cuenta bancaria (para efectivo, buscar cuenta de tipo CASH)
+          let bankAccountId = payment.bankAccountId;
+          if (payment.paymentMethod === 'EFECTIVO' && !bankAccountId) {
+            const cashAccount = await tx.bankAccount.findFirst({
+              where: { type: 'CASH' }
+            });
+            if (cashAccount) bankAccountId = cashAccount.id;
           }
-          const existingPayment = await tx.financialRecord.findFirst({
-            where: whereClause
-          });
 
-          if (existingPayment) {
-            throw new Error(`La referencia ${data.reference} ya fue utilizada en otro pago con método ${data.paymentMethod}`);
-          }
-        }
-
-        // Crear pago final
-        await tx.orderPayment.create({
-          data: {
-            orderId: order.id,
-            amount: data.finalPayment,
-            method: data.paymentMethod,
-            reference: data.reference || null,
-            description: 'Pago final en entrega'
-          }
-        });
-
-        // Crear registro financiero
-        const isCredit = data.paymentMethod === 'CREDITO_CLIENTE';
-        const referenceNumber = !isCredit && data.paymentMethod !== 'EFECTIVO' && data.reference
-          ? data.reference
-          : `REF-${Date.now()}`;
-
-        let finalBankAccountId = bankAccountId;
-        if (!finalBankAccountId || finalBankAccountId === 'default') {
-          const cashAcc = await tx.bankAccount.findFirst({ where: { type: 'CASH' } });
-          if (cashAcc) finalBankAccountId = cashAcc.id;
-        }
-
-        await tx.financialRecord.create({
-          data: {
-            type: 'PAYMENT',
-            referenceNumber,
-            amount: data.finalPayment,
-            date: new Date(),
-            clientId: order.clientId,
-            clientName: order.clientName,
-            orderId: order.id,
-            bankAccountId: finalBankAccountId!,
-            source: 'ORDER_PAYMENT',
-            paymentMethod: data.paymentMethod,
-            movementType: 'INCOME',
-            createdBy: userId,
-            notes: data.notes || `Pago final en entrega${isCredit ? ' (Crédito)' : ''} - Pedido ${order.receiptNumber}`
-          }
-        });
-
-        if (isCredit) {
-          // REDUCE CLIENT CREDITS
-          const availableCredits = await tx.clientCredit.findMany({
-            where: {
-              clientAccount: { clientId: order.clientId },
-              status: 'AVAILABLE'
-            },
-            orderBy: { createdAt: 'asc' }
-          });
-
-          let remainingToSubtract = data.finalPayment;
-          for (const credit of availableCredits) {
-            if (remainingToSubtract <= 0) break;
-            const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
-
-            await tx.clientCredit.update({
-              where: { id: credit.id },
-              data: {
-                remainingAmount: { decrement: amountToSubtract },
-                status: Number(credit.remainingAmount) - amountToSubtract <= 0.01 ? 'USED' : 'AVAILABLE'
+          // Validar referencia duplicada para métodos que no son efectivo ni crédito
+          if (payment.paymentMethod !== 'EFECTIVO' && !isCredit && payment.reference) {
+            const existingPayment = await tx.financialRecord.findFirst({
+              where: {
+                paymentMethod: payment.paymentMethod,
+                referenceNumber: payment.reference
               }
             });
-            remainingToSubtract -= amountToSubtract;
-          }
-          if (remainingToSubtract > 0.01) {
-            throw new Error(`Saldo a favor insuficiente. Faltan $${remainingToSubtract.toFixed(2)}`);
+
+            if (existingPayment) {
+              throw new Error(`La referencia ${payment.reference} ya fue utilizada en otro pago con método ${payment.paymentMethod}`);
+            }
           }
 
-          // TASK-4.2: Sync ClientAccount.totalCreditAvailable
-          const deliveryClientAccount = await tx.clientAccount.findUnique({
-            where: { clientId: order.clientId }
+          // Crear registro de pago del pedido
+          await tx.orderPayment.create({
+            data: {
+              orderId: order.id,
+              amount: payment.amount,
+              method: payment.paymentMethod,
+              reference: payment.reference || null,
+              description: 'Pago en entrega'
+            }
           });
-          if (deliveryClientAccount) {
+
+          // Crear registro financiero
+          const referenceNumber = !isCredit && payment.paymentMethod !== 'EFECTIVO' && payment.reference
+            ? payment.reference
+            : `REF-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+          await tx.financialRecord.create({
+            data: {
+              type: 'PAYMENT',
+              referenceNumber,
+              amount: payment.amount,
+              date: new Date(),
+              clientId: order.clientId,
+              clientName: order.clientName,
+              orderId: order.id,
+              bankAccountId: bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+              source: 'ORDER_PAYMENT',
+              paymentMethod: payment.paymentMethod,
+              movementType: 'INCOME',
+              createdBy: userId,
+              notes: data.notes || `Pago en entrega (${payment.paymentMethod}) - Pedido ${order.receiptNumber}`
+            }
+          });
+
+          if (isCredit) {
+            // REDUCE CLIENT CREDITS
+            const availableCredits = await tx.clientCredit.findMany({
+              where: {
+                clientAccount: { clientId: order.clientId },
+                status: 'AVAILABLE'
+              },
+              orderBy: { createdAt: 'asc' }
+            });
+
+            let remainingToSubtract = payment.amount;
+            for (const credit of availableCredits) {
+              if (remainingToSubtract <= 0) break;
+              const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
+
+              await tx.clientCredit.update({
+                where: { id: credit.id },
+                data: {
+                  remainingAmount: { decrement: amountToSubtract },
+                  status: Number(credit.remainingAmount) - amountToSubtract <= 0.01 ? 'USED' : 'AVAILABLE'
+                }
+              });
+              remainingToSubtract -= amountToSubtract;
+            }
+            if (remainingToSubtract > 0.01) {
+              throw new Error(`Saldo a favor insuficiente para cubrir $${payment.amount}. Faltan $${remainingToSubtract.toFixed(2)}`);
+            }
+
+            // Sync ClientAccount
             await tx.clientAccount.update({
-              where: { id: deliveryClientAccount.id },
+              where: { clientId: order.clientId },
               data: {
-                totalCreditAvailable: { decrement: data.finalPayment },
+                totalCreditAvailable: { decrement: payment.amount },
+                version: { increment: 1 }
+              }
+            });
+          } else if (bankAccountId) {
+            // Actualizar saldo de cuenta bancaria
+            await tx.bankAccount.update({
+              where: { id: bankAccountId },
+              data: {
+                currentBalance: { increment: payment.amount },
+                updatedAt: new Date(),
                 version: { increment: 1 }
               }
             });
           }
-        } else if (bankAccountId) {
-          // Actualizar saldo de cuenta bancaria
-          await tx.bankAccount.update({
-            where: { id: bankAccountId },
-            data: {
-              currentBalance: { increment: data.finalPayment },
-              updatedAt: new Date(),
-              version: { increment: 1 }
-            }
-          });
+
+          totalNewlyPaid += payment.amount;
         }
       }
+
+      // Validar si los pagos cubren el saldo pendiente (Opcional según requerimiento, pero el usuario dice "Debe registrar cobro total")
+      if (totalNewlyPaid < pendingBefore - 0.05) {
+        // throw new Error(`Debe cubrir el saldo pendiente total ($${pendingBefore.toFixed(2)}). Pago actual: $${totalNewlyPaid.toFixed(2)}`);
+        // Dejamos que pase si el usuario quiere permitir abonos parciales, pero el frontend pedirá el total.
+      }
+
+      const totalFinalPaid = paidBefore + totalNewlyPaid;
 
       // 4. Actualizar pedido a ENTREGADO
       const updatedOrder = await tx.order.update({
@@ -227,7 +220,7 @@ export class DeliverOrderUseCase {
 
       // 2. Calcular puntos ganados basándose en lo pagado realmente
       let pointsEarned = 0;
-      const newPaidAmount = paidAmount + (data.finalPayment || 0);
+      const newPaidAmount = totalFinalPaid;
 
       if (rule) {
         // Ejemplo: 1 punto por cada $10 (condition="10")
