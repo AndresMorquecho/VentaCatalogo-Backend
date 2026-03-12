@@ -150,10 +150,13 @@ export class PrismaOrderRepository implements IOrderRepository {
   }
 
   async delete(id: string): Promise<void> {
-    await prisma.order.update({
-      where: { id },
-      data: { status: 'CANCELADO' }
-    });
+    await prisma.$transaction([
+      prisma.orderItem.deleteMany({ where: { orderId: id } }),
+      prisma.orderPayment.deleteMany({ where: { orderId: id } }),
+      prisma.financialRecord.deleteMany({ where: { orderId: id } }),
+      prisma.inventoryMovement.deleteMany({ where: { orderId: id } }),
+      prisma.order.delete({ where: { id } })
+    ]);
   }
 
   async generateReceiptNumber(): Promise<string> {

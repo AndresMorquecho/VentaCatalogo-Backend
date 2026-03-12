@@ -23,7 +23,7 @@ export class ReceiveOrderUseCase {
     private financialRepository: IFinancialRecordRepository
   ) { }
 
-  async execute(orderId: string, data: ReceiveOrderDTO, userId: string) {
+  async execute(orderId: string, data: ReceiveOrderDTO, userId: string, txClient?: any) {
     // Validaciones iniciales
     if (data.finalTotal === undefined || data.finalTotal === null || data.finalTotal < 0) {
       throw new Error('El valor real de factura debe ser mayor o igual a 0');
@@ -40,8 +40,7 @@ export class ReceiveOrderUseCase {
       }
     }
 
-    // Ejecutar todo en una transacción
-    return await prisma.$transaction(async (tx) => {
+    const logic = async (tx: any) => {
       // 1. Obtener pedido con relaciones
       const order = await tx.order.findUnique({
         where: { id: orderId },
@@ -74,6 +73,7 @@ export class ReceiveOrderUseCase {
           documentType: data.documentType || 'FACTURA',
           packingNumber: data.packingNumber || null,
           packingTotal: data.packingTotal || null,
+          receptionBatchId: (data as any).receptionBatchId || null,
           receptionDate: data.entryDate ? new Date(data.entryDate) : new Date(),
           receivedByName: data.receivedByName || null,
           updatedAt: new Date(),
@@ -90,7 +90,7 @@ export class ReceiveOrderUseCase {
 
       // --- LÓGICA DE REPROGRAMACIÓN ---
       if (data.reprogrammedItemIds && data.reprogrammedItemIds.length > 0) {
-        const itemsToReprogram = updatedOrder.items.filter(item =>
+        const itemsToReprogram = (updatedOrder as any).items.filter((item: any) =>
           data.reprogrammedItemIds?.includes(item.id)
         );
 
@@ -144,22 +144,18 @@ export class ReceiveOrderUseCase {
 
       // 4. Calcular saldo actual y validaciones de seguridad
       const paidAmount = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-      const pendingBeforeAbono = data.finalTotal - paidAmount;
+      const pendingBeforeAbono = Number(data.finalTotal) - paidAmount;
       let newPaidAmount = paidAmount;
 
-      // VALIDACIÓN DE SEGURIDAD: Evitar abonos accidentales gigantes (ej: escaneo de código de barras)
+      // VALIDACIÓN DE SEGURIDAD
       if (data.abonoRecepcion && data.abonoRecepcion > 0) {
-
-
-        // Si el abono es mucho mayor a lo que debe (ej: debe $10 y abona $1200)
         if (pendingBeforeAbono > 0 && data.abonoRecepcion > (pendingBeforeAbono * 5) && data.abonoRecepcion > 100) {
-          throw new Error(`Abono sospechoso: Está intentando abonar $${data.abonoRecepcion} para un saldo de $${pendingBeforeAbono.toFixed(2)}. Si es correcto, realice el abono en el módulo de pagos.`);
+          throw new Error(`Abono sospechoso: Está intentando abonar $${data.abonoRecepcion} para un saldo de $${pendingBeforeAbono.toFixed(2)}.`);
         }
       }
 
       // 5. Si hay abono adicional en recepción
       if (data.abonoRecepcion && data.abonoRecepcion > 0) {
-        // Buscar cuenta bancaria (para efectivo, buscar cuenta de tipo CASH)
         let bankAccountId = data.bankAccountId;
         if (data.paymentMethod === 'EFECTIVO' && !bankAccountId) {
           const cashAccount = await tx.bankAccount.findFirst({
@@ -170,25 +166,20 @@ export class ReceiveOrderUseCase {
           }
         }
 
-        // Validar referencia duplicada para métodos que no son efectivo
         if (data.paymentMethod !== 'EFECTIVO' && data.reference) {
           const whereClause: any = {
             paymentMethod: data.paymentMethod,
             referenceNumber: data.reference
           };
-          if (data.paymentMethod === 'CHEQUE' && bankAccountId) {
-            whereClause.bankAccountId = bankAccountId;
-          }
           const existingPayment = await tx.financialRecord.findFirst({
             where: whereClause
           });
 
           if (existingPayment) {
-            throw new Error(`La referencia ${data.reference} ya fue utilizada en otro pago con método ${data.paymentMethod}`);
+            throw new Error(`La referencia ${data.reference} ya fue utilizada`);
           }
         }
 
-        // Generar número de recibo para el abono
         const lastPayment = await (tx.orderPayment as any).findFirst({
           where: { receiptNumber: { startsWith: 'REC-ABO-' } },
           orderBy: { createdAt: 'desc' }
@@ -201,7 +192,6 @@ export class ReceiveOrderUseCase {
         }
         const abonoReceiptNumber = `REC-ABO-${nextNumber.toString().padStart(6, '0')}`;
 
-        // Crear pago en el pedido
         await (tx.orderPayment as any).create({
           data: {
             orderId: order.id,
@@ -213,7 +203,6 @@ export class ReceiveOrderUseCase {
           }
         });
 
-        // Crear registro financiero (solo si hay cuenta bancaria)
         if (bankAccountId) {
           const referenceNumber = data.paymentMethod !== 'EFECTIVO' && data.reference
             ? data.reference
@@ -236,7 +225,6 @@ export class ReceiveOrderUseCase {
             }
           });
 
-          // Actualizar saldo de cuenta bancaria
           await tx.bankAccount.update({
             where: { id: bankAccountId },
             data: {
@@ -250,15 +238,13 @@ export class ReceiveOrderUseCase {
         newPaidAmount += data.abonoRecepcion;
       }
 
-      // 6. Calcular saldo pendiente con el total real
-      const pendingAmount = data.finalTotal - newPaidAmount;
+      // 6. Calcular saldo pendiente
+      const pendingAmount = Number(data.finalTotal) - newPaidAmount;
 
-      // 7. Si hay crédito a favor del cliente (pendingAmount < 0)
+      // 7. Si hay crédito a favor
       if (pendingAmount < -0.01) {
         const creditAmount = Math.abs(pendingAmount);
-
-        // Verificar si el cliente tiene ClientAccount, si no, crearlo
-        let clientAccount = order.client.clientAccount;
+        let clientAccount = (order as any).client.clientAccount;
         if (!clientAccount) {
           clientAccount = await tx.clientAccount.create({
             data: {
@@ -272,7 +258,6 @@ export class ReceiveOrderUseCase {
           });
         }
 
-        // Crear crédito del cliente
         await tx.clientCredit.create({
           data: {
             clientAccountId: clientAccount.id,
@@ -284,25 +269,16 @@ export class ReceiveOrderUseCase {
           }
         });
 
-        // TASK-7.1: Optimistic Locking — use updateMany with version check to prevent concurrent corruption
-        const updateResult = await tx.clientAccount.updateMany({
-          where: { id: clientAccount.id, version: clientAccount.version }, // version guard
+        await tx.clientAccount.updateMany({
+          where: { id: clientAccount.id, version: clientAccount.version }, 
           data: {
             totalCreditAvailable: { increment: creditAmount },
             updatedAt: new Date(),
             version: { increment: 1 }
           }
         });
-
-        if (updateResult.count === 0) {
-          throw new Error(
-            'Conflicto de concurrencia: La cuenta del cliente fue modificada simultáneamente. ' +
-            'Por favor, intente la operación de nuevo.'
-          );
-        }
       }
 
-      // 8. Refetch order to include new payments/credits
       const finalOrder = await tx.order.findUnique({
         where: { id: orderId },
         include: {
@@ -314,12 +290,19 @@ export class ReceiveOrderUseCase {
         }
       });
 
-      // Retornar pedido actualizado con cálculos
       return {
         ...finalOrder,
         paidAmount: newPaidAmount,
-        pendingAmount: data.finalTotal - newPaidAmount
+        pendingAmount: Number(data.finalTotal) - newPaidAmount
       };
-    });
+    };
+
+    if (txClient) {
+      return await logic(txClient);
+    } else {
+      return await prisma.$transaction(async (tx) => {
+        return await logic(tx);
+      });
+    }
   }
 }

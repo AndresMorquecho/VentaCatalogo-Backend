@@ -75,12 +75,6 @@ export class CreateOrderUseCase {
         return Result.fail('La empresaria está bloqueada y no puede realizar nuevos pedidos.');
       }
 
-      if (client.paymentPreference === 'SOLO_CONTADO') {
-        const totalAbono = (dto.initialPayment.amount || 0) + (dto.creditAmount || 0);
-        if (totalAbono < dto.total) {
-          return Result.fail('Esta empresaria tiene restricción de SOLO CONTADO. El abono debe ser igual al total del pedido.');
-        }
-      }
 
       if (!dto.initialPayment || dto.initialPayment.amount === undefined) {
         return Result.fail('Initial payment information is required');

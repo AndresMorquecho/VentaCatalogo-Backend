@@ -25,12 +25,15 @@ export class DeleteOrderUseCase {
                     return Result.fail('Pedido no encontrado');
                 }
 
-                // REGLA: Solo se pueden eliminar pedidos en estado 'POR_RECIBIR' y sin abonos adicionales
-                if (order.status !== 'POR_RECIBIR' || order.payments.length > 1) {
-                    let reason = 'No se puede eliminar un pedido que ya tiene movimientos (recepción o abonos adicionales).';
+                // REGLA: Solo se pueden eliminar pedidos en estado 'POR_RECIBIR' y sin abonos adicionales (máximo 2 si uno es crédito)
+                const currentPayments = order.payments || [];
+                const hasRealMovement = order.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some(p => p.method === 'CREDITO_CLIENTE'));
+
+                if (hasRealMovement) {
+                    let reason = 'No se puede eliminar un pedido que ya tiene movimientos procesados (recepción o abonos adicionales).';
                     if (order.status === 'ENTREGADO') reason = 'No se puede eliminar un pedido que ya ha sido entregado. Realice una devolución.';
                     if (order.status === 'RECIBIDO_EN_BODEGA') reason = 'No se puede eliminar un pedido que ya ha sido receptado en bodega.';
-                    if (order.payments.length > 1) reason = 'No se puede eliminar un pedido que ya tiene abonos adicionales vinculados.';
+                    if (hasRealMovement && order.status === 'POR_RECIBIR') reason = 'No se puede eliminar un pedido que ya tiene abonos adicionales vinculados.';
                     
                     return Result.fail(reason);
                 }

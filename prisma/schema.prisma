@@ -41,7 +41,7 @@ model Client {
   lastOrderDate        DateTime? @map("last_order_date")
   lastBrandName        String?   @map("last_brand_name")
   isBlocked            Boolean   @default(false) @map("is_blocked")
-  paymentPreference    String    @default("NORMAL") @map("payment_preference") // NORMAL, SOLO_CONTADO
+  createdByName        String?   @map("created_by_name") // Usuario que registró a la empresaria
 
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
@@ -132,6 +132,23 @@ model OrderReceipt {
   @@map("order_receipts")
 }
 
+model ReceptionBatch {
+  id              String   @id @default(uuid())
+  packingNumber   String   @map("packing_number")
+  packingTotal    Decimal  @db.Decimal(10, 2) @map("packing_total")
+  receptionDate   DateTime @default(now()) @map("reception_date")
+  receivedByName  String   @map("received_by_name")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  orders          Order[]
+
+  @@index([packingNumber])
+  @@map("reception_batches")
+}
+
 model Order {
   id                   String    @id @default(uuid())
   receiptNumber        String    @map("receipt_number") // denormalizado para consultas rápidas
@@ -160,6 +177,7 @@ model Order {
   deliveredByName      String?   @map("delivered_by_name") // Usuario que procesó la entrega
   
   // Nuevos campos FASE 1 & 3 & 4
+  receptionBatchId     String?   @map("reception_batch_id")
   parentOrderId        String?   @map("parent_order_id")
   orderNumber          String?   @map("order_number")
   trackingGuide        String?   @map("tracking_guide")
@@ -183,6 +201,7 @@ model Order {
   
   parentOrder        Order?              @relation("OrderHeirs", fields: [parentOrderId], references: [id])
   childOrders        Order[]             @relation("OrderHeirs")
+  receptionBatch     ReceptionBatch?     @relation(fields: [receptionBatchId], references: [id], onDelete: SetNull)
 
   @@index([clientId])
   @@index([brandId])

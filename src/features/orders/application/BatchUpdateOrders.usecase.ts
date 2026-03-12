@@ -59,8 +59,11 @@ export class BatchUpdateOrdersUseCase {
 
                     if (order) {
                         // CHECK: Cannot delete if it has movement or is processed
-                        if (order.status !== 'POR_RECIBIR' || (order.payments && order.payments.length > 1)) {
-                            throw new Error(`No se puede eliminar la marca ${order.brand.name}: Ya tiene movimientos procesados.`);
+                        const currentPayments = order.payments || [];
+                        const hasRealMovement = order.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some(p => p.method === 'CREDITO_CLIENTE'));
+                        
+                        if (hasRealMovement) {
+                            throw new Error(`No se puede eliminar la marca ${order.brand.name}: Ya tiene movimientos procesados (recepción o abonos adicionales).`);
                         }
 
                         // Handle orphan children if balance/receipt logic requires it
@@ -122,8 +125,11 @@ export class BatchUpdateOrdersUseCase {
 
                         if (existing) {
                             // CHECK: Cannot update if it has movement
-                            if (existing.status !== 'POR_RECIBIR' || (existing.payments && existing.payments.length > 1)) {
-                                throw new Error(`No se puede editar la marca ${existing.brand.name}: Ya tiene movimientos procesados.`);
+                            const currentPayments = existing.payments || [];
+                            const hasRealMovement = existing.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some(p => p.method === 'CREDITO_CLIENTE'));
+                            
+                            if (hasRealMovement) {
+                                throw new Error(`No se puede editar la marca ${existing.brand.name}: Ya tiene movimientos procesados (recepción o abonos adicionales).`);
                             }
                             // Update Order fields - Always update base fields if they changed
                             const updated: any = await tx.order.update({

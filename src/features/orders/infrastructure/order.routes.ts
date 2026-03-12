@@ -7,6 +7,8 @@ import { ReceiveOrderUseCase } from '../application/ReceiveOrder.usecase';
 import { DeliverOrderUseCase } from '../application/DeliverOrder.usecase';
 import { DeleteOrderUseCase } from '../application/DeleteOrder.usecase';
 import { BatchUpdateOrdersUseCase } from '../application/BatchUpdateOrders.usecase';
+import { CreateReceptionBatchUseCase } from '../application/CreateReceptionBatch.usecase';
+import { DeleteReceptionBatchUseCase } from '../application/DeleteReceptionBatch.usecase';
 import { PrismaOrderRepository } from './PrismaOrderRepository';
 import { PrismaFinancialRecordRepository } from '../../financial/infrastructure/PrismaFinancialRecordRepository';
 import { PrismaBankAccountRepository } from '../../financial/infrastructure/PrismaBankAccountRepository';
@@ -28,6 +30,8 @@ const receiveOrderUseCase = new ReceiveOrderUseCase(orderRepository, financialRe
 const deliverOrderUseCase = new DeliverOrderUseCase(orderRepository, financialRepository);
 const deleteOrderUseCase = new DeleteOrderUseCase();
 const batchUpdateOrdersUseCase = new BatchUpdateOrdersUseCase();
+const createReceptionBatchUseCase = new CreateReceptionBatchUseCase(receiveOrderUseCase);
+const deleteReceptionBatchUseCase = new DeleteReceptionBatchUseCase();
 
 // Controller
 console.log(`[OrderRoutes] Initializing OrderController with BatchUpdateOrdersUseCase: ${!!batchUpdateOrdersUseCase}`);
@@ -39,7 +43,9 @@ const orderController = new OrderController(
   deliverOrderUseCase,
   deleteOrderUseCase,
   batchCreateOrderUseCase,
-  batchUpdateOrdersUseCase
+  batchUpdateOrdersUseCase,
+  createReceptionBatchUseCase,
+  deleteReceptionBatchUseCase
 );
 
 // Routes — READ
@@ -96,6 +102,8 @@ router.put('/receipt-header/:receiptNumber', authenticate, requirePermission('or
 router.get('/receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.getByReceiptNumber);
 router.get('/generate-receipt-number', authenticate, requirePermission('orders.create'), orderController.generateReceiptNumber);
 router.get('/check-receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.checkReceiptExists);
+router.get('/reception-batches', authenticate, requirePermission('reception.confirm'), orderController.getReceptionBatches);
+router.delete('/reception-batches/:id', authenticate, requirePermission('reception.confirm'), orderController.deleteReceptionBatch);
 router.get('/:id', authenticate, requirePermission('orders.view'), orderController.getById);
 router.get('/', authenticate, requirePermission('orders.view'), orderController.getAll);
 

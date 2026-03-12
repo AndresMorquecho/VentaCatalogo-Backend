@@ -7,21 +7,66 @@ const router = Router();
 router.get('/', authenticate, requirePermission('clients.view'), async (req, res, next) => {
   try {
     const search = req.query.search as string;
-    const active = req.query.active;
+    const active = req.query.active; // true/false (DB field)
+    const status = req.query.status as string; // ACTIVE/INACTIVE (Business logic: last 30 days order)
+    const city = req.query.city as string;
+    const startDate = req.query.startDate as string;
+    const endDate = req.query.endDate as string;
+    
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit as string) || 200));
+    const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit as string) || 200));
     const skip = (page - 1) * limit;
 
     const where: any = {};
+    
+    // DB Native Active status
     if (active === 'true') where.isActive = true;
     if (active === 'false') where.isActive = false;
 
-    if (search) {
+    // Business Activity Status
+    if (status === 'ACTIVE') {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      where.lastOrderDate = { gte: thirtyDaysAgo };
+    } else if (status === 'INACTIVE') {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       where.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { identificationNumber: { contains: search, mode: 'insensitive' } }
+        { lastOrderDate: { lt: thirtyDaysAgo } },
+        { lastOrderDate: null }
       ];
+    }
+
+    if (city) {
+      where.city = { contains: city, mode: 'insensitive' };
+    }
+
+    // Registration Date range
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
+
+    if (search) {
+      const searchCondition = {
+        OR: [
+          { firstName: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { identificationNumber: { contains: search, mode: 'insensitive' } }
+        ]
+      };
+      
+      // Merge search with existing where clauses
+      if (Object.keys(where).length > 0) {
+        where.AND = [searchCondition];
+      } else {
+        Object.assign(where, searchCondition);
+      }
     }
 
     const [clients, total] = await Promise.all([
@@ -87,7 +132,7 @@ router.post('/', authenticate, requirePermission('clients.create'), async (req: 
     if (req.body.is_whatsapp !== undefined) clientData.isWhatsApp = req.body.is_whatsapp;
     if (req.body.referred_by_id) clientData.referredById = req.body.referred_by_id;
     if (req.body.is_blocked !== undefined) clientData.isBlocked = req.body.is_blocked;
-    if (req.body.payment_preference) clientData.paymentPreference = req.body.payment_preference;
+    clientData.createdByName = (req as any).user?.username || 'SISTEMA';
     clientData.lastDataUpdate = new Date();
 
     const client = await prisma.$transaction(async (tx) => {
@@ -127,7 +172,7 @@ router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: 
     if (req.body.is_whatsapp !== undefined) data.isWhatsApp = req.body.is_whatsapp;
     if (req.body.referred_by_id !== undefined) data.referredById = req.body.referred_by_id;
     if (req.body.is_blocked !== undefined) data.isBlocked = req.body.is_blocked;
-    if (req.body.payment_preference !== undefined) data.paymentPreference = req.body.payment_preference;
+
 
     // Siempre que se edite, actualizamos la fecha de última actualización de datos
     data.lastDataUpdate = new Date();

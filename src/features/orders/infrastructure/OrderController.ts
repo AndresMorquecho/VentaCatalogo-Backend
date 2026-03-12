@@ -10,6 +10,8 @@ import { Order } from '../domain/Order.entity';
 import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
 import { AuthRequest } from '../../../middleware/auth';
 import { BatchUpdateOrdersUseCase } from '../application/BatchUpdateOrders.usecase';
+import { CreateReceptionBatchUseCase } from '../application/CreateReceptionBatch.usecase';
+import { DeleteReceptionBatchUseCase } from '../application/DeleteReceptionBatch.usecase';
 
 export class OrderController {
   constructor(
@@ -20,7 +22,9 @@ export class OrderController {
     private deliverOrderUseCase?: DeliverOrderUseCase,
     private deleteOrderUseCase?: DeleteOrderUseCase,
     private batchCreateOrderUseCase?: any,
-    private batchUpdateOrdersUseCase?: BatchUpdateOrdersUseCase
+    private batchUpdateOrdersUseCase?: BatchUpdateOrdersUseCase,
+    private createReceptionBatchUseCase?: CreateReceptionBatchUseCase,
+    private deleteReceptionBatchUseCase?: DeleteReceptionBatchUseCase
   ) { }
 
   getAll = async (req: Request, res: Response) => {
@@ -247,12 +251,15 @@ export class OrderController {
         return HttpResponse.notFound(res, 'Order not found');
       }
 
-      // 1. BUSINESS RULE: Only 'POR_RECIBIR' orders without extra payments can be edited
-      if (order.status !== 'POR_RECIBIR' || order.payments.length > 1) {
-        let reason = 'No se puede editar un pedido que ya tiene movimientos (recepción o abonos adicionales).';
+      // 1. BUSINESS RULE: Only 'POR_RECIBIR' orders without additional movements can be edited
+      const orderPayments = order.payments || [];
+      const hasExtraPayments = orderPayments.length > 2 || (orderPayments.length > 1 && !orderPayments.some((p: any) => p.method === 'CREDITO_CLIENTE'));
+
+      if (order.status !== 'POR_RECIBIR' || hasExtraPayments) {
+        let reason = 'No se puede editar este pedido porque ya tiene movimientos (recepción o abonos adicionales).';
         if (order.status === 'ENTREGADO') reason = 'No se puede editar un pedido que ya ha sido entregado.';
         if (order.status === 'RECIBIDO_EN_BODEGA') reason = 'No se puede editar un pedido que ya ha sido receptado en bodega.';
-        if (order.payments.length > 1) reason = 'No se puede editar un pedido que ya tiene abonos adicionales vinculados.';
+        if (hasExtraPayments) reason = 'No se puede editar este pedido específico porque ya tiene abonos adicionales vinculados.';
         
         return HttpResponse.badRequest(res, reason);
       }
@@ -504,75 +511,84 @@ export class OrderController {
 
   batchReception = async (req: AuthRequest, res: Response) => {
     try {
-      if (!this.receiveOrderUseCase) {
-        return HttpResponse.fail(res, 'ReceiveOrderUseCase not initialized');
+      if (!this.createReceptionBatchUseCase) {
+        return HttpResponse.fail(res, 'CreateReceptionBatchUseCase not initialized');
       }
 
-      const { items, packingNumber, packingTotal } = req.body;
+      const items = req.body.items;
+      const packingNumber = req.body.packing_number || req.body.packingNumber || 'N/A';
+      const packingTotal = req.body.packing_total !== undefined ? req.body.packing_total : (req.body.packingTotal || 0);
 
       if (!Array.isArray(items) || items.length === 0) {
         return HttpResponse.badRequest(res, 'Items array is required and must not be empty');
       }
 
-      // Procesar cada pedido secuencialmente
-      const results = [];
-      const errors = [];
+      const dto = {
+        id: req.body.id,
+        packingNumber: String(packingNumber),
+        packingTotal: Number(packingTotal),
+        items: items.map((item: any) => ({
+          orderId: item.orderId || item.order_id,
+          finalTotal: Number(item.finalTotal || item.final_total),
+          invoiceNumber: item.finalInvoiceNumber || item.final_invoice_number || item.invoiceNumber || item.invoice_number,
+          abonoRecepcion: item.abonoRecepcion || item.abono_recepcion
+            ? Number(item.abonoRecepcion || item.abono_recepcion)
+            : undefined,
+          bankAccountId: item.bankAccountId || item.bank_account_id,
+          paymentMethod: item.paymentMethod || item.payment_method,
+          reference: item.referenceNumber || item.reference_number || undefined,
+          documentType: item.documentType || item.document_type,
+          entryDate: item.entryDate || item.entry_date
+        }))
+      };
 
-      for (const item of items) {
-        try {
-          const dto = {
-            finalTotal: Number(item.finalTotal || item.final_total),
-            invoiceNumber: item.finalInvoiceNumber || item.final_invoice_number || item.invoiceNumber || item.invoice_number,
-            abonoRecepcion: item.abonoRecepcion || item.abono_recepcion
-              ? Number(item.abonoRecepcion || item.abono_recepcion)
-              : undefined,
-            bankAccountId: item.bankAccountId || item.bank_account_id,
-            paymentMethod: item.paymentMethod || item.payment_method,
-            reference: item.referenceNumber || item.reference_number || undefined,
-            documentType: item.documentType || item.document_type,
-            entryDate: item.entryDate || item.entry_date,
-            packingNumber: packingNumber || item.packingNumber || item.packing_number,
-            packingTotal: packingTotal !== undefined ? Number(packingTotal) : (item.packingTotal || item.packing_total),
-            receivedByName: req.user!.username
-          };
+      const result = await this.createReceptionBatchUseCase.execute(dto, req.user!.username);
 
-          const result = await this.receiveOrderUseCase.execute(
-            item.orderId || item.order_id,
-            dto,
-            req.user!.username
-          );
-
-          results.push({
-            orderId: item.orderId || item.order_id,
-            success: true,
-            data: result
-          });
-        } catch (error) {
-          errors.push({
-            orderId: item.orderId || item.order_id,
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error'
-          });
-        }
+      if (result.isFailure) {
+        return HttpResponse.badRequest(res, result.error!);
       }
 
-      // Si todos fallaron, retornar error
-      if (errors.length === items.length) {
-        return HttpResponse.badRequest(res, `All ${items.length} orders failed to be received`);
-      }
-
-      // Retornar resultados (éxitos y errores)
-      return HttpResponse.ok(res, {
-        success: results,
-        errors: errors.length > 0 ? errors : undefined,
-        summary: {
-          total: items.length,
-          succeeded: results.length,
-          failed: errors.length
-        }
-      });
+      return HttpResponse.ok(res, result.getValue());
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to batch receive orders');
+    }
+  };
+
+  deleteReceptionBatch = async (req: Request, res: Response) => {
+    try {
+      if (!this.deleteReceptionBatchUseCase) {
+        return HttpResponse.fail(res, 'DeleteReceptionBatchUseCase not initialized');
+      }
+
+      const { id } = req.params;
+      const result = await this.deleteReceptionBatchUseCase.execute(id);
+
+      if (result.isFailure) {
+        return HttpResponse.badRequest(res, result.error!);
+      }
+
+      return HttpResponse.ok(res, { message: 'Lote de recepción revertido exitosamente. Todos los pedidos han regresado a estado pendiente.' });
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to delete reception batch');
+    }
+  };
+
+  getReceptionBatches = async (req: Request, res: Response) => {
+    try {
+      const batches = await prisma.receptionBatch.findMany({
+        include: { 
+          orders: { 
+            include: { 
+              payments: true,
+              brand: true
+            } 
+          }
+        },
+        orderBy: { receptionDate: 'desc' }
+      });
+      return HttpResponse.ok(res, batches);
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to get reception batches');
     }
   };
 

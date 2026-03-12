@@ -38,8 +38,7 @@ export interface OrderProps {
 export enum OrderStatus {
   POR_RECIBIR = 'POR_RECIBIR',
   RECIBIDO_EN_BODEGA = 'RECIBIDO_EN_BODEGA',
-  ENTREGADO = 'ENTREGADO',
-  CANCELADO = 'CANCELADO'
+  ENTREGADO = 'ENTREGADO'
 }
 
 export interface OrderItem {
@@ -143,10 +142,7 @@ export class Order extends Entity<OrderProps> {
     this.props.updatedAt = new Date();
   }
 
-  cancel(): void {
-    this.props.status = OrderStatus.CANCELADO;
-    this.props.updatedAt = new Date();
-  }
+
 
   toJSON() {
     return {
