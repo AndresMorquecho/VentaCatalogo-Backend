@@ -53,6 +53,7 @@ model Client {
   financialRecords   FinancialRecord[]
   calls              Call[]
   inventoryMovements InventoryMovement[]
+  walletRecharges    WalletRecharge[]
   
   referredBy         Client?   @relation("ClientReferral", fields: [referredById], references: [id])
   referrals          Client[]  @relation("ClientReferral")
@@ -97,9 +98,11 @@ model BankAccount {
   orders           Order[]
   orderReceipts    OrderReceipt[]
   financialRecords FinancialRecord[]
+  walletRecharges  WalletRecharge[]
 
   @@index([type])
   @@index([isActive])
+  @@index([id, version]) // Optimistic locking index
   @@map("bank_accounts")
 }
 
@@ -317,6 +320,7 @@ model ClientAccount {
   credits            ClientCredit[]
   rewardApplications RewardApplication[]
 
+  @@index([id, version]) // Optimistic locking index
   @@map("client_accounts")
 }
 
@@ -330,6 +334,7 @@ model ClientCredit {
   status              String    @default("AVAILABLE") // AVAILABLE, USED, EXPIRED
   createdAt           DateTime  @default(now()) @map("created_at")
   usedAt              DateTime? @map("used_at")
+  version             Int       @default(1) // Optimistic locking
 
   // Relations
   clientAccount ClientAccount @relation(fields: [clientAccountId], references: [id], onDelete: Restrict)
@@ -337,7 +342,33 @@ model ClientCredit {
   @@index([clientAccountId])
   @@index([status])
   @@index([clientAccountId, status]) // TASK-5.3: Composite for AVAILABLE credit queries
+  @@index([id, version]) // Optimistic locking index
   @@map("client_credits")
+}
+
+model WalletRecharge {
+  id                  String   @id @default(uuid())
+  clientId            String   @map("client_id")
+  amount              Decimal  @db.Decimal(10, 2)
+  paymentMethod       String   @map("payment_method") // EFECTIVO, TRANSFERENCIA, DEPOSITO
+  bankAccountId       String?  @map("bank_account_id")
+  reference           String?
+  notes               String?
+  status              String   @default("PENDIENTE_VALIDACION") // PENDIENTE_VALIDACION, VALIDADO, RECHAZADO
+  createdByName       String?  @map("created_by_name")
+  validatedByName     String?  @map("validated_by_name")
+  validatedAt         DateTime? @map("validated_at")
+  rejectionReason     String?  @map("rejection_reason")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  client      Client       @relation(fields: [clientId], references: [id])
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
+
+  @@index([clientId])
+  @@index([status])
+  @@map("wallet_recharges")
 }
 
 model RewardApplication {

@@ -1,6 +1,8 @@
 import { IOrderRepository } from '../domain/IOrderRepository';
 import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRecordRepository';
 import { prisma } from '../../../lib/prisma';
+import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
+import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 
 export interface DeliverOrderDTO {
   payments?: {
@@ -128,6 +130,12 @@ export class DeliverOrderUseCase {
                 clientAccount: { clientId: order.clientId },
                 status: 'AVAILABLE'
               },
+              select: {
+                id: true,
+                remainingAmount: true,
+                version: true,
+                status: true
+              },
               orderBy: { createdAt: 'asc' }
             });
 
@@ -136,37 +144,110 @@ export class DeliverOrderUseCase {
               if (remainingToSubtract <= 0) break;
               const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
 
-              await tx.clientCredit.update({
-                where: { id: credit.id },
+              // Validate financial integrity
+              validateClientCreditBalance(
+                Number(credit.remainingAmount),
+                amountToSubtract,
+                credit.id
+              );
+
+              const newRemainingAmount = Number(credit.remainingAmount) - amountToSubtract;
+              const newStatus = newRemainingAmount <= 0.01 ? 'USED' : 'AVAILABLE';
+
+              // Update with optimistic locking
+              const result = await tx.clientCredit.updateMany({
+                where: {
+                  id: credit.id,
+                  version: credit.version
+                },
                 data: {
                   remainingAmount: { decrement: amountToSubtract },
-                  status: Number(credit.remainingAmount) - amountToSubtract <= 0.01 ? 'USED' : 'AVAILABLE'
+                  status: newStatus,
+                  version: { increment: 1 }
                 }
               });
+
+              if (result.count === 0) {
+                throw new ConcurrencyError(
+                  'Client credit was modified by another transaction. Please retry.',
+                  'ClientCredit',
+                  credit.id
+                );
+              }
+
               remainingToSubtract -= amountToSubtract;
             }
             if (remainingToSubtract > 0.01) {
               throw new Error(`Saldo a favor insuficiente para cubrir $${payment.amount}. Faltan $${remainingToSubtract.toFixed(2)}`);
             }
 
-            // Sync ClientAccount
-            await tx.clientAccount.update({
+            // Sync ClientAccount with optimistic locking
+            const clientAccount = await tx.clientAccount.findUnique({
               where: { clientId: order.clientId },
+              select: { id: true, totalCreditAvailable: true, version: true }
+            });
+
+            if (!clientAccount) {
+              throw new Error(`Client account not found for client ${order.clientId}`);
+            }
+
+            const accountResult = await tx.clientAccount.updateMany({
+              where: {
+                clientId: order.clientId,
+                version: clientAccount.version
+              },
               data: {
                 totalCreditAvailable: { decrement: payment.amount },
                 version: { increment: 1 }
               }
             });
+
+            if (accountResult.count === 0) {
+              throw new ConcurrencyError(
+                'Client account was modified by another transaction. Please retry.',
+                'ClientAccount',
+                clientAccount.id
+              );
+            }
           } else if (bankAccountId) {
-            // Actualizar saldo de cuenta bancaria
-            await tx.bankAccount.update({
+            // Read account with version
+            const bankAccount = await tx.bankAccount.findUnique({
               where: { id: bankAccountId },
+              select: { id: true, currentBalance: true, version: true, name: true }
+            });
+
+            if (!bankAccount) {
+              throw new Error(`Bank account ${bankAccountId} not found`);
+            }
+
+            // Validate financial integrity
+            validateBankAccountBalance(
+              Number(bankAccount.currentBalance),
+              payment.amount,
+              bankAccountId,
+              bankAccount.name
+            );
+
+            // Update with optimistic locking
+            const result = await tx.bankAccount.updateMany({
+              where: {
+                id: bankAccountId,
+                version: bankAccount.version
+              },
               data: {
                 currentBalance: { increment: payment.amount },
                 updatedAt: new Date(),
                 version: { increment: 1 }
               }
             });
+
+            if (result.count === 0) {
+              throw new ConcurrencyError(
+                'Bank account was modified by another transaction. Please retry.',
+                'BankAccount',
+                bankAccountId
+              );
+            }
           }
 
           totalNewlyPaid += payment.amount;

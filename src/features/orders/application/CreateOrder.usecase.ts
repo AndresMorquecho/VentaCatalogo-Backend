@@ -5,6 +5,8 @@ import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRec
 import { IBankAccountRepository } from '../../financial/domain/IBankAccountRepository';
 import { FinancialRecord } from '../../financial/domain/FinancialRecord.entity';
 import { prisma } from '../../../lib/prisma';
+import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
+import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 
 export interface CreateOrderDTO {
   receiptNumber?: string; // Optional manual receipt number
@@ -123,25 +125,36 @@ export class CreateOrderUseCase {
 
       // Execute everything in a transaction for atomicity
       const savedOrder = await prisma.$transaction(async (tx) => {
-        // Crear encabezado de recibo si es un número nuevo (1 order = 1 receipt)
-        const receiptId = crypto.randomUUID();
-        await (tx as any).orderReceipt.create({
-          data: {
-            id: receiptId,
-            receiptNumber,
-            clientId: dto.clientId,
-            clientName: dto.clientName,
-            salesChannel: dto.salesChannel,
-            createdAt: dto.createdAt ? new Date(dto.createdAt) : new Date(),
-            transactionDate: dto.transactionDate,
-            paymentMethod: dto.paymentMethod,
-            bankAccountId: dto.bankAccountId || null,
-            transactionReference: dto.initialPayment?.reference || null,
-            notes: dto.notes || null,
-            createdByName: dto.createdByName || createdBy,
-            version: 1
-          }
+        // ✅ CORRECCIÓN: Verificar si OrderReceipt ya existe antes de crear
+        let receiptId: string;
+        const existingReceipt = await (tx as any).orderReceipt.findUnique({
+          where: { receiptNumber }
         });
+
+        if (existingReceipt) {
+          // Recibo ya existe, usar su ID
+          receiptId = existingReceipt.id;
+        } else {
+          // Recibo nuevo, crear
+          receiptId = crypto.randomUUID();
+          await (tx as any).orderReceipt.create({
+            data: {
+              id: receiptId,
+              receiptNumber,
+              clientId: dto.clientId,
+              clientName: dto.clientName,
+              salesChannel: dto.salesChannel,
+              createdAt: dto.createdAt ? new Date(dto.createdAt) : new Date(),
+              transactionDate: dto.transactionDate,
+              paymentMethod: dto.paymentMethod,
+              bankAccountId: dto.bankAccountId || null,
+              transactionReference: dto.initialPayment?.reference || null,
+              notes: dto.notes || null,
+              createdByName: dto.createdByName || createdBy,
+              version: 1
+            }
+          });
+        }
 
         // 1. Get base receipt number for payments once inside the transaction
         const lastPayment = await (tx.orderPayment as any).findFirst({
@@ -271,15 +284,48 @@ export class CreateOrderUseCase {
           }));
         }
 
-        // Bank account balance update
+        // Bank account balance update with optimistic locking
         if (dto.initialPayment.amount > 0 && dto.bankAccountId) {
-          financialAndBankOps.push(tx.bankAccount.update({
+          // Read account with version
+          const bankAccount = await tx.bankAccount.findUnique({
             where: { id: dto.bankAccountId },
-            data: {
-              currentBalance: { increment: dto.initialPayment.amount },
-              version: { increment: 1 }
+            select: { id: true, currentBalance: true, version: true, name: true }
+          });
+
+          if (!bankAccount) {
+            throw new Error(`Bank account ${dto.bankAccountId} not found`);
+          }
+
+          // Validate financial integrity
+          validateBankAccountBalance(
+            Number(bankAccount.currentBalance),
+            dto.initialPayment.amount,
+            dto.bankAccountId,
+            bankAccount.name
+          );
+
+          // Update with optimistic locking
+          financialAndBankOps.push((async () => {
+            const result = await tx.bankAccount.updateMany({
+              where: {
+                id: dto.bankAccountId,
+                version: bankAccount.version
+              },
+              data: {
+                currentBalance: { increment: dto.initialPayment.amount },
+                updatedAt: new Date(),
+                version: { increment: 1 }
+              }
+            });
+
+            if (result.count === 0) {
+              throw new ConcurrencyError(
+                'Bank account was modified by another transaction. Please retry.',
+                'BankAccount',
+                dto.bankAccountId
+              );
             }
-          }));
+          })());
         }
 
         // 6. Handle Credit Reversion if applicable
@@ -289,6 +335,12 @@ export class CreateOrderUseCase {
               clientAccount: { clientId: dto.clientId },
               status: 'AVAILABLE'
             },
+            select: {
+              id: true,
+              remainingAmount: true,
+              version: true,
+              status: true
+            },
             orderBy: { createdAt: 'asc' }
           });
 
@@ -297,13 +349,39 @@ export class CreateOrderUseCase {
             if (remainingToSubtract <= 0) break;
             const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
 
-            financialAndBankOps.push(tx.clientCredit.update({
-              where: { id: credit.id },
-              data: {
-                remainingAmount: { decrement: amountToSubtract },
-                status: Number(credit.remainingAmount) - amountToSubtract <= 0.01 ? 'USED' : 'AVAILABLE'
+            // Validate financial integrity
+            validateClientCreditBalance(
+              Number(credit.remainingAmount),
+              amountToSubtract,
+              credit.id
+            );
+
+            const newRemainingAmount = Number(credit.remainingAmount) - amountToSubtract;
+            const newStatus = newRemainingAmount <= 0.01 ? 'USED' : 'AVAILABLE';
+
+            // Update with optimistic locking
+            financialAndBankOps.push((async () => {
+              const result = await tx.clientCredit.updateMany({
+                where: {
+                  id: credit.id,
+                  version: credit.version
+                },
+                data: {
+                  remainingAmount: { decrement: amountToSubtract },
+                  status: newStatus,
+                  version: { increment: 1 }
+                }
+              });
+
+              if (result.count === 0) {
+                throw new ConcurrencyError(
+                  'Client credit was modified by another transaction. Please retry.',
+                  'ClientCredit',
+                  credit.id
+                );
               }
-            }));
+            })());
+
             remainingToSubtract -= amountToSubtract;
           }
 

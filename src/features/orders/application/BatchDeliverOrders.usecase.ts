@@ -1,4 +1,6 @@
 import { prisma } from '../../../lib/prisma';
+import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
+import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 
 export interface BatchDeliverOrdersDTO {
   orderIds: string[];
@@ -124,6 +126,12 @@ export class BatchDeliverOrdersUseCase {
           if (isCredit) {
              const availableCredits = await tx.clientCredit.findMany({
               where: { clientAccount: { clientId }, status: 'AVAILABLE' },
+              select: {
+                id: true,
+                remainingAmount: true,
+                version: true,
+                status: true
+              },
               orderBy: { createdAt: 'asc' }
             });
 
@@ -132,25 +140,107 @@ export class BatchDeliverOrdersUseCase {
               if (creditToSubtract <= 0) break;
               const amountToSubtract = Math.min(Number(credit.remainingAmount), creditToSubtract);
 
-              await tx.clientCredit.update({
-                where: { id: credit.id },
+              // Validate financial integrity
+              validateClientCreditBalance(
+                Number(credit.remainingAmount),
+                amountToSubtract,
+                credit.id
+              );
+
+              const newRemainingAmount = Number(credit.remainingAmount) - amountToSubtract;
+              const newStatus = newRemainingAmount <= 0.01 ? 'USED' : 'AVAILABLE';
+
+              // Update with optimistic locking
+              const result = await tx.clientCredit.updateMany({
+                where: {
+                  id: credit.id,
+                  version: credit.version
+                },
                 data: {
                   remainingAmount: { decrement: amountToSubtract },
-                  status: Number(credit.remainingAmount) - amountToSubtract <= 0.01 ? 'USED' : 'AVAILABLE'
+                  status: newStatus,
+                  version: { increment: 1 }
                 }
               });
+
+              if (result.count === 0) {
+                throw new ConcurrencyError(
+                  'Client credit was modified by another transaction. Please retry.',
+                  'ClientCredit',
+                  credit.id
+                );
+              }
+
               creditToSubtract -= amountToSubtract;
             }
 
-            await tx.clientAccount.update({
+            // Sync ClientAccount with optimistic locking
+            const clientAccountData = await tx.clientAccount.findUnique({
               where: { id: clientAccount.id },
-              data: { totalCreditAvailable: { decrement: payment.amount }, version: { increment: 1 } }
+              select: { id: true, totalCreditAvailable: true, version: true }
             });
+
+            if (!clientAccountData) {
+              throw new Error(`Client account not found: ${clientAccount.id}`);
+            }
+
+            const accountResult = await tx.clientAccount.updateMany({
+              where: {
+                id: clientAccount.id,
+                version: clientAccountData.version
+              },
+              data: {
+                totalCreditAvailable: { decrement: payment.amount },
+                version: { increment: 1 }
+              }
+            });
+
+            if (accountResult.count === 0) {
+              throw new ConcurrencyError(
+                'Client account was modified by another transaction. Please retry.',
+                'ClientAccount',
+                clientAccount.id
+              );
+            }
           } else if (bankAccountId) {
-            await tx.bankAccount.update({
+            // Read account with version
+            const bankAccount = await tx.bankAccount.findUnique({
               where: { id: bankAccountId },
-              data: { currentBalance: { increment: payment.amount }, version: { increment: 1 } }
+              select: { id: true, currentBalance: true, version: true, name: true }
             });
+
+            if (!bankAccount) {
+              throw new Error(`Bank account ${bankAccountId} not found`);
+            }
+
+            // Validate financial integrity
+            validateBankAccountBalance(
+              Number(bankAccount.currentBalance),
+              payment.amount,
+              bankAccountId,
+              bankAccount.name
+            );
+
+            // Update with optimistic locking
+            const result = await tx.bankAccount.updateMany({
+              where: {
+                id: bankAccountId,
+                version: bankAccount.version
+              },
+              data: {
+                currentBalance: { increment: payment.amount },
+                updatedAt: new Date(),
+                version: { increment: 1 }
+              }
+            });
+
+            if (result.count === 0) {
+              throw new ConcurrencyError(
+                'Bank account was modified by another transaction. Please retry.',
+                'BankAccount',
+                bankAccountId
+              );
+            }
           }
         }
 
@@ -227,7 +317,16 @@ export class BatchDeliverOrdersUseCase {
         }
       }
 
-      // 5. Finalizar cuenta del cliente
+      // 5. Finalizar cuenta del cliente con optimistic locking
+      const finalClientAccount = await tx.clientAccount.findUnique({
+        where: { id: clientAccount.id },
+        select: { id: true, version: true }
+      });
+
+      if (!finalClientAccount) {
+        throw new Error(`Client account not found: ${clientAccount.id}`);
+      }
+
       const updatedPoints = clientAccount.totalRewardPoints + totalPointsEarned;
       const updatedOrders = clientAccount.totalOrders + orders.length;
       const updatedSpent = Number(clientAccount.totalSpent) + totalSpentInBatch;
@@ -237,8 +336,11 @@ export class BatchDeliverOrdersUseCase {
       else if (updatedPoints >= 300) newLevel = 'ORO';
       else if (updatedPoints >= 100) newLevel = 'PLATA';
 
-      await tx.clientAccount.update({
-        where: { id: clientAccount.id },
+      const finalResult = await tx.clientAccount.updateMany({
+        where: {
+          id: clientAccount.id,
+          version: finalClientAccount.version
+        },
         data: {
           totalRewardPoints: updatedPoints,
           totalOrders: updatedOrders,
@@ -247,6 +349,14 @@ export class BatchDeliverOrdersUseCase {
           version: { increment: 1 }
         }
       });
+
+      if (finalResult.count === 0) {
+        throw new ConcurrencyError(
+          'Client account was modified by another transaction. Please retry.',
+          'ClientAccount',
+          clientAccount.id
+        );
+      }
 
       return {
         success: true,

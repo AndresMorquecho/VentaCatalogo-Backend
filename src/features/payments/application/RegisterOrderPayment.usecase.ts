@@ -5,6 +5,8 @@ import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRec
 import { IBankAccountRepository } from '../../financial/domain/IBankAccountRepository';
 import { FinancialRecord } from '../../financial/domain/FinancialRecord.entity';
 import { prisma } from '../../../lib/prisma';
+import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
+import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 
 export interface RegisterOrderPaymentDTO {
     orderId: string;
@@ -94,13 +96,44 @@ export class RegisterOrderPaymentUseCase {
                         }
                     });
 
-                    await tx.bankAccount.update({
+                    // Read account with version
+                    const bankAccount = await tx.bankAccount.findUnique({
                         where: { id: dto.bankAccountId },
+                        select: { id: true, currentBalance: true, version: true, name: true }
+                    });
+
+                    if (!bankAccount) {
+                        throw new Error(`Bank account ${dto.bankAccountId} not found`);
+                    }
+
+                    // Validate financial integrity
+                    validateBankAccountBalance(
+                        Number(bankAccount.currentBalance),
+                        dto.amount,
+                        dto.bankAccountId,
+                        bankAccount.name
+                    );
+
+                    // Update with optimistic locking
+                    const result = await tx.bankAccount.updateMany({
+                        where: {
+                            id: dto.bankAccountId,
+                            version: bankAccount.version
+                        },
                         data: {
                             currentBalance: { increment: dto.amount },
+                            updatedAt: new Date(),
                             version: { increment: 1 }
                         }
                     });
+
+                    if (result.count === 0) {
+                        throw new ConcurrencyError(
+                            'Bank account was modified by another transaction. Please retry.',
+                            'BankAccount',
+                            dto.bankAccountId
+                        );
+                    }
                 }
 
                 // --- CREDIT USED PORTION ---
@@ -111,6 +144,12 @@ export class RegisterOrderPaymentUseCase {
                             clientAccount: { clientId: order.clientId },
                             status: 'AVAILABLE'
                         },
+                        select: {
+                            id: true,
+                            remainingAmount: true,
+                            version: true,
+                            status: true
+                        },
                         orderBy: { createdAt: 'asc' }
                     });
 
@@ -119,13 +158,37 @@ export class RegisterOrderPaymentUseCase {
                         if (remainingToSubtract <= 0) break;
                         const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
 
-                        await tx.clientCredit.update({
-                            where: { id: credit.id },
+                        // Validate financial integrity
+                        validateClientCreditBalance(
+                            Number(credit.remainingAmount),
+                            amountToSubtract,
+                            credit.id
+                        );
+
+                        const newRemainingAmount = Number(credit.remainingAmount) - amountToSubtract;
+                        const newStatus = newRemainingAmount <= 0.01 ? 'USED' : 'AVAILABLE';
+
+                        // Update with optimistic locking
+                        const result = await tx.clientCredit.updateMany({
+                            where: {
+                                id: credit.id,
+                                version: credit.version
+                            },
                             data: {
                                 remainingAmount: { decrement: amountToSubtract },
-                                status: Number(credit.remainingAmount) - amountToSubtract <= 0.01 ? 'USED' : 'AVAILABLE'
+                                status: newStatus,
+                                version: { increment: 1 }
                             }
                         });
+
+                        if (result.count === 0) {
+                            throw new ConcurrencyError(
+                                'Client credit was modified by another transaction. Please retry.',
+                                'ClientCredit',
+                                credit.id
+                            );
+                        }
+
                         remainingToSubtract -= amountToSubtract;
                     }
 
@@ -133,18 +196,31 @@ export class RegisterOrderPaymentUseCase {
                         throw new Error(`Saldo a favor insuficiente para cubrir $${dto.creditAmount.toFixed(2)}`);
                     }
 
-                    // TASK-4.2: Sync ClientAccount.totalCreditAvailable after consuming credit
+                    // TASK-4.2: Sync ClientAccount.totalCreditAvailable after consuming credit with optimistic locking
                     const clientAccount = await tx.clientAccount.findUnique({
-                        where: { clientId: order.clientId }
+                        where: { clientId: order.clientId },
+                        select: { id: true, totalCreditAvailable: true, version: true }
                     });
+
                     if (clientAccount) {
-                        await tx.clientAccount.update({
-                            where: { id: clientAccount.id },
+                        const accountResult = await tx.clientAccount.updateMany({
+                            where: {
+                                id: clientAccount.id,
+                                version: clientAccount.version
+                            },
                             data: {
                                 totalCreditAvailable: { decrement: dto.creditAmount },
                                 version: { increment: 1 }
                             }
                         });
+
+                        if (accountResult.count === 0) {
+                            throw new ConcurrencyError(
+                                'Client account was modified by another transaction. Please retry.',
+                                'ClientAccount',
+                                clientAccount.id
+                            );
+                        }
                     }
 
                     const creditPayRef = await this.financialRepository.generatePaymentReceiptNumber();

@@ -1,6 +1,8 @@
 import { IOrderRepository } from '../domain/IOrderRepository';
 import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRecordRepository';
 import { prisma } from '../../../lib/prisma';
+import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
+import { validateBankAccountBalance } from '../../../shared/utils/financialValidations';
 
 export interface ReceiveOrderDTO {
   finalTotal: number;
@@ -143,7 +145,7 @@ export class ReceiveOrderUseCase {
       });
 
       // 4. Calcular saldo actual y validaciones de seguridad
-      const paidAmount = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const paidAmount = order.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
       const pendingBeforeAbono = Number(data.finalTotal) - paidAmount;
       let newPaidAmount = paidAmount;
 
@@ -225,14 +227,44 @@ export class ReceiveOrderUseCase {
             }
           });
 
-          await tx.bankAccount.update({
+          // Read account with version
+          const bankAccount = await tx.bankAccount.findUnique({
             where: { id: bankAccountId },
+            select: { id: true, currentBalance: true, version: true, name: true }
+          });
+
+          if (!bankAccount) {
+            throw new Error(`Bank account ${bankAccountId} not found`);
+          }
+
+          // Validate financial integrity
+          validateBankAccountBalance(
+            Number(bankAccount.currentBalance),
+            data.abonoRecepcion,
+            bankAccountId,
+            bankAccount.name
+          );
+
+          // Update with optimistic locking
+          const result = await tx.bankAccount.updateMany({
+            where: {
+              id: bankAccountId,
+              version: bankAccount.version
+            },
             data: {
               currentBalance: { increment: data.abonoRecepcion },
               updatedAt: new Date(),
               version: { increment: 1 }
             }
           });
+
+          if (result.count === 0) {
+            throw new ConcurrencyError(
+              'Bank account was modified by another transaction. Please retry.',
+              'BankAccount',
+              bankAccountId
+            );
+          }
         }
 
         newPaidAmount += data.abonoRecepcion;

@@ -8,6 +8,7 @@ import { DeliverOrderUseCase } from '../application/DeliverOrder.usecase';
 import { DeleteOrderUseCase } from '../application/DeleteOrder.usecase';
 import { BatchUpdateOrdersUseCase } from '../application/BatchUpdateOrders.usecase';
 import { CreateReceptionBatchUseCase } from '../application/CreateReceptionBatch.usecase';
+import { CreateReceptionBatchOptimizedUseCase } from '../application/CreateReceptionBatchOptimized.usecase';
 import { DeleteReceptionBatchUseCase } from '../application/DeleteReceptionBatch.usecase';
 import { BatchDeliverOrdersUseCase } from '../application/BatchDeliverOrders.usecase';
 import { PrismaOrderRepository } from './PrismaOrderRepository';
@@ -32,6 +33,7 @@ const deliverOrderUseCase = new DeliverOrderUseCase(orderRepository, financialRe
 const deleteOrderUseCase = new DeleteOrderUseCase();
 const batchUpdateOrdersUseCase = new BatchUpdateOrdersUseCase();
 const createReceptionBatchUseCase = new CreateReceptionBatchUseCase(receiveOrderUseCase);
+const createReceptionBatchOptimizedUseCase = new CreateReceptionBatchOptimizedUseCase(); // ✅ OPTIMIZED VERSION
 const deleteReceptionBatchUseCase = new DeleteReceptionBatchUseCase();
 const batchDeliverOrdersUseCase = new BatchDeliverOrdersUseCase();
 
@@ -47,6 +49,7 @@ const orderController = new OrderController(
   batchCreateOrderUseCase,
   batchUpdateOrdersUseCase,
   createReceptionBatchUseCase,
+  createReceptionBatchOptimizedUseCase, // ✅ OPTIMIZED VERSION PASSED
   deleteReceptionBatchUseCase,
   batchDeliverOrdersUseCase
 );

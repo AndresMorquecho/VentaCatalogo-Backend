@@ -2,6 +2,8 @@ import { IOrderRepository } from '../domain/IOrderRepository';
 import { Order, OrderStatus } from '../domain/Order.entity';
 import { Result } from '../../../shared/domain/Result';
 import { prisma } from '../../../lib/prisma';
+import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
+import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 
 export interface BatchCreateOrderDTO {
   receiptNumber: string;
@@ -75,9 +77,11 @@ export class BatchCreateOrderUseCase {
       let parentId: string | undefined = undefined;
 
       const resultOrders = await prisma.$transaction(async (tx) => {
-        const finalResults = [];
-
-        // Crear encabezado (OrderReceipt) SOLO si no existe ya este receiptNumber
+        // ============================================================================
+        // OPTIMIZACIÓN: Preparar todos los datos ANTES de ejecutar queries
+        // ============================================================================
+        
+        // 1. Crear/Verificar OrderReceipt
         let receiptId: string;
         const existingReceipt = await (tx as any).orderReceipt.findUnique({
           where: { receiptNumber }
@@ -92,11 +96,7 @@ export class BatchCreateOrderUseCase {
         } else {
           receiptId = crypto.randomUUID();
           
-          // Fix: Ensure createdAt has full timestamp even if only date was provided
           let receiptCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
-          // If the date provided is exactly at midnight UTC, it likely came from a date-only input.
-          // In that case, we should use the current time but keep the same date if possible,
-          // or at least ensure it's not exactly midnight if it's meant for TODAY.
           const now = new Date();
           if (receiptCreatedAt.getHours() === 0 && receiptCreatedAt.getMinutes() === 0 && receiptCreatedAt.toDateString() === now.toDateString()) {
              receiptCreatedAt = now;
@@ -121,7 +121,7 @@ export class BatchCreateOrderUseCase {
           });
         }
 
-        // Generar consecutivos de recibo para abonos dentro de la transacción
+        // 2. Generar consecutivos de abonos (fuera del loop)
         const lastPayment = await prisma.orderPayment.findFirst({
           orderBy: { createdAt: 'desc' },
           select: { receiptNumber: true }
@@ -132,9 +132,21 @@ export class BatchCreateOrderUseCase {
           nextPaymentNumber = parseInt(lastPayment.receiptNumber.replace('AB', '')) + 1;
         }
 
-        const nextPaymentReceiptNumber = () => {
-          return `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`;
-        };
+        // ============================================================================
+        // OPTIMIZACIÓN: Preparar TODOS los datos en arrays
+        // ============================================================================
+        const allOrders: any[] = [];
+        const allItems: any[] = [];
+        const allPayments: any[] = [];
+        const allFinancialRecords: any[] = [];
+        const paymentIdMap = new Map<string, string>(); // orderId -> paymentId
+        let totalBankIncrement = 0;
+
+        let orderCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
+        const now = new Date();
+        if (orderCreatedAt.getHours() === 0 && orderCreatedAt.getMinutes() === 0 && orderCreatedAt.toDateString() === now.toDateString()) {
+           orderCreatedAt = now;
+        }
 
         for (let i = 0; i < dto.orders.length; i++) {
           const orderDto = dto.orders[i];
@@ -142,148 +154,224 @@ export class BatchCreateOrderUseCase {
           
           if (i === 0) parentId = orderId;
 
-          // Prepare items
-          const itemsData = orderDto.items.map(item => ({
-            id: crypto.randomUUID(),
-            productName: item.productName,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
+          // Preparar Order
+          allOrders.push({
+            id: orderId,
+            receiptNumber,
+            receiptId,
+            salesChannel: dto.salesChannel,
+            type: orderDto.type,
             brandId: orderDto.brandId,
-            brandName: orderDto.brandName
-          }));
+            total: orderDto.total,
+            paymentMethod: dto.paymentMethod,
+            bankAccountId: dto.bankAccountId || null,
+            transactionDate: dto.transactionDate,
+            possibleDeliveryDate: orderDto.possibleDeliveryDate,
+            status: OrderStatus.POR_RECIBIR,
+            parentOrderId: i > 0 ? parentId : null,
+            orderNumber: orderDto.orderNumber || null,
+            clientId: dto.clientId,
+            clientName: clientName,
+            notes: '',
+            createdByName: dto.createdByName || createdBy,
+            createdAt: orderCreatedAt,
+            version: 1
+          });
 
-          // Preparar pagos por fila (abonos) para crear anidado y que venga en la respuesta
-          const paymentsToCreate: any[] = [];
-          let rowPaymentId: string | null = null;
+          // Preparar Items
+          orderDto.items.forEach(item => {
+            allItems.push({
+              id: crypto.randomUUID(),
+              orderId: orderId,
+              productName: item.productName,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              brandId: orderDto.brandId,
+              brandName: orderDto.brandName
+            });
+          });
 
-          if (orderDto.deposit && Number(orderDto.deposit) > 0) {
-            rowPaymentId = crypto.randomUUID();
-            paymentsToCreate.push({
-              id: rowPaymentId,
-              amount: Number(orderDto.deposit),
+          // Preparar Payments (abonos monetarios)
+          const rowDeposit = Number(orderDto.deposit || 0);
+          if (rowDeposit > 0) {
+            const paymentId = crypto.randomUUID();
+            paymentIdMap.set(orderId, paymentId);
+            
+            allPayments.push({
+              id: paymentId,
+              orderId: orderId,
+              amount: rowDeposit,
               method: dto.paymentMethod,
               reference: dto.initialPayment?.reference || undefined,
-              receiptNumber: nextPaymentReceiptNumber(),
-              description: `Abono inicial (fila ${i + 1})`
+              receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
+              description: `Abono inicial (fila ${i + 1})`,
+              createdAt: new Date()
             });
-          }
 
-          // Crédito aplicado (solo una vez al parent)
-          if (i === 0 && dto.creditAmount && dto.creditAmount > 0) {
-            paymentsToCreate.push({
+            // Preparar FinancialRecord
+            allFinancialRecords.push({
               id: crypto.randomUUID(),
-              amount: Number(dto.creditAmount),
-              method: 'CREDITO_CLIENTE',
-              receiptNumber: nextPaymentReceiptNumber(),
-              description: 'Saldo a favor aplicado'
-            });
-          }
-
-          // Fix: Ensure Order createdAt has full timestamp
-          let orderCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
-          const now = new Date();
-          if (orderCreatedAt.getHours() === 0 && orderCreatedAt.getMinutes() === 0 && orderCreatedAt.toDateString() === now.toDateString()) {
-             orderCreatedAt = now;
-          }
-
-          // Create order in DB (incluye payments anidados)
-          const createdOrder = await tx.order.create({
-            data: {
-              id: orderId,
-              receiptNumber,
-              receiptId,
-              salesChannel: dto.salesChannel,
-              type: orderDto.type,
-              brandId: orderDto.brandId,
-              total: orderDto.total,
-              paymentMethod: dto.paymentMethod,
-              bankAccountId: dto.bankAccountId || null,
-              transactionDate: dto.transactionDate,
-              possibleDeliveryDate: orderDto.possibleDeliveryDate,
-              status: OrderStatus.POR_RECIBIR,
-              parentOrderId: i > 0 ? parentId : null,
-              orderNumber: orderDto.orderNumber || null,
+              type: 'PAYMENT',
+              source: 'ORDER_PAYMENT',
+              movementType: 'INCOME',
+              referenceNumber: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
+                ? dto.initialPayment.reference
+                : `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
+              amount: rowDeposit,
+              date: new Date(),
               clientId: dto.clientId,
               clientName: clientName,
-              notes: '',
-              createdByName: dto.createdByName || createdBy,
-              createdAt: orderCreatedAt,
-              version: 1,
-              items: {
-                create: itemsData
-              },
-              payments: paymentsToCreate.length > 0 ? { create: paymentsToCreate } : undefined
+              orderId: orderId,
+              orderPaymentId: paymentId,
+              createdBy,
+              notes: `Abono inicial pedido ${receiptNumber} (fila ${i + 1})`,
+              bankAccountId: dto.bankAccountId,
+              paymentMethod: dto.paymentMethod,
+              version: 1
+            });
+
+            totalBankIncrement += rowDeposit;
+          }
+
+          // Payment de crédito (solo primera iteración)
+          if (i === 0 && dto.creditAmount && dto.creditAmount > 0) {
+            allPayments.push({
+              id: crypto.randomUUID(),
+              orderId: orderId,
+              amount: Number(dto.creditAmount),
+              method: 'CREDITO_CLIENTE',
+              receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
+              description: 'Saldo a favor aplicado',
+              createdAt: new Date()
+            });
+          }
+        }
+
+        // ============================================================================
+        // OPTIMIZACIÓN: Ejecutar BULK INSERTS
+        // ============================================================================
+        
+        // 3. Crear todos los Orders de una vez
+        await tx.order.createMany({ data: allOrders });
+
+        // 4. Crear todos los Items de una vez
+        if (allItems.length > 0) {
+          await tx.orderItem.createMany({ data: allItems });
+        }
+
+        // 5. Crear todos los Payments de una vez
+        if (allPayments.length > 0) {
+          await tx.orderPayment.createMany({ data: allPayments });
+        }
+
+        // 6. Crear todos los FinancialRecords de una vez
+        if (allFinancialRecords.length > 0) {
+          await tx.financialRecord.createMany({ data: allFinancialRecords });
+        }
+
+        // 7. Actualizar BankAccount UNA SOLA VEZ con el total acumulado
+        if (totalBankIncrement > 0 && dto.bankAccountId) {
+          // Read account with version
+          const bankAccount = await tx.bankAccount.findUnique({
+            where: { id: dto.bankAccountId },
+            select: { id: true, currentBalance: true, version: true, name: true }
+          });
+
+          if (!bankAccount) {
+            throw new Error(`Bank account ${dto.bankAccountId} not found`);
+          }
+
+          // Validate financial integrity
+          validateBankAccountBalance(
+            Number(bankAccount.currentBalance),
+            totalBankIncrement,
+            dto.bankAccountId,
+            bankAccount.name
+          );
+
+          // Update with optimistic locking
+          const result = await tx.bankAccount.updateMany({
+            where: {
+              id: dto.bankAccountId,
+              version: bankAccount.version
             },
-            include: {
-              items: true,
-              payments: true,
-              brand: true
+            data: { 
+              currentBalance: { increment: totalBankIncrement },
+              updatedAt: new Date(),
+              version: { increment: 1 }
             }
           });
 
-          // Registrar movimiento bancario y financialRecord SOLO para abonos monetarios (no para crédito)
-          const rowDeposit = Number(orderDto.deposit || 0);
-          if (rowDeposit > 0) {
-            if (!dto.bankAccountId) {
-              throw new Error('Bank account is required when deposit > 0');
-            }
-            if (!rowPaymentId) {
-              throw new Error('Internal error: rowPaymentId missing for deposit row');
-            }
-
-            await tx.financialRecord.create({
-              data: {
-                type: 'PAYMENT',
-                source: 'ORDER_PAYMENT',
-                movementType: 'INCOME',
-                referenceNumber: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
-                  ? dto.initialPayment.reference
-                  : `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
-                amount: rowDeposit,
-                date: new Date(),
-                clientId: dto.clientId,
-                clientName: clientName,
-                orderId,
-                orderPaymentId: rowPaymentId,
-                createdBy,
-                notes: `Abono inicial pedido ${receiptNumber} (fila ${i + 1})`,
-                bankAccountId: dto.bankAccountId,
-                paymentMethod: dto.paymentMethod,
-                version: 1
-              }
-            });
-
-            await tx.bankAccount.update({
-              where: { id: dto.bankAccountId },
-              data: { currentBalance: { increment: rowDeposit }, version: { increment: 1 } }
-            });
+          if (result.count === 0) {
+            throw new ConcurrencyError(
+              'Bank account was modified by another transaction. Please retry.',
+              'BankAccount',
+              dto.bankAccountId
+            );
           }
-
-          // Aplicar crédito a favor solo una vez
-          if (i === 0 && dto.creditAmount && dto.creditAmount > 0) {
-            const availableCredits = await tx.clientCredit.findMany({
-              where: { clientAccount: { clientId: dto.clientId }, status: 'AVAILABLE' },
-              orderBy: { createdAt: 'asc' }
-            });
-            let rem = Number(dto.creditAmount);
-            for (const cr of availableCredits) {
-              if (rem <= 0) break;
-              const sub = Math.min(Number(cr.remainingAmount), rem);
-              await tx.clientCredit.update({
-                where: { id: cr.id },
-                data: {
-                  remainingAmount: { decrement: sub },
-                  status: Number(cr.remainingAmount) - sub <= 0.01 ? 'USED' : 'AVAILABLE'
-                }
-              });
-              rem -= sub;
-            }
-          }
-
-          finalResults.push(createdOrder);
         }
 
-        // 8. Update client last order info
+        // 8. Aplicar crédito a favor (solo una vez)
+        if (dto.creditAmount && dto.creditAmount > 0) {
+          const availableCredits = await tx.clientCredit.findMany({
+            where: { clientAccount: { clientId: dto.clientId }, status: 'AVAILABLE' },
+            select: {
+              id: true,
+              remainingAmount: true,
+              version: true,
+              status: true
+            },
+            orderBy: { createdAt: 'asc' }
+          });
+          
+          let rem = Number(dto.creditAmount);
+          const creditsToUpdate: Array<Promise<void>> = [];
+          
+          for (const cr of availableCredits) {
+            if (rem <= 0) break;
+            const sub = Math.min(Number(cr.remainingAmount), rem);
+            
+            // Validate financial integrity
+            validateClientCreditBalance(
+              Number(cr.remainingAmount),
+              sub,
+              cr.id
+            );
+
+            const newRemaining = Number(cr.remainingAmount) - sub;
+            const newStatus = newRemaining <= 0.01 ? 'USED' : 'AVAILABLE';
+            
+            // Update with optimistic locking
+            creditsToUpdate.push((async () => {
+              const result = await tx.clientCredit.updateMany({
+                where: {
+                  id: cr.id,
+                  version: cr.version
+                },
+                data: {
+                  remainingAmount: newRemaining,
+                  status: newStatus,
+                  version: { increment: 1 }
+                }
+              });
+
+              if (result.count === 0) {
+                throw new ConcurrencyError(
+                  'Client credit was modified by another transaction. Please retry.',
+                  'ClientCredit',
+                  cr.id
+                );
+              }
+            })());
+            
+            rem -= sub;
+          }
+          
+          // Actualizar créditos en paralelo
+          await Promise.all(creditsToUpdate);
+        }
+
+        // 9. Actualizar cliente
         const lastOrder = dto.orders[dto.orders.length - 1];
         await tx.client.update({
           where: { id: dto.clientId },
@@ -293,10 +381,19 @@ export class BatchCreateOrderUseCase {
           }
         });
 
-        return finalResults;
+        // 10. Recuperar los orders creados con sus relaciones para la respuesta
+        const createdOrders = await tx.order.findMany({
+          where: { id: { in: allOrders.map(o => o.id) } },
+          include: {
+            items: true,
+            payments: true,
+            brand: true
+          },
+          orderBy: { createdAt: 'asc' }
+        });
+
+        return createdOrders;
       }, {
-        // Neon / pooled connections pueden cerrar transacciones interactivas si demoran.
-        // Subimos límites para batches de varias filas con movimientos financieros.
         maxWait: 20_000,
         timeout: 60_000
       });

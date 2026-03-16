@@ -200,11 +200,20 @@ router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: 
   }
 });
 
-router.delete('/:id', authenticate, requirePermission('clients.delete'), async (req: any, res, next) => {
+router.delete('/:id', authenticate, requirePermission('clients.delete'), async (req: any, res) => {
   try {
     const { id } = req.params;
 
-    // Check if client has orders
+    // Verify client exists
+    const client = await prisma.client.findUnique({ where: { id } });
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Empresaria no encontrada' }
+      });
+    }
+
+    // Block deletion if client has orders (business rule)
     const orderCount = await prisma.order.count({ where: { clientId: id } });
     if (orderCount > 0) {
       return res.status(400).json({
@@ -216,7 +225,7 @@ router.delete('/:id', authenticate, requirePermission('clients.delete'), async (
       });
     }
 
-    // Check if client has financial records
+    // Block deletion if client has financial records (business rule)
     const financialCount = await prisma.financialRecord.count({ where: { clientId: id } });
     if (financialCount > 0) {
       return res.status(400).json({
@@ -228,16 +237,87 @@ router.delete('/:id', authenticate, requirePermission('clients.delete'), async (
       });
     }
 
-    // Perform real deletion (ClientAccount will be orphan if not deleted, but schema has no cascade)
-    // Actually ClientAccount has clientId unique and Client has clientAccount relation.
-    await prisma.$transaction([
-      prisma.clientAccount.deleteMany({ where: { clientId: id } }),
-      prisma.client.delete({ where: { id } })
-    ]);
+    // Block deletion if client has inventory movements (business rule)
+    const inventoryCount = await prisma.inventoryMovement.count({ where: { clientId: id } });
+    if (inventoryCount > 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'REFERENTIAL_INTEGRITY',
+          message: 'No se puede eliminar la empresaria porque tiene movimientos de inventario. Desactívela en su lugar.'
+        }
+      });
+    }
+
+    // Block deletion if client has order receipts (documentos contables)
+    const receiptCount = await prisma.orderReceipt.count({ where: { clientId: id } });
+    if (receiptCount > 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'REFERENTIAL_INTEGRITY',
+          message: `No se puede eliminar la empresaria porque tiene ${receiptCount} recibo(s) de pago registrado(s). Desactívela en su lugar.`
+        }
+      });
+    }
+
+    // Block deletion if client has wallet recharges
+    const rechargeCount = await prisma.walletRecharge.count({ where: { clientId: id } });
+    if (rechargeCount > 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'REFERENTIAL_INTEGRITY',
+          message: 'No se puede eliminar la empresaria porque tiene recargas de billetera registradas. Desactívela en su lugar.'
+        }
+      });
+    }
+
+    // Solo se puede eliminar si no tiene ningún dato transaccional.
+    // En este punto solo quedan: calls, rewardApplications, clientCredits, clientAccount
+    await prisma.$transaction(async (tx) => {
+      // 1. Eliminar llamadas del cliente (no son documentos contables)
+      await tx.call.deleteMany({ where: { clientId: id } });
+      // 2. Eliminar aplicaciones de recompensas
+      await tx.rewardApplication.deleteMany({
+        where: { clientAccount: { clientId: id } }
+      });
+      // 3. Eliminar créditos del cliente
+      await tx.clientCredit.deleteMany({ where: { clientAccount: { clientId: id } } });
+      // 4. Eliminar cuenta del cliente
+      await tx.clientAccount.deleteMany({ where: { clientId: id } });
+      // 5. Finalmente eliminar el cliente
+      await tx.client.delete({ where: { id } });
+    });
 
     return res.json({ success: true, message: 'Empresaria eliminada permanentemente' });
-  } catch (error) {
-    return next(error);
+  } catch (error: any) {
+    console.error('[DELETE CLIENT]', error);
+
+    // Detectar errores de FK de Prisma (P2003) o mensajes con "Foreign key"
+    const isFKError = error?.code === 'P2003' ||
+                      error?.message?.includes('Foreign key') ||
+                      error?.message?.includes('foreign key') ||
+                      error?.message?.includes('constraint');
+
+    // Mapear la FK específica a un mensaje legible
+    let message = 'No se pudo eliminar la empresaria. Intente de nuevo.';
+    if (isFKError) {
+      const meta = error?.meta?.field_name || error?.message || '';
+      if (meta.includes('order_receipts')) {
+        message = 'La empresaria tiene recibos de pago registrados. Desactívela en lugar de eliminarla.';
+      } else if (meta.includes('orders') || meta.includes('order')) {
+        message = 'La empresaria tiene pedidos asociados. Desactívela en lugar de eliminarla.';
+      } else if (meta.includes('financial')) {
+        message = 'La empresaria tiene historial financiero. Desactívela en lugar de eliminarla.';
+      } else if (meta.includes('inventory')) {
+        message = 'La empresaria tiene movimientos de inventario. Desactívela en lugar de eliminarla.';
+      } else {
+        message = 'La empresaria tiene datos relacionados y no puede eliminarse. Desactívela en su lugar.';
+      }
+    }
+
+    return res.status(400).json({ success: false, error: { code: 'REFERENTIAL_INTEGRITY', message } });
   }
 });
 
