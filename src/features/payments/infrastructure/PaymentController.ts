@@ -11,46 +11,122 @@ export class PaymentController {
     registerPayment = async (req: AuthRequest, res: Response) => {
         try {
             const orderId = req.body.orderId || req.body.order_id;
-            const amount = req.body.amount;
-            const creditAmount = req.body.creditAmount ?? req.body.credit_amount;
-            const method = req.body.method || req.body.payment_method;
-            const referenceNumber = req.body.referenceNumber || req.body.reference_number;
-            const bankAccountId = req.body.bankAccountId || req.body.bank_account_id;
-            const notes = req.body.notes;
+            const payments = req.body.payments; // Array de métodos de pago
+            
+            // Soporte para formato legacy (un solo pago)
+            if (!payments && req.body.amount) {
+                const amount = req.body.amount;
+                const creditAmount = req.body.creditAmount ?? req.body.credit_amount;
+                const method = req.body.method || req.body.payment_method;
+                const referenceNumber = req.body.referenceNumber || req.body.reference_number;
+                const bankAccountId = req.body.bankAccountId || req.body.bank_account_id;
+                const notes = req.body.notes;
 
+                if (!orderId) {
+                    return HttpResponse.badRequest(res, 'Missing required field: orderId is required.');
+                }
 
+                const parsedAmount = Number(amount || 0);
+                const parsedCreditAmount = Number(creditAmount || 0);
+
+                if (parsedAmount <= 0 && parsedCreditAmount <= 0) {
+                    return HttpResponse.badRequest(res, 'At least one of amount or creditAmount must be greater than zero.');
+                }
+
+                if (parsedAmount > 0 && (!method || !bankAccountId)) {
+                    return HttpResponse.badRequest(res, 'Missing required fields: method and bankAccountId are required for manual payments.');
+                }
+
+                const dto = {
+                    orderId,
+                    amount: parsedAmount,
+                    method: method || 'EFECTIVO',
+                    referenceNumber,
+                    bankAccountId,
+                    notes,
+                    creditAmount: parsedCreditAmount
+                };
+
+                const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username);
+
+                if (result.isFailure) {
+                    return HttpResponse.fail(res, result.error!);
+                }
+
+                return HttpResponse.created(res, result.getValue());
+            }
+
+            // Nuevo formato: múltiples métodos de pago
             if (!orderId) {
                 return HttpResponse.badRequest(res, 'Missing required field: orderId is required.');
             }
 
-            const parsedAmount = Number(amount || 0);
-            const parsedCreditAmount = Number(creditAmount || 0);
-
-            if (parsedAmount <= 0 && parsedCreditAmount <= 0) {
-                return HttpResponse.badRequest(res, 'At least one of amount or creditAmount must be greater than zero.');
+            if (!payments || !Array.isArray(payments) || payments.length === 0) {
+                return HttpResponse.badRequest(res, 'Missing required field: payments array is required.');
             }
 
-            if (parsedAmount > 0 && (!method || !bankAccountId)) {
-                return HttpResponse.badRequest(res, 'Missing required fields: method and bankAccountId are required for manual payments.');
+            const results = [];
+
+            // Procesar cada método de pago por separado
+            for (const payment of payments) {
+                const amount = Number(payment.amount || 0);
+                const method = payment.method;
+                const referenceNumber = payment.transactionReference || payment.transaction_reference;
+                const bankAccountId = payment.bankAccountId || payment.bank_account_id;
+                const notes = payment.notes;
+
+                console.log('Processing payment:', { amount, method, referenceNumber, bankAccountId, notes }); // Debug log
+
+                if (amount <= 0) {
+                    return HttpResponse.badRequest(res, 'Each payment must have an amount greater than zero.');
+                }
+
+                if (!method) {
+                    return HttpResponse.badRequest(res, 'Each payment must have a method.');
+                }
+
+                // Para billetera virtual, usar creditAmount en lugar de amount
+                if (method === 'BILLETERA_VIRTUAL') {
+                    const dto = {
+                        orderId,
+                        amount: 0,
+                        method: 'EFECTIVO', // Método dummy, no se usa
+                        referenceNumber: undefined,
+                        bankAccountId: 'default',
+                        notes: notes || 'Pago con billetera virtual',
+                        creditAmount: amount
+                    };
+
+                    const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username);
+                    if (result.isFailure) {
+                        return HttpResponse.fail(res, result.error!);
+                    }
+                    results.push(result.getValue());
+                } else {
+                    // Pago manual normal
+                    if (!bankAccountId) {
+                        return HttpResponse.badRequest(res, 'bankAccountId is required for non-virtual wallet payments.');
+                    }
+
+                    const dto = {
+                        orderId,
+                        amount,
+                        method,
+                        referenceNumber,
+                        bankAccountId,
+                        notes,
+                        creditAmount: 0
+                    };
+
+                    const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username);
+                    if (result.isFailure) {
+                        return HttpResponse.fail(res, result.error!);
+                    }
+                    results.push(result.getValue());
+                }
             }
 
-            const dto = {
-                orderId,
-                amount: parsedAmount,
-                method: method || 'EFECTIVO',
-                referenceNumber,
-                bankAccountId,
-                notes,
-                creditAmount: parsedCreditAmount
-            };
-
-            const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username);
-
-            if (result.isFailure) {
-                return HttpResponse.fail(res, result.error!);
-            }
-
-            return HttpResponse.created(res, result.getValue());
+            return HttpResponse.created(res, { payments: results, message: `${results.length} payment(s) registered successfully` });
         } catch (error) {
             return HttpResponse.fail(res, error instanceof Error ? error.message : 'An unexpected error occurred during payment registration.');
         }

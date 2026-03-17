@@ -3,7 +3,7 @@ import { Entity } from '../../../shared/domain/Entity';
 export type FinancialRecordType = 'PAYMENT' | 'ADJUSTMENT' | 'EXPENSE';
 export type FinancialSource = 'ORDER_PAYMENT' | 'MANUAL' | 'ADJUSTMENT';
 export type MovementType = 'INCOME' | 'EXPENSE';
-export type PaymentMethod = 'EFECTIVO' | 'TRANSFERENCIA' | 'DEPOSITO' | 'CHEQUE' | 'CREDITO_CLIENTE';
+export type PaymentMethod = 'EFECTIVO' | 'TRANSFERENCIA' | 'DEPOSITO' | 'CHEQUE' | 'CREDITO_CLIENTE' | 'BILLETERA_VIRTUAL';
 
 export interface FinancialRecordProps {
   type: FinancialRecordType;

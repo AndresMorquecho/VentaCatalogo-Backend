@@ -20,6 +20,18 @@ export interface BatchCreateOrderDTO {
     reference?: string;
   };
   creditAmount?: number;
+  paymentData?: {
+    payments: Array<{
+      method: string;
+      amount: number;
+      bankAccountId?: string;
+      transactionDate?: string;
+      transactionReference?: string;
+      notes?: string;
+    }>;
+    walletCreditUsed: number;
+    totalAmount: number;
+  };
   orders: Array<{
     brandId: string;
     brandName: string;
@@ -191,46 +203,98 @@ export class BatchCreateOrderUseCase {
             });
           });
 
-          // Preparar Payments (abonos monetarios)
-          const rowDeposit = Number(orderDto.deposit || 0);
-          if (rowDeposit > 0) {
-            const paymentId = crypto.randomUUID();
-            paymentIdMap.set(orderId, paymentId);
-            
-            allPayments.push({
-              id: paymentId,
-              orderId: orderId,
-              amount: rowDeposit,
-              method: dto.paymentMethod,
-              reference: dto.initialPayment?.reference || undefined,
-              receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
-              description: `Abono inicial (fila ${i + 1})`,
-              createdAt: new Date()
-            });
+          // Preparar Payments (múltiples métodos de pago o abono simple)
+          if (i === 0 && dto.paymentData && dto.paymentData.payments) {
+            // Procesar múltiples métodos de pago (solo en la primera iteración)
+            for (let paymentIndex = 0; paymentIndex < dto.paymentData.payments.length; paymentIndex++) {
+              const paymentItem = dto.paymentData.payments[paymentIndex];
+              const paymentAmount = Number(paymentItem.amount || 0);
+              
+              if (paymentAmount > 0) {
+                const paymentId = crypto.randomUUID();
+                
+                allPayments.push({
+                  id: paymentId,
+                  orderId: orderId,
+                  amount: paymentAmount,
+                  method: paymentItem.method,
+                  reference: paymentItem.transactionReference || undefined,
+                  receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
+                  description: paymentItem.notes || `Pago ${paymentIndex + 1} - ${paymentItem.method}`,
+                  createdAt: new Date()
+                });
 
-            // Preparar FinancialRecord
-            allFinancialRecords.push({
-              id: crypto.randomUUID(),
-              type: 'PAYMENT',
-              source: 'ORDER_PAYMENT',
-              movementType: 'INCOME',
-              referenceNumber: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
-                ? dto.initialPayment.reference
-                : `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
-              amount: rowDeposit,
-              date: new Date(),
-              clientId: dto.clientId,
-              clientName: clientName,
-              orderId: orderId,
-              orderPaymentId: paymentId,
-              createdBy,
-              notes: `Abono inicial pedido ${receiptNumber} (fila ${i + 1})`,
-              bankAccountId: dto.bankAccountId,
-              paymentMethod: dto.paymentMethod,
-              version: 1
-            });
+                // Preparar FinancialRecord (solo si no es billetera virtual)
+                if (paymentItem.method !== 'BILLETERA_VIRTUAL') {
+                  allFinancialRecords.push({
+                    id: crypto.randomUUID(),
+                    type: 'PAYMENT',
+                    source: 'ORDER_PAYMENT',
+                    movementType: 'INCOME',
+                    referenceNumber: paymentItem.method !== 'EFECTIVO' && paymentItem.transactionReference
+                      ? paymentItem.transactionReference
+                      : `REF-PAY-${Date.now()}-${paymentIndex}-${Math.random().toString(36).substring(7)}`,
+                    amount: paymentAmount,
+                    date: new Date(),
+                    clientId: dto.clientId,
+                    clientName: clientName,
+                    orderId: orderId,
+                    orderPaymentId: paymentId,
+                    createdBy,
+                    notes: paymentItem.notes || `Pago ${paymentIndex + 1} pedido ${receiptNumber}`,
+                    bankAccountId: paymentItem.bankAccountId || dto.bankAccountId,
+                    paymentMethod: paymentItem.method,
+                    version: 1
+                  });
 
-            totalBankIncrement += rowDeposit;
+                  totalBankIncrement += paymentAmount;
+                }
+              }
+            }
+          } else {
+            // Lógica original para abono simple por fila
+            const rowDeposit = Number(orderDto.deposit || 0);
+            if (rowDeposit > 0) {
+              const paymentId = crypto.randomUUID();
+              paymentIdMap.set(orderId, paymentId);
+              
+              allPayments.push({
+                id: paymentId,
+                orderId: orderId,
+                amount: rowDeposit,
+                method: dto.paymentMethod,
+                reference: dto.initialPayment?.reference || undefined,
+                receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
+                description: `Abono inicial (fila ${i + 1})`,
+                createdAt: new Date()
+              });
+
+              // Preparar FinancialRecord (solo si no es billetera virtual)
+              if (dto.paymentMethod !== 'BILLETERA_VIRTUAL') {
+                allFinancialRecords.push({
+                  id: crypto.randomUUID(),
+                  type: 'PAYMENT',
+                  source: 'ORDER_PAYMENT',
+                  movementType: 'INCOME',
+                  referenceNumber: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
+                    ? dto.initialPayment.reference
+                    : `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
+                  amount: rowDeposit,
+                  date: new Date(),
+                  clientId: dto.clientId,
+                  clientName: clientName,
+                  orderId: orderId,
+                  orderPaymentId: paymentId,
+                  createdBy,
+                  notes: `Abono inicial pedido ${receiptNumber} (fila ${i + 1})`,
+                  bankAccountId: dto.bankAccountId,
+                  paymentMethod: dto.paymentMethod,
+                  version: 1
+                });
+
+                totalBankIncrement += rowDeposit;
+              }
+            }
           }
 
           // Payment de crédito (solo primera iteración)
@@ -269,8 +333,8 @@ export class BatchCreateOrderUseCase {
           await tx.financialRecord.createMany({ data: allFinancialRecords });
         }
 
-        // 7. Actualizar BankAccount UNA SOLA VEZ con el total acumulado
-        if (totalBankIncrement > 0 && dto.bankAccountId) {
+        // 7. Actualizar BankAccount UNA SOLA VEZ con el total acumulado (solo si no es billetera virtual)
+        if (totalBankIncrement > 0 && dto.bankAccountId && dto.paymentMethod !== 'BILLETERA_VIRTUAL') {
           // Read account with version
           const bankAccount = await tx.bankAccount.findUnique({
             where: { id: dto.bankAccountId },

@@ -91,21 +91,46 @@ export class OrderController {
 
   batchCreate = async (req: AuthRequest, res: Response) => {
     try {
+      // Procesar múltiples métodos de pago si están presentes
+      let totalDeposit = Number(req.body.deposit || 0);
+      let paymentMethod = req.body.payment_method;
+      let creditAmount = Number(req.body.credit_to_use ?? 0);
+      let paymentData = null;
+      
+      // Si hay payment_data, procesarlo para múltiples métodos de pago
+      if (req.body.payment_data && req.body.payment_data.payments) {
+        const payments = req.body.payment_data.payments;
+        totalDeposit = payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+        
+        // Usar el primer método de pago como principal (para compatibilidad)
+        if (payments.length > 0) {
+          paymentMethod = payments[0].method;
+        }
+        
+        // Calcular crédito de billetera virtual usado
+        const walletPayments = payments.filter((p: any) => p.method === 'BILLETERA_VIRTUAL');
+        creditAmount = walletPayments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+        
+        // Guardar datos de pago para procesamiento posterior
+        paymentData = req.body.payment_data;
+      }
+
       const dto = {
         receiptNumber: req.body.receipt_number,
         clientId: req.body.client_id,
         salesChannel: req.body.sales_channel,
         createdAt: req.body.created_at ? new Date(req.body.created_at) : new Date(),
-        paymentMethod: req.body.payment_method,
+        paymentMethod: paymentMethod,
         bankAccountId: req.body.bank_account_id,
         transactionDate: new Date(req.body.transaction_date),
         createdByName: req.user!.username,
         initialPayment: {
-          amount: Number(req.body.deposit || 0),
-          method: req.body.payment_method,
+          amount: totalDeposit,
+          method: paymentMethod,
           reference: req.body.transaction_reference || ''
         },
-        creditAmount: Number(req.body.credit_to_use ?? 0),
+        creditAmount: creditAmount,
+        paymentData: paymentData, // Agregar datos de múltiples pagos
         orders: req.body.orders.map((o: any) => ({
           brandId: o.brand_id,
           brandName: o.brand_name,
