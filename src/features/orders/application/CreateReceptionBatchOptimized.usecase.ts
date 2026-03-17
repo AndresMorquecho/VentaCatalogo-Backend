@@ -12,6 +12,17 @@ export interface BatchReceptionItemDTO {
   reference?: string;
   documentType?: string;
   entryDate?: string;
+  creditDistribution?: CreditDistribution; // NUEVO: Para distribución de saldos a favor
+}
+
+export interface CreditDistribution {
+  sourceOrderId: string;
+  totalCreditAmount: number;
+  distributions: {
+    targetOrderId?: string; // null = billetera virtual
+    amount: number;
+    description: string;
+  }[];
 }
 
 export interface BatchReceptionDTO {
@@ -333,21 +344,124 @@ export class CreateReceptionBatchOptimizedUseCase {
         if (pendingAmount < -0.01) {
           const creditAmount = Math.abs(pendingAmount);
           
-          clientCredits.push({
+          // 1. ENTRADA: Registrar generación del saldo a favor
+          financialRecords.push({
             id: crypto.randomUUID(),
-            clientAccountId: '', // Will be filled after getting/creating client account
+            type: 'CREDIT_GENERATION',
+            referenceNumber: `CREDIT-GEN-${order.id}-${Date.now()}`,
             amount: creditAmount,
-            remainingAmount: creditAmount,
-            originTransactionId: `RECEPTION-${order.id}-${Date.now()}`,
-            originOrderId: order.id,
-            status: 'AVAILABLE',
-            createdAt: new Date(),
-            version: 1
+            date: new Date(),
+            clientId: order.clientId,
+            clientName: order.clientName,
+            orderId: order.id,
+            bankAccountId: 'virtual-credit-account',
+            source: 'RECEPTION_OVERPAYMENT',
+            paymentMethod: 'SALDO_A_FAVOR',
+            movementType: 'INCOME',
+            createdBy: userId,
+            notes: `Saldo a favor generado - Original: $${order.total}, Facturado: $${item.finalTotal}`,
+            version: 1,
+            createdAt: new Date()
           });
 
-          // Accumulate client account credit
-          const currentCredit = clientAccountCredits.get(order.clientId) || 0;
-          clientAccountCredits.set(order.clientId, currentCredit + creditAmount);
+          // 2. Procesar distribuciones si existen
+          if (item.creditDistribution && item.creditDistribution.distributions.length > 0) {
+            for (const dist of item.creditDistribution.distributions) {
+              // SALIDA: Registrar aplicación del saldo
+              financialRecords.push({
+                id: crypto.randomUUID(),
+                type: 'CREDIT_APPLICATION',
+                referenceNumber: `CREDIT-APP-${dist.targetOrderId || 'WALLET'}-${Date.now()}`,
+                amount: dist.amount,
+                date: new Date(),
+                clientId: order.clientId,
+                clientName: order.clientName,
+                orderId: dist.targetOrderId || null,
+                bankAccountId: 'virtual-credit-account',
+                source: 'CREDIT_DISTRIBUTION',
+                paymentMethod: 'SALDO_A_FAVOR',
+                movementType: 'EXPENSE',
+                createdBy: userId,
+                notes: dist.description,
+                version: 1,
+                createdAt: new Date()
+              });
+
+              // Si es distribución a otro pedido, crear el pago
+              if (dist.targetOrderId) {
+                const paymentId = crypto.randomUUID();
+                const receiptNumber = `REC-SALDO-${(nextPaymentNumber++).toString().padStart(6, '0')}`;
+                
+                orderPayments.push({
+                  id: paymentId,
+                  orderId: dist.targetOrderId,
+                  amount: dist.amount,
+                  method: 'CREDITO_CLIENTE',
+                  reference: `SALDO-DIST-${order.id}`,
+                  receiptNumber,
+                  description: `Saldo a favor aplicado desde pedido ${order.receiptNumber}`,
+                  createdAt: new Date()
+                });
+              }
+            }
+
+            // Solo crear crédito en billetera para distribuciones que van a billetera virtual
+            const walletDistributions = item.creditDistribution.distributions.filter(d => !d.targetOrderId);
+            for (const walletDist of walletDistributions) {
+              clientCredits.push({
+                id: crypto.randomUUID(),
+                clientAccountId: '', // Will be filled after getting/creating client account
+                amount: walletDist.amount,
+                remainingAmount: walletDist.amount,
+                originTransactionId: `RECEPTION-DIST-${order.id}-${Date.now()}`,
+                originOrderId: order.id,
+                status: 'AVAILABLE',
+                createdAt: new Date(),
+                version: 1
+              });
+
+              // Accumulate client account credit for wallet distributions only
+              const currentCredit = clientAccountCredits.get(order.clientId) || 0;
+              clientAccountCredits.set(order.clientId, currentCredit + walletDist.amount);
+            }
+          } else {
+            // Si no hay distribución, todo va a billetera virtual (comportamiento actual)
+            clientCredits.push({
+              id: crypto.randomUUID(),
+              clientAccountId: '', // Will be filled after getting/creating client account
+              amount: creditAmount,
+              remainingAmount: creditAmount,
+              originTransactionId: `RECEPTION-${order.id}-${Date.now()}`,
+              originOrderId: order.id,
+              status: 'AVAILABLE',
+              createdAt: new Date(),
+              version: 1
+            });
+
+            // SALIDA: Registrar que todo va a billetera virtual
+            financialRecords.push({
+              id: crypto.randomUUID(),
+              type: 'CREDIT_APPLICATION',
+              referenceNumber: `CREDIT-WALLET-${order.id}-${Date.now()}`,
+              amount: creditAmount,
+              date: new Date(),
+              clientId: order.clientId,
+              clientName: order.clientName,
+              orderId: null,
+              bankAccountId: 'virtual-credit-account',
+              source: 'CREDIT_DISTRIBUTION',
+              paymentMethod: 'SALDO_A_FAVOR',
+              movementType: 'EXPENSE',
+              createdBy: userId,
+              notes: `Saldo guardado en billetera virtual - Origen: Pedido ${order.receiptNumber}`,
+              version: 1,
+              createdAt: new Date()
+            });
+
+            // Accumulate client account credit
+            const currentCredit = clientAccountCredits.get(order.clientId) || 0;
+            clientAccountCredits.set(order.clientId, currentCredit + creditAmount);
+          }
         }
       }
       
