@@ -147,7 +147,6 @@ export class RegisterOrderPaymentUseCase {
                         select: {
                             id: true,
                             remainingAmount: true,
-                            version: true,
                             status: true
                         },
                         orderBy: { createdAt: 'asc' }
@@ -168,16 +167,15 @@ export class RegisterOrderPaymentUseCase {
                         const newRemainingAmount = Number(credit.remainingAmount) - amountToSubtract;
                         const newStatus = newRemainingAmount <= 0.01 ? 'USED' : 'AVAILABLE';
 
-                        // Update with optimistic locking
+                        // Update credit (without optimistic locking - version field not in DB)
                         const result = await tx.clientCredit.updateMany({
                             where: {
-                                id: credit.id,
-                                version: credit.version
+                                id: credit.id
                             },
                             data: {
                                 remainingAmount: { decrement: amountToSubtract },
                                 status: newStatus,
-                                version: { increment: 1 }
+                                usedAt: newStatus === 'USED' ? new Date() : undefined
                             }
                         });
 

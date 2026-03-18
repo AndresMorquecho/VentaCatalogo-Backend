@@ -24,6 +24,7 @@ const callController = new CallController(
 );
 
 router.get('/', authenticate, requirePermission('calls.view'), callController.getAll);
+router.get('/grouped', authenticate, requirePermission('calls.view'), callController.getGrouped);
 router.post('/', authenticate, requirePermission('calls.create'), callController.create);
 router.put('/:id', authenticate, requirePermission('calls.create'), callController.update);  // calls.create covers edit too
 router.delete('/:id', authenticate, requirePermission('calls.create'), callController.delete);

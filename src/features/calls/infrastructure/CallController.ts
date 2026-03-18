@@ -103,4 +103,59 @@ export class CallController {
             return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error al eliminar la llamada');
         }
     };
+
+    getGrouped = async (req: Request, res: Response) => {
+        try {
+            const filters = {
+                reason: req.query.reason as string,
+                startDate: req.query.start_date ? new Date(req.query.start_date as string) : (req.query.startDate ? new Date(req.query.startDate as string) : undefined),
+                endDate: req.query.end_date ? new Date(req.query.end_date as string) : (req.query.endDate ? new Date(req.query.endDate as string) : undefined),
+                page: parseInt(req.query.page as string) || 1,
+                limit: parseInt(req.query.limit as string) || 50
+            };
+
+            const result = await this.getCallsUseCase.execute(filters);
+
+            if (result.isFailure) {
+                return HttpResponse.fail(res, result.error!);
+            }
+
+            const { data: calls } = result.getValue();
+
+            // Group calls by date (day only), reason, and createdBy
+            const grouped = new Map<string, any>();
+
+            calls.forEach((call: any) => {
+                const date = new Date(call.createdAt);
+                const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD
+                const groupKey = `${dateKey}|${call.reason}|${call.createdBy}`;
+
+                if (!grouped.has(groupKey)) {
+                    grouped.set(groupKey, {
+                        date: dateKey,
+                        reason: call.reason,
+                        createdBy: call.createdBy,
+                        callCount: 0,
+                        calls: []
+                    });
+                }
+
+                const group = grouped.get(groupKey);
+                group.callCount++;
+                group.calls.push(call);
+            });
+
+            // Convert map to array and sort by date desc
+            const groupedArray = Array.from(grouped.values()).sort((a, b) => 
+                new Date(b.date).getTime() - new Date(a.date).getTime()
+            );
+
+            return res.json({
+                success: true,
+                data: groupedArray
+            });
+        } catch (error) {
+            return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error al obtener llamadas agrupadas');
+        }
+    };
 }

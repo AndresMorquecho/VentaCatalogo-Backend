@@ -8,10 +8,13 @@ router.get('/', authenticate, requirePermission('clients.view'), async (req, res
   try {
     const search = req.query.search as string;
     const active = req.query.active; // true/false (DB field)
-    const status = req.query.status as string; // ACTIVE/INACTIVE (Business logic: last 30 days order)
+    const status = req.query.status as string; // ACTIVE/INACTIVE/NEW (Business logic: last 30 days order)
     const city = req.query.city as string;
     const startDate = req.query.startDate as string;
     const endDate = req.query.endDate as string;
+    const excludeCalledToday = req.query.excludeCalledToday === 'true';
+    const callReason = req.query.callReason as string;
+    const withPendingPayments = req.query.withPendingPayments === 'true';
     
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit as string) || 200));
@@ -31,10 +34,73 @@ router.get('/', authenticate, requirePermission('clients.view'), async (req, res
     } else if (status === 'INACTIVE') {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      where.OR = [
-        { lastOrderDate: { lt: thirtyDaysAgo } },
-        { lastOrderDate: null }
-      ];
+      where.lastOrderDate = { lt: thirtyDaysAgo };
+    } else if (status === 'NEW') {
+      where.lastOrderDate = { equals: null };
+    }
+
+    // Exclude clients called today with specific reason
+    if (excludeCalledToday && callReason) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      // Get clients that have been called today with this reason
+      const calledToday = await prisma.call.findMany({
+        where: {
+          reason: callReason,
+          createdAt: {
+            gte: today,
+            lt: tomorrow
+          }
+        },
+        select: { clientId: true },
+        distinct: ['clientId']
+      });
+
+      const calledClientIds = calledToday.map(c => c.clientId);
+      
+      if (calledClientIds.length > 0) {
+        where.id = { notIn: calledClientIds };
+      }
+    }
+
+    // Filter clients with pending payments
+    if (withPendingPayments) {
+      // Get all orders with pending balance
+      const ordersWithDebt = await prisma.order.findMany({
+        where: {
+          status: { in: ['POR_RECIBIR', 'RECIBIDO_EN_BODEGA', 'ENTREGADO'] }
+        },
+        select: {
+          id: true,
+          clientId: true,
+          total: true,
+          payments: {
+            select: { amount: true }
+          }
+        }
+      });
+
+      // Calculate which clients have pending payments
+      const clientsWithDebt = new Set<string>();
+      ordersWithDebt.forEach(order => {
+        const totalPaid = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+        const pending = Number(order.total) - totalPaid;
+        if (pending > 0.01) { // Consider debt if more than 1 cent pending
+          clientsWithDebt.add(order.clientId);
+        }
+      });
+
+      if (clientsWithDebt.size > 0) {
+        where.id = where.id 
+          ? { ...where.id, in: Array.from(clientsWithDebt) }
+          : { in: Array.from(clientsWithDebt) };
+      } else {
+        // No clients with debt, return empty
+        return res.json({ success: true, data: [], pagination: { page, limit, total: 0, pages: 0 } });
+      }
     }
 
     if (city) {
@@ -73,6 +139,51 @@ router.get('/', authenticate, requirePermission('clients.view'), async (req, res
       prisma.client.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: limit }),
       prisma.client.count({ where })
     ]);
+
+    // If withPendingPayments, enrich with debt details
+    if (withPendingPayments) {
+      const enrichedClients = await Promise.all(clients.map(async (client) => {
+        const orders = await prisma.order.findMany({
+          where: {
+            clientId: client.id,
+            status: { in: ['POR_RECIBIR', 'RECIBIDO_EN_BODEGA', 'ENTREGADO'] }
+          },
+          select: {
+            id: true,
+            receiptNumber: true,
+            total: true,
+            transactionDate: true,
+            brand: { select: { name: true } },
+            payments: { select: { amount: true } }
+          },
+          orderBy: { transactionDate: 'desc' }
+        });
+
+        const debts = orders.map(order => {
+          const totalPaid = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+          const pending = Number(order.total) - totalPaid;
+          return {
+            orderId: order.id,
+            receiptNumber: order.receiptNumber,
+            brandName: order.brand.name,
+            total: Number(order.total),
+            paid: totalPaid,
+            pending: pending,
+            transactionDate: order.transactionDate
+          };
+        }).filter(d => d.pending > 0.01);
+
+        const totalDebt = debts.reduce((sum, d) => sum + d.pending, 0);
+
+        return {
+          ...client,
+          totalDebt,
+          debts
+        };
+      }));
+
+      return res.json({ success: true, data: enrichedClients, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+    }
 
     res.json({ success: true, data: clients, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
   } catch (error) {
