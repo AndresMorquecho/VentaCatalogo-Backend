@@ -33,8 +33,22 @@ const getBrandRecoveryMetricsUseCase = new GetBrandRecoveryMetrics(
 
 // Initialize controller
 const controller = new PortfolioRecoveryController(
-  getBrandRecoveryMetricsUseCase
+  getBrandRecoveryMetricsUseCase,
+  repository // Pasar el repositorio para acceder a getRecoveryTrends
 );
+
+/**
+ * GET /api/portfolio/brands/list
+ * 
+ * Get list of all brands with orders in warehouse (for filter dropdowns)
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   data: Array<{ id: string, name: string }>
+ * }
+ */
+router.get('/brands/list', authenticate, controller.getBrandsList);
 
 /**
  * GET /api/portfolio/brands
@@ -80,14 +94,21 @@ router.get('/clients', authenticate, (req, res) => {
 /**
  * GET /api/portfolio/trends
  * 
- * Get recovery trends over time (to be implemented in Phase 4)
+ * Get recovery trends over time
+ * 
+ * Query Parameters:
+ * - groupBy: DAY | WEEK | MONTH (required)
+ * - dateFrom: ISO date string (optional)
+ * - dateTo: ISO date string (optional)
+ * - brandIds: Comma-separated brand IDs (optional)
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   data: RecoveryTrend[]
+ * }
  */
-router.get('/trends', authenticate, (req, res) => {
-  res.status(501).json({
-    success: false,
-    message: 'Trends endpoint not yet implemented. Coming in Phase 4.',
-  });
-});
+router.get('/trends', authenticate, controller.getRecoveryTrends);
 
 /**
  * GET /api/portfolio/alerts

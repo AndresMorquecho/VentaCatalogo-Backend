@@ -5,7 +5,7 @@
  * All aggregations are performed in the database for optimal performance.
  */
 
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import {
   BrandRecoveryMetrics,
   ClientRecoveryMetrics,
@@ -13,8 +13,6 @@ import {
   RecoveryAlert,
   TrendGroupBy,
   AlertStatus,
-  getRecoveryStatus,
-  calculateDaysInWarehouse,
 } from '../domain/RecoveryMetrics.types';
 import {
   RecoveryFilters,
@@ -61,10 +59,17 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
       paramIndex++;
     }
 
-    // Brand filter
+    // Brand filter by IDs
     if (filters.brandIds && filters.brandIds.length > 0) {
       whereConditions.push(`o.brand_id = ANY($${paramIndex}::text[])`);
       params.push(filters.brandIds);
+      paramIndex++;
+    }
+
+    // Brand filter by name (search)
+    if (filters.brandName) {
+      whereConditions.push(`b.name ILIKE $${paramIndex}`);
+      params.push(`%${filters.brandName}%`);
       paramIndex++;
     }
 
@@ -76,22 +81,22 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
     // Recovery status filter
     if (filters.recoveryStatus && filters.recoveryStatus !== 'ALL') {
       if (filters.recoveryStatus === 'HEALTHY') {
-        havingConditions.push('recovery_rate > 50');
+        havingConditions.push('(CASE WHEN SUM(wo.total) > 0 THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100) ELSE 0 END) > 50');
       } else if (filters.recoveryStatus === 'WARNING') {
-        havingConditions.push('recovery_rate >= 30 AND recovery_rate <= 50');
+        havingConditions.push('(CASE WHEN SUM(wo.total) > 0 THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100) ELSE 0 END) >= 30 AND (CASE WHEN SUM(wo.total) > 0 THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100) ELSE 0 END) <= 50');
       } else if (filters.recoveryStatus === 'CRITICAL') {
-        havingConditions.push('recovery_rate < 30');
+        havingConditions.push('(CASE WHEN SUM(wo.total) > 0 THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100) ELSE 0 END) < 30');
       }
     }
 
     // Min days in warehouse filter
     if (filters.minDaysInWarehouse !== undefined) {
-      havingConditions.push(`avg_days_in_warehouse >= ${filters.minDaysInWarehouse}`);
+      havingConditions.push(`AVG(wo.days_in_warehouse) >= ${filters.minDaysInWarehouse}`);
     }
 
     // Min amount filter
     if (filters.minAmount !== undefined) {
-      havingConditions.push(`total_in_warehouse >= ${filters.minAmount}`);
+      havingConditions.push(`SUM(wo.total) >= ${filters.minAmount}`);
     }
 
     const havingClause = havingConditions.length > 0 
@@ -234,37 +239,121 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
    * Get client-level recovery metrics (stub - to be implemented)
    */
   async getClientMetrics(
-    filters: RecoveryFilters,
-    pagination: Pagination
+    _filters: RecoveryFilters,
+    _pagination: Pagination
   ): Promise<PaginatedResult<ClientRecoveryMetrics>> {
-    // TODO: Implement in next task
     throw new Error('Not implemented yet');
   }
 
   /**
-   * Get recovery trends over time (stub - to be implemented)
+   * Get recovery trends over time
    */
   async getRecoveryTrends(
-    filters: RecoveryFilters,
+    _filters: RecoveryFilters,
     groupBy: TrendGroupBy
   ): Promise<RecoveryTrend[]> {
-    // TODO: Implement in Phase 4
-    throw new Error('Not implemented yet');
+    // Determine date grouping based on groupBy parameter
+    let dateGrouping: string;
+    let periodFormat: string;
+    
+    switch (groupBy) {
+      case 'DAY':
+        dateGrouping = "DATE(o.reception_date)";
+        periodFormat = 'YYYY-MM-DD';
+        break;
+      case 'WEEK':
+        dateGrouping = "DATE_TRUNC('week', o.reception_date)::date";
+        periodFormat = 'YYYY-MM-DD';
+        break;
+      case 'MONTH':
+        dateGrouping = "DATE_TRUNC('month', o.reception_date)::date";
+        periodFormat = 'YYYY-MM';
+        break;
+      default:
+        dateGrouping = "DATE(o.reception_date)";
+        periodFormat = 'YYYY-MM-DD';
+    }
+
+    const query = `
+      WITH warehouse_orders AS (
+        SELECT 
+          o.id as order_id,
+          o.total,
+          o.reception_date,
+          ${dateGrouping} as period_date
+        FROM orders o
+        WHERE o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR')
+          AND o.reception_date IS NOT NULL
+      ),
+      payments_by_order AS (
+        SELECT 
+          op.order_id,
+          COALESCE(SUM(op.amount), 0) as total_paid
+        FROM order_payments op
+        WHERE op.order_id IN (SELECT order_id FROM warehouse_orders)
+        GROUP BY op.order_id
+      )
+      SELECT 
+        TO_CHAR(wo.period_date, '${periodFormat}') as period,
+        SUM(wo.total) as total_in_warehouse,
+        COALESCE(SUM(p.total_paid), 0) as total_recovered,
+        CASE 
+          WHEN SUM(wo.total) > 0 
+          THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100)
+          ELSE 0 
+        END as recovery_rate,
+        COUNT(DISTINCT wo.order_id) as order_count
+      FROM warehouse_orders wo
+      LEFT JOIN payments_by_order p ON wo.order_id = p.order_id
+      GROUP BY wo.period_date
+      ORDER BY wo.period_date ASC
+    `;
+
+    const results = await this.prisma.$queryRawUnsafe<any[]>(query);
+
+    return results.map((row) => ({
+      period: row.period,
+      totalInWarehouse: Number(row.total_in_warehouse),
+      totalRecovered: Number(row.total_recovered),
+      recoveryRate: Number(row.recovery_rate),
+      orderCount: Number(row.order_count),
+    }));
+  }
+
+  /**
+   * Get list of brands with orders in warehouse (for filter dropdowns)
+   */
+  async getBrandsList(): Promise<Array<{ id: string; name: string }>> {
+    const query = `
+      SELECT DISTINCT
+        b.id,
+        b.name
+      FROM brands b
+      INNER JOIN orders o ON o.brand_id = b.id
+      WHERE o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR')
+        AND b.is_active = true
+      ORDER BY b.name ASC
+    `;
+
+    const results = await this.prisma.$queryRawUnsafe<any[]>(query);
+
+    return results.map((row) => ({
+      id: row.id,
+      name: row.name,
+    }));
   }
 
   /**
    * Get recovery alerts (stub - to be implemented)
    */
-  async getAlerts(filters: RecoveryFilters): Promise<RecoveryAlert[]> {
-    // TODO: Implement in Phase 4
+  async getAlerts(_filters: RecoveryFilters): Promise<RecoveryAlert[]> {
     throw new Error('Not implemented yet');
   }
 
   /**
    * Update alert status (stub - to be implemented)
    */
-  async updateAlertStatus(alertId: string, status: AlertStatus): Promise<void> {
-    // TODO: Implement in Phase 4
+  async updateAlertStatus(_alertId: string, _status: AlertStatus): Promise<void> {
     throw new Error('Not implemented yet');
   }
 
@@ -272,11 +361,10 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
    * Get detailed order breakdown for a brand (stub - to be implemented)
    */
   async getBrandOrderDetails(
-    brandId: string,
-    filters: RecoveryFilters,
-    pagination: Pagination
+    _brandId: string,
+    _filters: RecoveryFilters,
+    _pagination: Pagination
   ): Promise<PaginatedResult<any>> {
-    // TODO: Implement when expanding brand details
     throw new Error('Not implemented yet');
   }
 
@@ -284,11 +372,10 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
    * Get order and payment history for a client (stub - to be implemented)
    */
   async getClientOrderHistory(
-    clientId: string,
-    filters: RecoveryFilters,
-    pagination: Pagination
+    _clientId: string,
+    _filters: RecoveryFilters,
+    _pagination: Pagination
   ): Promise<PaginatedResult<any>> {
-    // TODO: Implement when expanding client details
     throw new Error('Not implemented yet');
   }
 }

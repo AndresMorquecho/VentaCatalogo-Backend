@@ -32,6 +32,11 @@ export interface RecoveryFilters {
   brandIds?: string[];
 
   /**
+   * Filter by brand name (search)
+   */
+  brandName?: string;
+
+  /**
    * Filter by specific client IDs
    */
   clientIds?: string[];

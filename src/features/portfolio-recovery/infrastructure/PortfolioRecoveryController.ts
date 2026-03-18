@@ -8,7 +8,6 @@
 import { Request, Response } from 'express';
 import { GetBrandRecoveryMetrics } from '../application/GetBrandRecoveryMetrics.usecase';
 import { RecoveryFilters } from '../domain/RecoveryFilters.types';
-import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
 
 /**
  * Controller for portfolio recovery analytics endpoints
@@ -17,7 +16,8 @@ import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
  */
 export class PortfolioRecoveryController {
   constructor(
-    private getBrandRecoveryMetricsUseCase: GetBrandRecoveryMetrics
+    private getBrandRecoveryMetricsUseCase: GetBrandRecoveryMetrics,
+    private repository: any // Agregamos el repositorio para acceder a getRecoveryTrends
   ) {}
 
   /**
@@ -96,6 +96,117 @@ export class PortfolioRecoveryController {
   };
 
   /**
+   * GET /api/portfolio/trends
+   * 
+   * Get recovery trends over time
+   * 
+   * Query Parameters:
+   * - groupBy: DAY | WEEK | MONTH (required)
+   * - dateFrom: ISO date string (optional)
+   * - dateTo: ISO date string (optional)
+   * - brandIds: Comma-separated brand IDs (optional)
+   */
+  getRecoveryTrends = async (req: Request, res: Response) => {
+    try {
+      // Parse groupBy parameter
+      const groupBy = (req.query.groupBy as string)?.toUpperCase();
+      if (!groupBy || !['DAY', 'WEEK', 'MONTH'].includes(groupBy)) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_PARAMETER',
+            message: 'groupBy parameter is required and must be DAY, WEEK, or MONTH',
+            retryable: false,
+          },
+        });
+      }
+
+      // Parse filters
+      const filters: RecoveryFilters = this.parseFilters(req.query);
+
+      console.log('[PortfolioRecoveryController] GET /api/portfolio/trends', {
+        groupBy,
+        filters,
+      });
+
+      // Execute query
+      const startTime = Date.now();
+      const result = await this.repository.getRecoveryTrends(filters, groupBy as any);
+      const duration = Date.now() - startTime;
+
+      console.log('[PortfolioRecoveryController] Trends retrieved', {
+        duration: `${duration}ms`,
+        periodCount: result.length,
+      });
+
+      return res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      console.error('[PortfolioRecoveryController] Error getting trends', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      const isRetryable = this.isRetryableError(error);
+      const errorMessage = error instanceof Error ? error.message : 'Error al obtener tendencias';
+
+      return res.status(500).json({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: errorMessage,
+          retryable: isRetryable,
+        },
+      });
+    }
+  };
+
+  /**
+   * GET /api/portfolio/brands/list
+   * 
+   * Get list of all brands with orders in warehouse
+   * Used for filter dropdowns
+   */
+  getBrandsList = async (req: Request, res: Response) => {
+    try {
+      console.log('[PortfolioRecoveryController] GET /api/portfolio/brands/list');
+
+      const startTime = Date.now();
+      const result = await this.repository.getBrandsList();
+      const duration = Date.now() - startTime;
+
+      console.log('[PortfolioRecoveryController] Brands list retrieved', {
+        duration: `${duration}ms`,
+        brandCount: result.length,
+      });
+
+      return res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      console.error('[PortfolioRecoveryController] Error getting brands list', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      const isRetryable = this.isRetryableError(error);
+      const errorMessage = error instanceof Error ? error.message : 'Error al obtener lista de marcas';
+
+      return res.status(500).json({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: errorMessage,
+          retryable: isRetryable,
+        },
+      });
+    }
+  };
+
+  /**
    * Parse recovery filters from query parameters
    */
   private parseFilters(query: any): RecoveryFilters {
@@ -122,6 +233,11 @@ export class PortfolioRecoveryController {
     if (query.brandIds) {
       const brandIdsStr = query.brandIds as string;
       filters.brandIds = brandIdsStr.split(',').map((id) => id.trim()).filter(Boolean);
+    }
+
+    // Brand name (search)
+    if (query.brandName) {
+      filters.brandName = (query.brandName as string).trim();
     }
 
     // Client IDs
