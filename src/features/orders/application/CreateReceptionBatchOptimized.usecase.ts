@@ -416,8 +416,7 @@ export class CreateReceptionBatchOptimizedUseCase {
                 originTransactionId: `RECEPTION-DIST-${order.id}-${Date.now()}`,
                 originOrderId: order.id,
                 status: 'AVAILABLE',
-                createdAt: new Date(),
-                version: 1
+                createdAt: new Date()
               });
 
               // Accumulate client account credit for wallet distributions only
@@ -434,8 +433,7 @@ export class CreateReceptionBatchOptimizedUseCase {
               originTransactionId: `RECEPTION-${order.id}-${Date.now()}`,
               originOrderId: order.id,
               status: 'AVAILABLE',
-              createdAt: new Date(),
-              version: 1
+              createdAt: new Date()
             });
 
             // SALIDA: Registrar que todo va a billetera virtual

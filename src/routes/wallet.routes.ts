@@ -20,5 +20,6 @@ router.get('/recharges/pending', authenticate, (req, res) => controller.getPendi
 router.post('/recharges/validate', authenticate, (req, res) => controller.validateRecharges(req, res));
 router.post('/recharge/:id/reject', authenticate, (req, res) => controller.rejectRecharge(req, res));
 router.get('/recharges/history', authenticate, (req, res) => controller.getHistory(req, res));
+router.get('/client/:clientId/history', authenticate, (req, res) => controller.getClientWalletHistory(req, res));
 
 export default router;
