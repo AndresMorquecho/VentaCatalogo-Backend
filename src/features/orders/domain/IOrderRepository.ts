@@ -20,4 +20,5 @@ export interface IOrderRepository {
   update(order: Order): Promise<Order>;
   delete(id: string): Promise<void>;
   generateReceiptNumber(): Promise<string>;
+  generateOrderNumber(): Promise<string>;
 }

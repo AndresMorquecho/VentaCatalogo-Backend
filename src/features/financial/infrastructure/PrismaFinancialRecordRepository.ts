@@ -22,6 +22,13 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
     const [records, total] = await Promise.all([
       prisma.financialRecord.findMany({
         where,
+        include: {
+          bankAccount: {
+            select: {
+              name: true
+            }
+          }
+        },
         orderBy: { date: 'desc' },
         skip: pagination?.skip,
         take: pagination?.take
@@ -30,7 +37,7 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
     ]);
 
     return {
-      data: records.map(this.toDomain),
+      data: records.map(r => this.toDomainWithBankAccount(r)),
       total
     };
   }
@@ -183,6 +190,15 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
       },
       raw.id
     );
+  }
+
+  private toDomainWithBankAccount(raw: any): any {
+    const record = this.toDomain(raw);
+    const json = record.toJSON();
+    return {
+      ...json,
+      bankAccountName: raw.bankAccount?.name || 'Sin cuenta'
+    };
   }
 
   private toPersistence(record: FinancialRecord): any {

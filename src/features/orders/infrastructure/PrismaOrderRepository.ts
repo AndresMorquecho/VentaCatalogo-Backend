@@ -160,13 +160,23 @@ export class PrismaOrderRepository implements IOrderRepository {
   }
 
   async generateReceiptNumber(): Promise<string> {
-    const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const year = new Date().getFullYear();
     const count = await prisma.order.count({
       where: {
-        receiptNumber: { startsWith: `ORD-${today}` }
+        receiptNumber: { startsWith: `OR-${year}` }
       }
     });
-    return `ORD-${today}-${String(count + 1).padStart(3, '0')}`;
+    return `OR-${year}-${String(count + 1).padStart(3, '0')}`;
+  }
+
+  async generateOrderNumber(): Promise<string> {
+    const year = new Date().getFullYear();
+    const count = await prisma.order.count({
+      where: {
+        orderNumber: { startsWith: `PD-${year}` }
+      }
+    });
+    return `PD-${year}-${String(count + 1).padStart(3, '0')}`;
   }
 
   private toDomain(raw: any): Order {

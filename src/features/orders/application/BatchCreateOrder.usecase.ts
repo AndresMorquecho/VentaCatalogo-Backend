@@ -232,7 +232,7 @@ export class BatchCreateOrderUseCase {
                     source: 'ORDER_PAYMENT',
                     movementType: 'INCOME',
                     referenceNumber: paymentItem.method !== 'EFECTIVO' && paymentItem.transactionReference
-                      ? paymentItem.transactionReference
+                      ? (paymentIndex === 0 ? paymentItem.transactionReference : `${paymentItem.transactionReference}-${paymentIndex + 1}`)
                       : `REF-PAY-${Date.now()}-${paymentIndex}-${Math.random().toString(36).substring(7)}`,
                     amount: paymentAmount,
                     date: new Date(),
@@ -277,7 +277,7 @@ export class BatchCreateOrderUseCase {
                   source: 'ORDER_PAYMENT',
                   movementType: 'INCOME',
                   referenceNumber: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
-                    ? dto.initialPayment.reference
+                    ? (i === 0 ? dto.initialPayment.reference : `${dto.initialPayment.reference}-${i + 1}`)
                     : `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
                   amount: rowDeposit,
                   date: new Date(),

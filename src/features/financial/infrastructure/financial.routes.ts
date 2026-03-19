@@ -27,7 +27,7 @@ router.get('/', authenticate, async (req: Request, res: Response, next: NextFunc
     const { data: records, total } = await repository.findAll(filters, { skip, take: limit });
     return res.json({
       success: true,
-      data: records.map(r => r.toJSON()),
+      data: records,
       pagination: {
         page,
         limit,

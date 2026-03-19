@@ -79,6 +79,15 @@ export class OrderController {
     }
   };
 
+  generateOrderNumber = async (req: Request, res: Response) => {
+    try {
+      const orderNumber = await this.orderRepository.generateOrderNumber();
+      return HttpResponse.ok(res, { orderNumber });
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to generate order number');
+    }
+  };
+
   checkReceiptExists = async (req: Request, res: Response) => {
     try {
       const { receiptNumber } = req.params;
