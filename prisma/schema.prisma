@@ -54,6 +54,7 @@ model Client {
   calls              Call[]
   inventoryMovements InventoryMovement[]
   walletRecharges    WalletRecharge[]
+  catalogDeliveries  CatalogDelivery[]
   
   referredBy         Client?   @relation("ClientReferral", fields: [referredById], references: [id])
   referrals          Client[]  @relation("ClientReferral")
@@ -76,6 +77,8 @@ model Brand {
   orderItems         OrderItem[]
   inventoryMovements InventoryMovement[]
   loyaltyRules       LoyaltyRule[]
+  catalogInventories CatalogInventory[] @relation("BrandCatalogInventory")
+  catalogDeliveries  CatalogDelivery[]  @relation("BrandCatalogDelivery")
 
   @@map("brands")
 }
@@ -201,6 +204,7 @@ model Order {
   inventoryMovements InventoryMovement[]
   calls              Call[]
   rewardApplications RewardApplication[]
+  catalogDelivery    CatalogDelivery?    @relation("CatalogOrder")
   
   parentOrder        Order?              @relation("OrderHeirs", fields: [parentOrderId], references: [id])
   childOrders        Order[]             @relation("OrderHeirs")
@@ -563,4 +567,56 @@ model AuditLog {
   @@index([timestamp])
   @@index([module]) // TASK-5.2: Module filter is the most common query in the audit UI
   @@map("audit_logs")
+}
+
+
+// ============================================================================
+// CATALOG MANAGEMENT MODULE
+// ============================================================================
+
+model CatalogInventory {
+  id         String   @id @default(uuid())
+  brandId    String   @map("brand_id")
+  campaign   String   // "Campaña 1", "Campaña 2", etc.
+  quantity   Int      // Stock actual disponible
+  createdBy  String   @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  brand      Brand    @relation("BrandCatalogInventory", fields: [brandId], references: [id], onDelete: Restrict)
+  deliveries CatalogDelivery[]
+  
+  @@unique([brandId, campaign])
+  @@index([brandId])
+  @@index([campaign])
+  @@map("catalog_inventories")
+}
+
+model CatalogDelivery {
+  id                String   @id @default(uuid())
+  clientId          String   @map("client_id")
+  brandId           String   @map("brand_id")
+  campaign          String
+  quantity          Int      @default(1)
+  type              String   // GRATIS, CON_COSTO
+  orderId           String?  @unique @map("order_id") // Si es CON_COSTO
+  catalogInventoryId String  @map("catalog_inventory_id")
+  deliveredBy       String   @map("delivered_by")
+  deliveredAt       DateTime @default(now()) @map("delivered_at")
+  notes             String?
+  
+  // Relations
+  client           Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  brand            Brand            @relation("BrandCatalogDelivery", fields: [brandId], references: [id], onDelete: Restrict)
+  order            Order?           @relation("CatalogOrder", fields: [orderId], references: [id], onDelete: SetNull)
+  catalogInventory CatalogInventory @relation(fields: [catalogInventoryId], references: [id], onDelete: Restrict)
+  
+  @@index([clientId])
+  @@index([brandId])
+  @@index([campaign])
+  @@index([deliveredAt])
+  @@index([clientId, brandId]) // Para validación de comportamiento
+  @@index([type])
+  @@map("catalog_deliveries")
 }
