@@ -699,50 +699,130 @@ export class OrderController {
 
   getReceptionBatches = async (req: Request, res: Response) => {
     try {
+      const page = Math.max(1, parseInt(req.query.page as string) || 1);
+      const limit = Math.max(1, parseInt(req.query.limit as string) || 15);
+      const skip = (page - 1) * limit;
+
+      const packingNumber = req.query.packingNumber as string;
+      const brandId = req.query.brandId as string;
+      const startDate = req.query.startDate as string;
+      const endDate = req.query.endDate as string;
+      const search = req.query.search as string;
+
+      const where: any = {};
+
+      if (packingNumber) {
+        where.packingNumber = { contains: packingNumber, mode: 'insensitive' };
+      }
+
+      if (brandId && brandId !== 'ALL') {
+        where.orders = { some: { brandId } };
+      }
+
+      if (startDate || endDate) {
+        where.receptionDate = {};
+        if (startDate) where.receptionDate.gte = new Date(startDate);
+        if (endDate) {
+          const end = new Date(endDate);
+          end.setHours(23, 59, 59, 999);
+          where.receptionDate.lte = end;
+        }
+      }
+
+      const orConditions: any[] = [];
+      if (search) {
+        orConditions.push({ packingNumber: { contains: search, mode: 'insensitive' } });
+        orConditions.push({ notes: { contains: search, mode: 'insensitive' } });
+        orConditions.push({ 
+          orders: { 
+            some: { 
+              OR: [
+                { clientName: { contains: search, mode: 'insensitive' } },
+                { receiptNumber: { contains: search, mode: 'insensitive' } }
+              ] 
+            } 
+          } 
+        });
+      }
+
+      if (orConditions.length > 0) {
+        where.OR = orConditions;
+      }
+
       // Get batches with minimal select (no heavy includes for performance)
-      const batches = await prisma.receptionBatch.findMany({
-        select: {
-          id: true,
-          packingNumber: true,
-          packingTotal: true,
-          receptionDate: true,
-          receivedByName: true,
-          createdAt: true,
-          notes: true,
-          orders: {
-            select: {
-              id: true,
-              receiptNumber: true,
-              clientName: true,
-              brandId: true,
-              invoiceNumber: true,
-              realInvoiceTotal: true,
-              total: true,
-              status: true,
-              brand: {
-                select: {
-                  name: true
+      const [batches, total] = await Promise.all([
+        prisma.receptionBatch.findMany({
+          where,
+          select: {
+            id: true,
+            packingNumber: true,
+            packingTotal: true,
+            receptionDate: true,
+            receivedByName: true,
+            createdAt: true,
+            notes: true,
+            orders: {
+              select: {
+                id: true,
+                receiptNumber: true,
+                clientName: true,
+                brandId: true,
+                invoiceNumber: true,
+                realInvoiceTotal: true,
+                total: true,
+                status: true,
+                brand: {
+                  select: {
+                    name: true
+                  }
                 }
               }
             }
-          }
-        },
-        orderBy: { receptionDate: 'desc' }
-      });
+          },
+          orderBy: { receptionDate: 'desc' },
+          skip,
+          take: limit
+        }),
+        prisma.receptionBatch.count({ where })
+      ]);
       
       // Transform to include brandName at order level for frontend compatibility
       const transformedBatches = batches.map(batch => ({
         ...batch,
         orders: batch.orders.map(order => ({
           ...order,
-          brandName: order.brand.name,
+          brandName: (order.brand as any).name,
           brand: undefined // Remove nested brand object
         }))
       }));
       
-      return HttpResponse.ok(res, transformedBatches);
+      return res.status(200).json({
+        success: true,
+        data: transformedBatches,
+        pagination: {
+          total,
+          page,
+          limit,
+          pages: Math.ceil(total / limit)
+        }
+      });
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to get reception batches');
+    }
+  };
+
+  generatePackingNumber = async (req: Request, res: Response) => {
+    try {
+      const year = new Date().getFullYear();
+      const count = await prisma.receptionBatch.count({
+        where: {
+          packingNumber: { startsWith: `PK-${year}` }
+        }
+      });
+      const nextNumber = `PK-${year}-${String(count + 1).padStart(3, '0')}`;
+      return res.status(200).json({ success: true, packingNumber: nextNumber });
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to generate packing number');
     }
   };
 

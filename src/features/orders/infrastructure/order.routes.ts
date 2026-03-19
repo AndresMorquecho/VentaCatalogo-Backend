@@ -109,6 +109,7 @@ router.get('/receipt/:receiptNumber', authenticate, requirePermission('orders.vi
 router.get('/generate-receipt-number', authenticate, requirePermission('orders.create'), orderController.generateReceiptNumber);
 router.get('/generate-order-number', authenticate, requirePermission('orders.create'), orderController.generateOrderNumber);
 router.get('/check-receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.checkReceiptExists);
+router.get('/generate-packing-number', authenticate, requirePermission('reception.confirm'), orderController.generatePackingNumber);
 router.get('/reception-batches', authenticate, requirePermission('reception.confirm'), orderController.getReceptionBatches);
 router.delete('/reception-batches/:id', authenticate, requirePermission('reception.confirm'), orderController.deleteReceptionBatch);
 router.get('/:id', authenticate, requirePermission('orders.view'), orderController.getById);
