@@ -1,56 +1,60 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { authenticate, requirePermission } from '../middleware/auth';
+import { Prisma } from '@prisma/client';
+import { differenceInDays, addDays, isAfter } from 'date-fns';
 
 const router = Router();
 
+// ============================================================================
+// RULES MANAGEMENT
+// ============================================================================
+
 router.get('/rules', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
-        const page = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 100));
-        const skip = (page - 1) * limit;
-
-        const [rules, total] = await Promise.all([
-            prisma.loyaltyRule.findMany({
-                orderBy: { createdAt: 'desc' },
-                skip,
-                take: limit
-            }),
-            prisma.loyaltyRule.count()
-        ]);
-        res.json({
-            success: true,
-            data: rules,
-            pagination: {
-                page,
-                limit,
-                total,
-                pages: Math.ceil(total / limit)
-            }
+        const rules = await prisma.loyaltyRule.findMany({
+            include: {
+                brands: { include: { brand: true } },
+                prize: true
+            },
+            orderBy: { createdAt: 'desc' }
         });
+        res.json({ success: true, data: rules });
     } catch (error) {
         next(error);
     }
 });
 
-
 router.post('/rules', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
-        // Enforce single rule policy
-        const existingRulesCount = await prisma.loyaltyRule.count();
-        if (existingRulesCount >= 1) {
-            res.status(400).json({ success: false, error: 'Ya existe una regla configurada. Elimine la actual antes de crear una nueva.' });
-            return;
-        }
+        const { 
+            name, 
+            description, 
+            type, 
+            target_value, 
+            reset_days, 
+            is_active, 
+            prize_id, 
+            brand_ids 
+        } = req.body;
 
-        const { name, type, pointsValue, points_value, condition, active, isActive } = req.body;
         const rule = await prisma.loyaltyRule.create({
             data: {
                 name,
+                description,
                 type,
-                pointsValue: Number(pointsValue ?? points_value),
-                condition: condition !== undefined && condition !== null ? String(condition) : null,
-                isActive: isActive ?? active ?? true
+                targetValue: new Prisma.Decimal(target_value || 0),
+                resetDays: reset_days ? parseInt(reset_days) : null,
+                isActive: is_active ?? true,
+                prizeId: prize_id,
+                brands: {
+                    create: (brand_ids || []).map((id: string) => ({
+                        brandId: id
+                    }))
+                }
+            },
+            include: {
+                brands: { include: { brand: true } }
             }
         });
         res.json({ success: true, data: rule });
@@ -61,17 +65,34 @@ router.post('/rules', authenticate, requirePermission('loyalty.manage_rules'), a
 
 router.put('/rules/:id', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
-        const { name, type, pointsValue, points_value, condition, active, isActive } = req.body;
-        const dataToUpdate: any = {};
-        if (name !== undefined) dataToUpdate.name = name;
-        if (type !== undefined) dataToUpdate.type = type;
-        if (pointsValue !== undefined || points_value !== undefined) dataToUpdate.pointsValue = Number(pointsValue ?? points_value);
-        if (condition !== undefined) dataToUpdate.condition = condition !== null ? String(condition) : null;
-        if (isActive !== undefined || active !== undefined) dataToUpdate.isActive = isActive ?? active;
+        const { 
+            name, 
+            description, 
+            type, 
+            target_value, 
+            reset_days, 
+            is_active, 
+            prize_id, 
+            brand_ids 
+        } = req.body;
 
         const rule = await prisma.loyaltyRule.update({
             where: { id: req.params.id },
-            data: dataToUpdate
+            data: {
+                name,
+                description,
+                type,
+                targetValue: target_value !== undefined ? new Prisma.Decimal(target_value) : undefined,
+                resetDays: reset_days !== undefined ? (reset_days ? parseInt(reset_days) : null) : undefined,
+                isActive: is_active,
+                prizeId: prize_id,
+                brands: brand_ids ? {
+                    deleteMany: {},
+                    create: brand_ids.map((id: string) => ({
+                        brandId: id
+                    }))
+                } : undefined
+            }
         });
         res.json({ success: true, data: rule });
     } catch (error) {
@@ -81,36 +102,132 @@ router.put('/rules/:id', authenticate, requirePermission('loyalty.manage_rules')
 
 router.delete('/rules/:id', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
-        await prisma.loyaltyRule.delete({
-            where: { id: req.params.id }
-        });
+        await prisma.loyaltyRule.delete({ where: { id: req.params.id } });
         res.json({ success: true });
     } catch (error) {
         next(error);
     }
 });
 
-router.get('/prizes', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
+// ============================================================================
+// BALANCES & PROGRESS
+// ============================================================================
+
+router.get('/balances', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
         const page = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 100));
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 20));
         const skip = (page - 1) * limit;
+        const search = req.query.search as string;
 
-        const [prizes, total] = await Promise.all([
-            prisma.loyaltyPrize.findMany({
-                orderBy: { createdAt: 'desc' },
+        // Fetch active rules
+        const rules = await prisma.loyaltyRule.findMany({
+            where: { isActive: true },
+            include: { brands: true, prize: true }
+        });
+
+        const activeBrandIds = Array.from(new Set(rules.flatMap(r => r.brands.map(b => b.brandId))));
+
+        // Fetch clients with at least one order that could count towards active rules
+        const clientWhere: Prisma.ClientWhereInput = {
+            orders: {
+                some: {
+                    status: 'ENTREGADO',
+                    loyaltyRedemptionId: null,
+                    brandId: { in: activeBrandIds }
+                }
+            }
+        };
+
+        if (search) {
+            clientWhere.OR = [
+                { firstName: { contains: search, mode: 'insensitive' } },
+                { identificationNumber: { contains: search, mode: 'insensitive' } }
+            ];
+        }
+
+        const [clients, total] = await Promise.all([
+            prisma.client.findMany({
+                where: clientWhere,
+                include: {
+                    orders: {
+                        where: {
+                            status: 'ENTREGADO',
+                            loyaltyRedemptionId: null
+                        },
+                        orderBy: { createdAt: 'asc' }
+                    }
+                },
                 skip,
                 take: limit
             }),
-            prisma.loyaltyPrize.count()
+            prisma.client.count({ where: clientWhere })
         ]);
+
+        const balances = clients.map(client => {
+            const ruleProgress = rules.map(rule => {
+                const participatingBrandIds = rule.brands.map(b => b.brandId);
+                
+                // Filter orders for this rule
+                let eligibleOrders = client.orders.filter(o => participatingBrandIds.includes(o.brandId));
+                
+                // Expiry filter
+                let expiringSoon: number | null = null;
+                if (rule.resetDays && eligibleOrders.length > 0) {
+                    const now = new Date();
+                    const cutoff = addDays(now, -rule.resetDays);
+                    eligibleOrders = eligibleOrders.filter(o => o.createdAt >= cutoff);
+                    
+                    if (eligibleOrders.length > 0) {
+                        const firstOrder = eligibleOrders[0];
+                        const expiryDate = addDays(firstOrder.createdAt, rule.resetDays);
+                        expiringSoon = differenceInDays(expiryDate, now);
+                    }
+                }
+
+                const currentCount = eligibleOrders.length;
+                const currentAmount = eligibleOrders.reduce((sum, o) => sum.plus(o.realInvoiceTotal || o.total), new Prisma.Decimal(0));
+
+                const target = Number(rule.targetValue);
+                let progress = 0;
+                let missing = 0;
+
+                if (rule.type === 'POR_MONTO') {
+                    progress = Math.min(100, (currentAmount.toNumber() / target) * 100);
+                    missing = Math.max(0, target - currentAmount.toNumber());
+                } else {
+                    progress = Math.min(100, (currentCount / target) * 100);
+                    missing = Math.max(0, target - currentCount);
+                }
+
+                return {
+                    ruleId: rule.id,
+                    ruleName: rule.name,
+                    prizeName: rule.prize?.name,
+                    type: rule.type,
+                    progress,
+                    current: rule.type === 'POR_MONTO' ? currentAmount.toNumber() : currentCount,
+                    target,
+                    missing,
+                    expiringDays: expiringSoon,
+                    canRedeem: progress >= 100,
+                    eligibleOrderIds: eligibleOrders.map(o => o.id)
+                };
+            }).filter(p => p.current > 0); // Only return rules client has progress in
+
+            return {
+                id: client.id,
+                name: client.firstName,
+                idNumber: client.identificationNumber,
+                rules: ruleProgress
+            };
+        }).filter(b => b.rules.length > 0); // Only show clients with at least one active progress
+
         res.json({
             success: true,
-            data: prizes,
+            data: balances,
             pagination: {
-                page,
-                limit,
-                total,
+                page, limit, total,
                 pages: Math.ceil(total / limit)
             }
         });
@@ -119,190 +236,145 @@ router.get('/prizes', authenticate, requirePermission('loyalty.view'), async (re
     }
 });
 
-
-router.post('/prizes', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
-    try {
-        const { name, description, type, pointsRequired, points_required, isActive, is_active } = req.body;
-        const prize = await prisma.loyaltyPrize.create({
-            data: {
-                name,
-                description,
-                type,
-                pointsRequired: Number(pointsRequired ?? points_required),
-                isActive: isActive ?? is_active ?? true
-            }
-        });
-        res.json({ success: true, data: prize });
-    } catch (error) {
-        next(error);
-    }
-});
-
-router.put('/prizes/:id', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
-    try {
-        const { name, description, type, pointsRequired, points_required, isActive, is_active } = req.body;
-        const dataToUpdate: any = {};
-        if (name !== undefined) dataToUpdate.name = name;
-        if (description !== undefined) dataToUpdate.description = description;
-        if (type !== undefined) dataToUpdate.type = type;
-        if (pointsRequired !== undefined || points_required !== undefined) {
-            dataToUpdate.pointsRequired = Number(pointsRequired ?? points_required);
-        }
-        if (isActive !== undefined || is_active !== undefined) {
-            dataToUpdate.isActive = isActive ?? is_active;
-        }
-
-        const prize = await prisma.loyaltyPrize.update({
-            where: { id: req.params.id },
-            data: dataToUpdate
-        });
-        res.json({ success: true, data: prize });
-    } catch (error) {
-        next(error);
-    }
-});
-
-router.delete('/prizes/:id', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
-    try {
-        await prisma.loyaltyPrize.delete({
-            where: { id: req.params.id }
-        });
-        res.json({ success: true });
-    } catch (error) {
-        next(error);
-    }
-});
-
-router.post('/rules/:id/toggle', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
-    try {
-        const rule = await prisma.loyaltyRule.findUnique({ where: { id: req.params.id } });
-        if (!rule) {
-            res.status(404).json({ success: false, error: 'Regla no encontrada' });
-            return;
-        }
-
-        const toggled = await prisma.loyaltyRule.update({
-            where: { id: req.params.id },
-            data: { isActive: !rule.isActive }
-        });
-        res.json({ success: true, data: toggled });
-    } catch (error) {
-        next(error);
-    }
-});
-
-router.post('/prizes/:id/toggle', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
-    try {
-        const prize = await prisma.loyaltyPrize.findUnique({ where: { id: req.params.id } });
-        if (!prize) {
-            res.status(404).json({ success: false, error: 'Premio no encontrado' });
-            return;
-        }
-
-        const toggled = await prisma.loyaltyPrize.update({
-            where: { id: req.params.id },
-            data: { isActive: !prize.isActive }
-        });
-        res.json({ success: true, data: toggled });
-    } catch (error) {
-        next(error);
-    }
-});
+// ============================================================================
+// REDEMPTIONS & HISTORY
+// ============================================================================
 
 router.get('/redemptions', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
         const page = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 20));
         const skip = (page - 1) * limit;
 
-        const [redemptions, total] = await Promise.all([
-            (prisma.loyaltyRedemption as any).findMany({
-                include: { author: true },
+        const [data, total] = await Promise.all([
+            prisma.loyaltyRedemption.findMany({
+                include: {
+                    author: { select: { username: true } },
+                    prize: true
+                },
                 orderBy: { date: 'desc' },
                 skip,
                 take: limit
             }),
-            (prisma.loyaltyRedemption as any).count()
+            prisma.loyaltyRedemption.count()
         ]);
+
         res.json({
             success: true,
-            data: redemptions.map((r: any) => ({
-                ...r,
-                authorName: r.author?.name || 'Sistema'
-            })),
-            pagination: {
-                page,
-                limit,
-                total,
-                pages: Math.ceil(total / limit)
-            }
+            data,
+            pagination: { page, limit, total, pages: Math.ceil(total / limit) }
         });
-
     } catch (error) {
         next(error);
     }
 });
 
+router.get('/history/:clientId', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
+    try {
+        const { clientId } = req.params;
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 20));
+        const skip = (page - 1) * limit;
+
+        const [data, total] = await Promise.all([
+            prisma.loyaltyRedemption.findMany({
+                where: { clientId },
+                include: { prize: true },
+                orderBy: { date: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.loyaltyRedemption.count({ where: { clientId } })
+        ]);
+
+        res.json({
+            success: true,
+            data,
+            pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// ============================================================================
+// REDEMPTION
+// ============================================================================
+
 router.post('/redeem', authenticate, requirePermission('loyalty.manage_prizes'), async (req: any, res, next) => {
     try {
-        const { clientId, client_id, prizeId, prize_id } = req.body;
+        const { client_id: clientId, rule_id: ruleId } = req.body;
         const authorId = req.user?.id;
 
-        const targetClientId = clientId ?? client_id;
-        const targetPrizeId = prizeId ?? prize_id;
+        const rule = await prisma.loyaltyRule.findUnique({
+            where: { id: ruleId },
+            include: { brands: true, prize: true }
+        });
 
-        if (!targetClientId || !targetPrizeId) {
-            res.status(400).json({ success: false, error: 'ID de cliente y premio son requeridos' });
+        if (!rule || !rule.isActive) {
+            res.status(400).json({ success: false, error: 'Regla inválida o inactiva' });
             return;
         }
 
-        // Find client and account
         const client = await prisma.client.findUnique({
-            where: { id: targetClientId },
-            include: { clientAccount: true }
-        });
-
-        if (!client || !client.clientAccount) {
-            res.status(404).json({ success: false, error: 'Cliente o cuenta no encontrada' });
-            return;
-        }
-
-        // Find prize
-        const prize = await prisma.loyaltyPrize.findUnique({
-            where: { id: targetPrizeId }
-        });
-
-        if (!prize || !prize.isActive) {
-            res.status(400).json({ success: false, error: 'Premio inválido o inactivo' });
-            return;
-        }
-
-        if (client.clientAccount.totalRewardPoints < prize.pointsRequired) {
-            res.status(400).json({ success: false, error: 'Puntos insuficientes' });
-            return;
-        }
-
-        // Apply redemption atomically
-        const result = await prisma.$transaction(async (tx) => {
-            // Reset points to 0 as requested: "una vez reclamado los puntos sean 0"
-            await tx.clientAccount.update({
-                where: { id: client.clientAccount!.id },
-                data: {
-                    totalRewardPoints: 0,
-                    version: { increment: 1 }
+            where: { id: clientId },
+            include: {
+                orders: {
+                    where: {
+                        status: 'ENTREGADO',
+                        loyaltyRedemptionId: null,
+                        brandId: { in: rule.brands.map(b => b.brandId) }
+                    },
+                    orderBy: { createdAt: 'asc' }
                 }
-            });
+            }
+        });
 
-            // Record redemption with authorId
+        if (!client) {
+            res.status(404).json({ success: false, error: 'Cliente no encontrado' });
+            return;
+        }
+
+        let eligibleOrders = client.orders;
+        if (rule.resetDays) {
+            const cutoff = addDays(new Date(), -rule.resetDays);
+            eligibleOrders = eligibleOrders.filter(o => o.createdAt >= cutoff);
+        }
+
+        const currentCount = eligibleOrders.length;
+        const currentAmount = eligibleOrders.reduce((sum, o) => sum.plus(o.realInvoiceTotal || o.total), new Prisma.Decimal(0));
+        const target = Number(rule.targetValue);
+
+        const isEligible = rule.type === 'POR_MONTO' ? currentAmount.gte(target) : currentCount >= target;
+
+        if (!isEligible) {
+            res.status(400).json({ success: false, error: 'No cumple con los requisitos de la regla' });
+            return;
+        }
+
+        // Apply redemption
+        const result = await prisma.$transaction(async (tx) => {
             const redemption = await tx.loyaltyRedemption.create({
                 data: {
                     clientId: client.id,
-                    clientName: client.firstName.trim(),
-                    prizeId: prize.id,
-                    prizeName: prize.name,
-                    pointsUsed: prize.pointsRequired,
+                    clientName: client.firstName,
+                    ruleId: rule.id,
+                    prizeId: rule.prizeId || '', // Should ideally always have a prize
+                    prizeName: rule.prize?.name || 'Premio de Regla',
+                    valueClaimed: rule.type === 'POR_MONTO' ? currentAmount : new Prisma.Decimal(currentCount),
                     status: 'COMPLETADO',
                     authorId: authorId || null
+                }
+            });
+
+            // Consume orders: user said "vaciar para que no participe en otras"
+            // We mark all eligible orders used for this redemption
+            await tx.order.updateMany({
+                where: {
+                    id: { in: eligibleOrders.map(o => o.id) }
+                },
+                data: {
+                    loyaltyRedemptionId: redemption.id
                 }
             });
 
@@ -315,50 +387,54 @@ router.post('/redeem', authenticate, requirePermission('loyalty.manage_prizes'),
     }
 });
 
-router.get('/history/:clientId', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
+// Prizes CRUD (Redirected/Kept from before but updated for new schema)
+router.get('/prizes', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
-        const page = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
-        const skip = (page - 1) * limit;
-
-        const [history, total] = await Promise.all([
-            prisma.rewardApplication.findMany({
-                where: {
-                    clientAccount: {
-                        clientId: req.params.clientId
-                    }
-                },
-                include: {
-                    order: true
-                },
-                orderBy: {
-                    appliedAt: 'desc'
-                },
-                skip,
-                take: limit
-            }),
-            prisma.rewardApplication.count({
-                where: {
-                    clientAccount: {
-                        clientId: req.params.clientId
-                    }
-                }
-            })
-        ]);
-        res.json({
-            success: true,
-            data: history,
-            pagination: {
-                page,
-                limit,
-                total,
-                pages: Math.ceil(total / limit)
-            }
+        const prizes = await prisma.loyaltyPrize.findMany({
+            orderBy: { createdAt: 'desc' }
         });
+        res.json({ success: true, data: prizes });
     } catch (error) {
         next(error);
     }
 });
 
+router.post('/prizes', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
+    try {
+        const { name, description, type, points_required: pointsRequired, is_active: isActive } = req.body;
+        const prize = await prisma.loyaltyPrize.create({
+            data: {
+                name, description, type,
+                pointsRequired: pointsRequired ? parseInt(pointsRequired) : null,
+                isActive: isActive ?? true
+            }
+        });
+        res.json({ success: true, data: prize });
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.put('/prizes/:id', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
+    try {
+        const { name, description, type, points_required: pointsRequired, is_active: isActive } = req.body;
+        const prize = await prisma.loyaltyPrize.update({
+            where: { id: req.params.id },
+            data: { name, description, type, pointsRequired: pointsRequired ? parseInt(pointsRequired) : null, isActive }
+        });
+        res.json({ success: true, data: prize });
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.delete('/prizes/:id', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
+    try {
+        await prisma.loyaltyPrize.delete({ where: { id: req.params.id } });
+        res.json({ success: true });
+    } catch (error) {
+        next(error);
+    }
+});
 
 export default router;

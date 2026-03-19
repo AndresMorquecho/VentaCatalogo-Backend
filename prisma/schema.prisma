@@ -1,6 +1,3 @@
-// Prisma Schema para VentasCatalogo
-// Conectado a Neon PostgreSQL
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,15 +7,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============================================================================
-// CORE ENTITIES
-// ============================================================================
-
 model Client {
-  id                   String   @id @default(uuid())
-  identificationType   String   @map("identification_type")
-  identificationNumber String   @unique @map("identification_number")
-  firstName            String   @map("first_name")
+  id                   String              @id @default(uuid())
+  identificationType   String              @map("identification_type")
+  identificationNumber String              @unique @map("identification_number")
+  firstName            String              @map("first_name")
   country              String
   province             String
   city                 String
@@ -26,38 +19,33 @@ model Client {
   neighborhood         String?
   sector               String?
   email                String
-  phone1               String   @map("phone1")
-  operator1            String   @map("operator1")
-  phone2               String?  @map("phone2")
-  operator2            String?  @map("operator2")
+  phone1               String              @map("phone1")
+  operator1            String              @map("operator1")
+  phone2               String?             @map("phone2")
+  operator2            String?             @map("operator2")
   reference            String?
-  isActive             Boolean  @default(true) @map("is_active")
-  
-  // Nuevos campos FASE 1 & 2
-  birthDate            DateTime? @map("birth_date")
-  isWhatsApp           Boolean   @default(false) @map("is_whatsapp")
-  referredById         String?   @map("referred_by_id")
-  lastDataUpdate       DateTime  @default(now()) @map("last_data_update")
-  lastOrderDate        DateTime? @map("last_order_date")
-  lastBrandName        String?   @map("last_brand_name")
-  isBlocked            Boolean   @default(false) @map("is_blocked")
-  createdByName        String?   @map("created_by_name") // Usuario que registró a la empresaria
-
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  orders             Order[]
-  orderReceipts      OrderReceipt[]
-  clientAccount      ClientAccount?
-  financialRecords   FinancialRecord[]
-  calls              Call[]
-  inventoryMovements InventoryMovement[]
-  walletRecharges    WalletRecharge[]
-  catalogDeliveries  CatalogDelivery[]
-  
-  referredBy         Client?   @relation("ClientReferral", fields: [referredById], references: [id])
-  referrals          Client[]  @relation("ClientReferral")
+  isActive             Boolean             @default(true) @map("is_active")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  birthDate            DateTime?           @map("birth_date")
+  isBlocked            Boolean             @default(false) @map("is_blocked")
+  isWhatsApp           Boolean             @default(false) @map("is_whatsapp")
+  lastDataUpdate       DateTime            @default(now()) @map("last_data_update")
+  referredById         String?             @map("referred_by_id")
+  lastOrderDate        DateTime?           @map("last_order_date")
+  lastBrandName        String?             @map("last_brand_name")
+  createdByName        String?             @map("created_by_name")
+  calls                Call[]
+  catalogDeliveries    CatalogDelivery[]
+  clientAccount        ClientAccount?
+  referredBy           Client?             @relation("ClientReferral", fields: [referredById], references: [id])
+  referrals            Client[]            @relation("ClientReferral")
+  financialRecords     FinancialRecord[]
+  inventoryMovements   InventoryMovement[]
+  rewardRedemptions    LoyaltyRedemption[]
+  orderReceipts        OrderReceipt[]
+  orders               Order[]
+  walletRecharges      WalletRecharge[]
 
   @@index([firstName])
   @@index([email])
@@ -66,72 +54,62 @@ model Client {
 }
 
 model Brand {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  // Relations
-  orders             Order[]
-  orderItems         OrderItem[]
+  id                 String              @id @default(uuid())
+  name               String              @unique
+  description        String?
+  isActive           Boolean             @default(true) @map("is_active")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  catalogDeliveries  CatalogDelivery[]   @relation("BrandCatalogDelivery")
+  catalogInventories CatalogInventory[]  @relation("BrandCatalogInventory")
   inventoryMovements InventoryMovement[]
-  loyaltyRules       LoyaltyRule[]
-  catalogInventories CatalogInventory[] @relation("BrandCatalogInventory")
-  catalogDeliveries  CatalogDelivery[]  @relation("BrandCatalogDelivery")
+  loyaltyRules       LoyaltyRuleBrand[]
+  orderItems         OrderItem[]
+  orders             Order[]
 
   @@map("brands")
 }
 
 model BankAccount {
-  id             String   @id @default(uuid())
-  name           String
-  type           String // BANK, CASH
-  holderName     String   @map("holder_name")
-  bankName       String   @map("bank_name")
-  accountNumber  String   @map("account_number")
-  currentBalance Decimal  @default(0) @map("current_balance") @db.Decimal(10, 2)
-  isActive       Boolean  @default(true) @map("is_active")
-  description    String?
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-  version        Int      @default(1)
-
-  // Relations
-  orders           Order[]
-  orderReceipts    OrderReceipt[]
+  id               String            @id @default(uuid())
+  name             String
+  type             String
+  holderName       String            @map("holder_name")
+  bankName         String            @map("bank_name")
+  accountNumber    String            @map("account_number")
+  currentBalance   Decimal           @default(0) @map("current_balance") @db.Decimal(10, 2)
+  isActive         Boolean           @default(true) @map("is_active")
+  description      String?
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  version          Int               @default(1)
   financialRecords FinancialRecord[]
+  orderReceipts    OrderReceipt[]
+  orders           Order[]
   walletRecharges  WalletRecharge[]
 
   @@index([type])
   @@index([isActive])
-  @@index([id, version]) // Optimistic locking index
+  @@index([id, version])
   @@map("bank_accounts")
 }
 
-// ============================================================================
-// ORDERS AGGREGATE
-// ============================================================================
-
 model OrderReceipt {
-  id                   String    @id @default(uuid())
-  receiptNumber        String    @unique @map("receipt_number")
-  clientId             String    @map("client_id")
-  clientName           String    @map("client_name")
-  salesChannel         String    @map("sales_channel")
-  createdAt            DateTime  @default(now()) @map("created_at") // fecha de registro del recibo
-  transactionDate      DateTime  @map("transaction_date")
-  paymentMethod        String    @map("payment_method")
-  bankAccountId        String?   @map("bank_account_id")
-  transactionReference String?   @map("transaction_reference")
+  id                   String       @id @default(uuid())
+  receiptNumber        String       @unique @map("receipt_number")
+  clientId             String       @map("client_id")
+  clientName           String       @map("client_name")
+  salesChannel         String       @map("sales_channel")
+  createdAt            DateTime     @default(now()) @map("created_at")
+  transactionDate      DateTime     @map("transaction_date")
+  paymentMethod        String       @map("payment_method")
+  bankAccountId        String?      @map("bank_account_id")
+  transactionReference String?      @map("transaction_reference")
   notes                String?
-  createdByName        String?   @map("created_by_name")
-  version              Int       @default(1)
-
-  // Relations
-  client      Client       @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
-  orders      Order[]
+  createdByName        String?      @map("created_by_name")
+  version              Int          @default(1)
+  bankAccount          BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  client               Client       @relation(fields: [clientId], references: [id])
+  orders               Order[]
 
   @@index([clientId])
   @@index([transactionDate])
@@ -139,76 +117,70 @@ model OrderReceipt {
 }
 
 model ReceptionBatch {
-  id              String   @id @default(uuid())
-  packingNumber   String   @map("packing_number")
-  packingTotal    Decimal  @db.Decimal(10, 2) @map("packing_total")
-  receptionDate   DateTime @default(now()) @map("reception_date")
-  receivedByName  String   @map("received_by_name")
-  notes           String?
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  orders          Order[]
+  id             String   @id @default(uuid())
+  packingNumber  String   @map("packing_number")
+  packingTotal   Decimal  @map("packing_total") @db.Decimal(10, 2)
+  receptionDate  DateTime @default(now()) @map("reception_date")
+  receivedByName String   @map("received_by_name")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  orders         Order[]
 
   @@index([packingNumber])
   @@map("reception_batches")
 }
 
 model Order {
-  id                   String    @id @default(uuid())
-  receiptNumber        String    @map("receipt_number") // denormalizado para consultas rápidas
-  receiptId            String?   @map("receipt_id")
-  salesChannel         String    @map("sales_channel") // OFICINA, WHATSAPP, DOMICILIO
-  type                 String // NORMAL, PREVENTA, REPROGRAMACION
-  brandId              String    @map("brand_id")
-  total                Decimal   @db.Decimal(10, 2)
-  realInvoiceTotal     Decimal?  @map("real_invoice_total") @db.Decimal(10, 2)
-  paymentMethod        String    @map("payment_method") // EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE
-  bankAccountId        String?   @map("bank_account_id")
-  transactionDate      DateTime  @map("transaction_date")
-  possibleDeliveryDate DateTime  @map("possible_delivery_date")
-  receptionDate        DateTime? @map("reception_date")
-  deliveryDate         DateTime? @map("delivery_date")
-  invoiceNumber        String?   @map("invoice_number")
-  documentType         String?   @map("document_type") @default("FACTURA")
-  packingNumber        String?   @map("packing_number")
-  packingTotal         Decimal?  @map("packing_total") @db.Decimal(10, 2)
-  status               String    @default("POR_RECIBIR") // POR_RECIBIR, RECIBIDO_EN_BODEGA, ENTREGADO, CANCELADO
-  clientId             String    @map("client_id")
-  clientName           String    @map("client_name")
+  id                   String              @id @default(uuid())
+  receiptNumber        String              @map("receipt_number")
+  salesChannel         String              @map("sales_channel")
+  type                 String
+  brandId              String              @map("brand_id")
+  total                Decimal             @db.Decimal(10, 2)
+  realInvoiceTotal     Decimal?            @map("real_invoice_total") @db.Decimal(10, 2)
+  paymentMethod        String              @map("payment_method")
+  bankAccountId        String?             @map("bank_account_id")
+  transactionDate      DateTime            @map("transaction_date")
+  possibleDeliveryDate DateTime            @map("possible_delivery_date")
+  receptionDate        DateTime?           @map("reception_date")
+  deliveryDate         DateTime?           @map("delivery_date")
+  invoiceNumber        String?             @map("invoice_number")
+  status               String              @default("POR_RECIBIR")
+  clientId             String              @map("client_id")
+  clientName           String              @map("client_name")
   notes                String?
-  createdByName        String?   @map("created_by_name")   // Usuario que creó el pedido
-  receivedByName       String?   @map("received_by_name")  // Usuario que recibió en bodega
-  deliveredByName      String?   @map("delivered_by_name") // Usuario que procesó la entrega
-  
-  // Nuevos campos FASE 1 & 3 & 4
-  receptionBatchId     String?   @map("reception_batch_id")
-  parentOrderId        String?   @map("parent_order_id")
-  orderNumber          String?   @map("order_number")
-  trackingGuide        String?   @map("tracking_guide")
-  changeStatus         String?   @map("change_status") // OFICINA, EMPRESA, RECIBIDO
-
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
-  version              Int       @default(1)
-
-  // Relations
-  client             Client              @relation(fields: [clientId], references: [id])
-  brand              Brand               @relation(fields: [brandId], references: [id])
-  bankAccount        BankAccount?        @relation(fields: [bankAccountId], references: [id])
-  receipt            OrderReceipt?       @relation(fields: [receiptId], references: [id], onDelete: SetNull)
-  items              OrderItem[]
-  payments           OrderPayment[]
-  financialRecords   FinancialRecord[]
-  inventoryMovements InventoryMovement[]
-  calls              Call[]
-  rewardApplications RewardApplication[]
-  catalogDelivery    CatalogDelivery?    @relation("CatalogOrder")
-  
-  parentOrder        Order?              @relation("OrderHeirs", fields: [parentOrderId], references: [id])
-  childOrders        Order[]             @relation("OrderHeirs")
-  receptionBatch     ReceptionBatch?     @relation(fields: [receptionBatchId], references: [id], onDelete: SetNull)
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  version              Int                 @default(1)
+  createdByName        String?             @map("created_by_name")
+  deliveredByName      String?             @map("delivered_by_name")
+  receivedByName       String?             @map("received_by_name")
+  changeStatus         String?             @map("change_status")
+  parentOrderId        String?             @map("parent_order_id")
+  trackingGuide        String?             @map("tracking_guide")
+  orderNumber          String?             @map("order_number")
+  receiptId            String?             @map("receipt_id")
+  documentType         String?             @default("FACTURA") @map("document_type")
+  packingNumber        String?             @map("packing_number")
+  packingTotal         Decimal?            @map("packing_total") @db.Decimal(10, 2)
+  receptionBatchId     String?             @map("reception_batch_id")
+  loyaltyRedemptionId  String?             @map("loyalty_redemption_id")
+  calls                Call[]
+  catalogDelivery      CatalogDelivery?    @relation("CatalogOrder")
+  financialRecords     FinancialRecord[]
+  inventoryMovements   InventoryMovement[]
+  items                OrderItem[]
+  payments             OrderPayment[]
+  bankAccount          BankAccount?        @relation(fields: [bankAccountId], references: [id])
+  brand                Brand               @relation(fields: [brandId], references: [id])
+  client               Client              @relation(fields: [clientId], references: [id])
+  loyaltyRedemption    LoyaltyRedemption?  @relation(fields: [loyaltyRedemptionId], references: [id])
+  parentOrder          Order?              @relation("OrderHeirs", fields: [parentOrderId], references: [id])
+  childOrders          Order[]             @relation("OrderHeirs")
+  receipt              OrderReceipt?       @relation(fields: [receiptId], references: [id])
+  receptionBatch       ReceptionBatch?     @relation(fields: [receptionBatchId], references: [id])
+  rewardApplications   RewardApplication?
 
   @@index([clientId])
   @@index([brandId])
@@ -220,77 +192,61 @@ model Order {
 }
 
 model OrderItem {
-  id          String  @id @default(uuid())
-  orderId     String  @map("order_id")
-  productName String  @map("product_name")
-  quantity    Int
-  unitPrice   Decimal @map("unit_price") @db.Decimal(10, 2)
-  brandId     String  @map("brand_id")
-  brandName   String  @map("brand_name")
-  link        String?
-  status      String? // NORMAL, REPROGRAMADO
+  id                   String    @id @default(uuid())
+  orderId              String    @map("order_id")
+  productName          String    @map("product_name")
+  quantity             Int
+  unitPrice            Decimal   @map("unit_price") @db.Decimal(10, 2)
+  brandId              String    @map("brand_id")
+  brandName            String    @map("brand_name")
+  link                 String?
   possibleDeliveryDate DateTime? @map("possible_delivery_date")
-
-  // Relations
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  brand Brand @relation(fields: [brandId], references: [id])
+  status               String?
+  brand                Brand     @relation(fields: [brandId], references: [id])
+  order                Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@map("order_items")
 }
 
 model OrderPayment {
-  id          String   @id @default(uuid())
-  orderId     String   @map("order_id")
-  amount      Decimal  @db.Decimal(10, 2)
-  method      String // EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE, CREDITO_CLIENTE
-  reference   String?
-  receiptNumber String? @map("receipt_number") // Consecutivo propio del abono
-  description String?
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  // Relations
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id               String            @id @default(uuid())
+  orderId          String            @map("order_id")
+  amount           Decimal           @db.Decimal(10, 2)
+  method           String
+  reference        String?
+  description      String?
+  createdAt        DateTime          @default(now()) @map("created_at")
+  receiptNumber    String?           @map("receipt_number")
   financialRecords FinancialRecord[]
+  order            Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@map("order_payments")
 }
 
-// ============================================================================
-// FINANCIAL RECORD AGGREGATE (UNIFICADO)
-// ============================================================================
-
 model FinancialRecord {
-  id              String   @id @default(uuid())
-  type            String // PAYMENT, ADJUSTMENT, EXPENSE
-  referenceNumber String   @unique @map("reference_number")
-  amount          Decimal  @db.Decimal(10, 2)
+  id              String        @id @default(uuid())
+  type            String
+  referenceNumber String        @unique @map("reference_number")
+  amount          Decimal       @db.Decimal(10, 2)
   date            DateTime
-
-  // Audit Trail
-  clientId   String  @map("client_id")
-  clientName String  @map("client_name")
-  orderId    String? @map("order_id")
-  orderPaymentId String? @map("order_payment_id")
-  createdBy  String  @map("created_by")
-  notes      String?
-
-  // Movement
-  bankAccountId String  @map("bank_account_id")
-  source        String // ORDER_PAYMENT, MANUAL, ADJUSTMENT
-  paymentMethod String? @map("payment_method")
-  movementType  String  @map("movement_type") // INCOME, EXPENSE
-
-  // Metadata
-  createdAt DateTime @default(now()) @map("created_at")
-  version   Int      @default(1)
-
-  // Relations
-  client      Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  order       Order?      @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  orderPayment OrderPayment? @relation(fields: [orderPaymentId], references: [id], onDelete: SetNull)
-  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  clientId        String        @map("client_id")
+  clientName      String        @map("client_name")
+  orderId         String?       @map("order_id")
+  createdBy       String        @map("created_by")
+  notes           String?
+  bankAccountId   String        @map("bank_account_id")
+  source          String
+  paymentMethod   String?       @map("payment_method")
+  movementType    String        @map("movement_type")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  version         Int           @default(1)
+  orderPaymentId  String?       @map("order_payment_id")
+  bankAccount     BankAccount   @relation(fields: [bankAccountId], references: [id])
+  client          Client        @relation(fields: [clientId], references: [id])
+  order           Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderPayment    OrderPayment? @relation(fields: [orderPaymentId], references: [id])
 
   @@index([clientId])
   @@index([orderId])
@@ -303,72 +259,62 @@ model FinancialRecord {
   @@map("financial_records")
 }
 
-// ============================================================================
-// CLIENT ACCOUNT AGGREGATE
-// ============================================================================
-
 model ClientAccount {
-  id                   String   @id @default(uuid())
-  clientId             String   @unique @map("client_id")
-  totalCreditAvailable Decimal  @default(0) @map("total_credit_available") @db.Decimal(10, 2)
-  totalRewardPoints    Int      @default(0) @map("total_reward_points")
-  totalOrders          Int      @default(0) @map("total_orders")
-  totalSpent           Decimal  @default(0) @map("total_spent") @db.Decimal(10, 2)
-  rewardLevel          String   @default("BRONCE") @map("reward_level") // BRONCE, PLATA, ORO, PLATINO
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
-  version              Int      @default(1)
+  id                   String              @id @default(uuid())
+  clientId             String              @unique @map("client_id")
+  totalCreditAvailable Decimal             @default(0) @map("total_credit_available") @db.Decimal(10, 2)
+  totalRewardPoints    Int                 @default(0) @map("total_reward_points")
+  totalOrders          Int                 @default(0) @map("total_orders")
+  totalSpent           Decimal             @default(0) @map("total_spent") @db.Decimal(10, 2)
+  rewardLevel          String              @default("BRONCE") @map("reward_level")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  version              Int                 @default(1)
+  client               Client              @relation(fields: [clientId], references: [id])
+  credits              ClientCredit[]
+  rewardApplications   RewardApplication[]
 
-  // Relations
-  client             Client              @relation(fields: [clientId], references: [id])
-  credits            ClientCredit[]
-  rewardApplications RewardApplication[]
-
-  @@index([id, version]) // Optimistic locking index
+  @@index([id, version])
   @@map("client_accounts")
 }
 
 model ClientCredit {
-  id                  String    @id @default(uuid())
-  clientAccountId     String    @map("client_account_id")
-  amount              Decimal   @db.Decimal(10, 2)
-  remainingAmount     Decimal   @map("remaining_amount") @db.Decimal(10, 2)
-  originTransactionId String    @unique @map("origin_transaction_id")
-  originOrderId       String?   @map("origin_order_id")
-  status              String    @default("AVAILABLE") // AVAILABLE, USED, EXPIRED
-  createdAt           DateTime  @default(now()) @map("created_at")
-  usedAt              DateTime? @map("used_at")
-  version             Int       @default(1) // Optimistic locking
-
-  // Relations
-  clientAccount ClientAccount @relation(fields: [clientAccountId], references: [id], onDelete: Restrict)
+  id                  String        @id @default(uuid())
+  clientAccountId     String        @map("client_account_id")
+  amount              Decimal       @db.Decimal(10, 2)
+  remainingAmount     Decimal       @map("remaining_amount") @db.Decimal(10, 2)
+  originTransactionId String        @unique @map("origin_transaction_id")
+  originOrderId       String?       @map("origin_order_id")
+  status              String        @default("AVAILABLE")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  usedAt              DateTime?     @map("used_at")
+  version             Int           @default(1)
+  clientAccount       ClientAccount @relation(fields: [clientAccountId], references: [id])
 
   @@index([clientAccountId])
   @@index([status])
-  @@index([clientAccountId, status]) // TASK-5.3: Composite for AVAILABLE credit queries
-  @@index([id, version]) // Optimistic locking index
+  @@index([clientAccountId, status])
+  @@index([id, version])
   @@map("client_credits")
 }
 
 model WalletRecharge {
-  id                  String   @id @default(uuid())
-  clientId            String   @map("client_id")
-  amount              Decimal  @db.Decimal(10, 2)
-  paymentMethod       String   @map("payment_method") // EFECTIVO, TRANSFERENCIA, DEPOSITO
-  bankAccountId       String?  @map("bank_account_id")
-  reference           String?
-  notes               String?
-  status              String   @default("PENDIENTE_VALIDACION") // PENDIENTE_VALIDACION, VALIDADO, RECHAZADO
-  createdByName       String?  @map("created_by_name")
-  validatedByName     String?  @map("validated_by_name")
-  validatedAt         DateTime? @map("validated_at")
-  rejectionReason     String?  @map("rejection_reason")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  client      Client       @relation(fields: [clientId], references: [id])
-  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
+  id              String       @id @default(uuid())
+  clientId        String       @map("client_id")
+  amount          Decimal      @db.Decimal(10, 2)
+  paymentMethod   String       @map("payment_method")
+  bankAccountId   String?      @map("bank_account_id")
+  reference       String?
+  notes           String?
+  status          String       @default("PENDIENTE_VALIDACION")
+  createdByName   String?      @map("created_by_name")
+  validatedByName String?      @map("validated_by_name")
+  validatedAt     DateTime?    @map("validated_at")
+  rejectionReason String?      @map("rejection_reason")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  bankAccount     BankAccount? @relation(fields: [bankAccountId], references: [id])
+  client          Client       @relation(fields: [clientId], references: [id])
 
   @@index([clientId])
   @@index([status])
@@ -376,47 +322,35 @@ model WalletRecharge {
 }
 
 model RewardApplication {
-  id              String   @id @default(uuid())
-  clientAccountId String   @map("client_account_id")
-  orderId         String   @unique @map("order_id")
-  pointsEarned    Int      @map("points_earned")
-  appliedAt       DateTime @default(now()) @map("applied_at")
-
-  // Relations
-  clientAccount ClientAccount @relation(fields: [clientAccountId], references: [id], onDelete: Restrict)
-  order         Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  id              String        @id @default(uuid())
+  clientAccountId String        @map("client_account_id")
+  orderId         String        @unique @map("order_id")
+  pointsEarned    Int           @map("points_earned")
+  appliedAt       DateTime      @default(now()) @map("applied_at")
+  clientAccount   ClientAccount @relation(fields: [clientAccountId], references: [id])
+  order           Order         @relation(fields: [orderId], references: [id])
 
   @@index([clientAccountId])
   @@map("reward_applications")
 }
-
-// ============================================================================
-// INVENTORY AGGREGATE
-// ============================================================================
 
 model InventoryMovement {
   id        String   @id @default(uuid())
   orderId   String   @map("order_id")
   clientId  String   @map("client_id")
   brandId   String   @map("brand_id")
-  type      String // ENTRY, DELIVERED
+  type      String
   createdBy String   @map("created_by")
   notes     String?
   createdAt DateTime @default(now()) @map("created_at")
-
-  // Relations
-  order  Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  brand  Brand  @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  brand     Brand    @relation(fields: [brandId], references: [id])
+  client    Client   @relation(fields: [clientId], references: [id])
+  order     Order    @relation(fields: [orderId], references: [id])
 
   @@index([orderId])
   @@index([type])
   @@map("inventory_movements")
 }
-
-// ============================================================================
-// CASH CLOSURE AGGREGATE
-// ============================================================================
 
 model CashClosure {
   id             String   @id @default(uuid())
@@ -425,25 +359,19 @@ model CashClosure {
   notes          String?
   totalIncome    Decimal  @map("total_income") @db.Decimal(10, 2)
   totalExpense   Decimal  @map("total_expense") @db.Decimal(10, 2)
-  expectedAmount Decimal  @map("expected_amount") @db.Decimal(10, 2) // Current balance of cash account
-  actualAmount   Decimal  @map("actual_amount") @db.Decimal(10, 2)   // Amount counted by user
-  difference     Decimal  @db.Decimal(10, 2)                        // difference = actual - expected
+  expectedAmount Decimal  @map("expected_amount") @db.Decimal(10, 2)
+  actualAmount   Decimal  @map("actual_amount") @db.Decimal(10, 2)
+  difference     Decimal  @db.Decimal(10, 2)
   movementCount  Int      @map("movement_count")
   closedBy       String   @map("closed_by")
   closedAt       DateTime @default(now()) @map("closed_at")
-
-  // Detailed report stored as JSON
-  detailedReport Json? @map("detailed_report")
+  detailedReport Json?    @map("detailed_report")
 
   @@index([fromDate])
   @@index([toDate])
   @@index([closedAt])
   @@map("cash_closures")
 }
-
-// ============================================================================
-// CALLS & TRACKING
-// ============================================================================
 
 model Call {
   id           String    @id @default(uuid())
@@ -454,34 +382,27 @@ model Call {
   notes        String?
   followUpDate DateTime? @map("follow_up_date")
   createdBy    String    @map("created_by")
-  updatedBy    String?   @map("updated_by")  // Usuario que editó por última vez
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
-
-  // Relations
-  client Client @relation(fields: [clientId], references: [id])
-  order  Order? @relation(fields: [orderId], references: [id])
+  updatedBy    String?   @map("updated_by")
+  client       Client    @relation(fields: [clientId], references: [id])
+  order        Order?    @relation(fields: [orderId], references: [id])
 
   @@index([clientId])
   @@index([orderId])
   @@map("calls")
 }
 
-// ============================================================================
-// USERS & AUTH
-// ============================================================================
-
 model User {
-  id           String    @id @default(uuid())
-  username     String    @unique
+  id           String              @id @default(uuid())
+  username     String              @unique
   password     String
-  role         String    @default("USER") // ADMIN, USER, CAJERA, etc.
-  isActive     Boolean   @default(true) @map("is_active")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  lastAccessAt DateTime? @map("last_access_at")
-
-  redemptions LoyaltyRedemption[] @relation("RedemptionAuthor")
+  role         String              @default("USER")
+  isActive     Boolean             @default(true) @map("is_active")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  lastAccessAt DateTime?           @map("last_access_at")
+  redemptions  LoyaltyRedemption[] @relation("RedemptionAuthor")
 
   @@map("users")
 }
@@ -490,7 +411,7 @@ model Role {
   id          String   @id @default(uuid())
   name        String   @unique
   description String?
-  permissions String[] // Array of strings like "orders.view"
+  permissions String[]
   isActive    Boolean  @default(true) @map("is_active")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -499,58 +420,71 @@ model Role {
 }
 
 // ============================================================================
-// LOYALTY & REWARDS CONFIGURATION
+// LOYALTY MODULE CORE
 // ============================================================================
 
 model LoyaltyRule {
-  id          String   @id @default(uuid())
-  name        String
-  type        String // POR_MONTO, POR_PEDIDO, OTRO
-  pointsValue Int      @map("points_value")
-  condition   String?
-  brandId     String?  @map("brand_id")
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  brand       Brand?   @relation(fields: [brandId], references: [id])
+  id              String             @id @default(uuid())
+  name            String
+  description     String?
+  type            String
+  targetValue     Decimal            @map("target_value") @db.Decimal(10, 2)
+  resetDays       Int?               @map("reset_days")
+  isActive        Boolean            @default(true) @map("is_active")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+  prizeId         String?            @map("prize_id")
+  prize           LoyaltyPrize?      @relation(fields: [prizeId], references: [id])
+  brands          LoyaltyRuleBrand[]
+  redemptions     LoyaltyRedemption[]
 
   @@map("loyalty_rules")
 }
 
+model LoyaltyRuleBrand {
+  ruleId  String      @map("rule_id")
+  brandId String      @map("brand_id")
+  brand   Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  rule    LoyaltyRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@id([ruleId, brandId])
+  @@map("loyalty_rule_brands")
+}
+
 model LoyaltyPrize {
-  id             String   @id @default(uuid())
+  id             String              @id @default(uuid())
   name           String
   description    String?
-  type           String // DESCUENTO_PORCENTAJE, ENVIO_GRATIS, DESCUENTO_FIJO, PEDIDO_ESPECIAL
-  pointsRequired Int      @map("points_required")
-  isActive       Boolean  @default(true) @map("is_active")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  type           String
+  pointsRequired Int?                @map("points_required")
+  isActive       Boolean             @default(true) @map("is_active")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+  rules          LoyaltyRule[]
+  redemptions    LoyaltyRedemption[]
 
   @@map("loyalty_prizes")
 }
 
 model LoyaltyRedemption {
-  id             String   @id @default(uuid())
-  clientId       String   @map("client_id")
-  clientName     String   @map("client_name")
-  prizeId        String   @map("prize_id")
-  prizeName      String   @map("prize_name")
-  pointsUsed     Int      @map("points_used")
-  status         String   @default("COMPLETADO") // PENDIENTE, COMPLETADO, CANCELADO
-  date           DateTime @default(now()) @map("date")
-
-  authorId       String?  @map("author_id")
-  author         User?    @relation("RedemptionAuthor", fields: [authorId], references: [id])
+  id             String       @id @default(uuid())
+  clientId       String       @map("client_id")
+  clientName     String       @map("client_name")
+  ruleId         String?      @map("rule_id")
+  prizeId        String       @map("prize_id")
+  prizeName      String       @map("prize_name")
+  valueClaimed   Decimal?     @map("value_claimed") @db.Decimal(10, 2)
+  status         String       @default("COMPLETADO")
+  date           DateTime     @default(now()) @map("date")
+  authorId       String?      @map("author_id")
+  author         User?        @relation("RedemptionAuthor", fields: [authorId], references: [id])
+  client         Client?      @relation(fields: [clientId], references: [id])
+  prize          LoyaltyPrize @relation(fields: [prizeId], references: [id])
+  rule           LoyaltyRule? @relation(fields: [ruleId], references: [id])
+  consumedOrders Order[]
 
   @@map("loyalty_redemptions")
 }
-
-
-// ============================================================================
-// AUDIT LOGS
-// ============================================================================
 
 model AuditLog {
   id        String   @id @default(uuid())
@@ -565,28 +499,21 @@ model AuditLog {
 
   @@index([userId])
   @@index([timestamp])
-  @@index([module]) // TASK-5.2: Module filter is the most common query in the audit UI
+  @@index([module])
   @@map("audit_logs")
 }
 
-
-// ============================================================================
-// CATALOG MANAGEMENT MODULE
-// ============================================================================
-
 model CatalogInventory {
-  id         String   @id @default(uuid())
-  brandId    String   @map("brand_id")
-  campaign   String   // "Campaña 1", "Campaña 2", etc.
-  quantity   Int      // Stock actual disponible
-  createdBy  String   @map("created_by")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
-  
-  // Relations
-  brand      Brand    @relation("BrandCatalogInventory", fields: [brandId], references: [id], onDelete: Restrict)
+  id         String            @id @default(uuid())
+  brandId    String            @map("brand_id")
+  campaign   String
+  quantity   Int
+  createdBy  String            @map("created_by")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
   deliveries CatalogDelivery[]
-  
+  brand      Brand             @relation("BrandCatalogInventory", fields: [brandId], references: [id])
+
   @@unique([brandId, campaign])
   @@index([brandId])
   @@index([campaign])
@@ -594,29 +521,27 @@ model CatalogInventory {
 }
 
 model CatalogDelivery {
-  id                String   @id @default(uuid())
-  clientId          String   @map("client_id")
-  brandId           String   @map("brand_id")
-  campaign          String
-  quantity          Int      @default(1)
-  type              String   // GRATIS, CON_COSTO
-  orderId           String?  @unique @map("order_id") // Si es CON_COSTO
-  catalogInventoryId String  @map("catalog_inventory_id")
-  deliveredBy       String   @map("delivered_by")
-  deliveredAt       DateTime @default(now()) @map("delivered_at")
-  notes             String?
-  
-  // Relations
-  client           Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  brand            Brand            @relation("BrandCatalogDelivery", fields: [brandId], references: [id], onDelete: Restrict)
-  order            Order?           @relation("CatalogOrder", fields: [orderId], references: [id], onDelete: SetNull)
-  catalogInventory CatalogInventory @relation(fields: [catalogInventoryId], references: [id], onDelete: Restrict)
-  
+  id                 String           @id @default(uuid())
+  clientId           String           @map("client_id")
+  brandId            String           @map("brand_id")
+  campaign           String
+  quantity           Int              @default(1)
+  type               String
+  orderId            String?          @unique @map("order_id")
+  catalogInventoryId String           @map("catalog_inventory_id")
+  deliveredBy        String           @map("delivered_by")
+  deliveredAt        DateTime         @default(now()) @map("delivered_at")
+  notes              String?
+  brand              Brand            @relation("BrandCatalogDelivery", fields: [brandId], references: [id])
+  catalogInventory   CatalogInventory @relation(fields: [catalogInventoryId], references: [id])
+  client             Client           @relation(fields: [clientId], references: [id])
+  order              Order?           @relation("CatalogOrder", fields: [orderId], references: [id])
+
   @@index([clientId])
   @@index([brandId])
   @@index([campaign])
   @@index([deliveredAt])
-  @@index([clientId, brandId]) // Para validación de comportamiento
+  @@index([clientId, brandId])
   @@index([type])
   @@map("catalog_deliveries")
 }
