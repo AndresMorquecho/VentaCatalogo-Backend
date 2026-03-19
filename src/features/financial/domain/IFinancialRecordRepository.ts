@@ -8,6 +8,7 @@ export interface FinancialRecordFilters {
   endDate?: Date;
   type?: string;
   movementType?: string;
+  referenceNumber?: string;
 }
 
 export interface IFinancialRecordRepository {

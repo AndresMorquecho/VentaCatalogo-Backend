@@ -10,7 +10,7 @@ const repository = new PrismaFinancialRecordRepository();
 // GET /api/financial-records - Get all with optional filters
 router.get('/', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { clientId, orderId, bankAccountId, startDate, endDate, type, movementType } = req.query;
+    const { clientId, orderId, bankAccountId, startDate, endDate, type, movementType, referenceNumber } = req.query;
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 100));
     const skip = (page - 1) * limit;
@@ -21,6 +21,7 @@ router.get('/', authenticate, async (req: Request, res: Response, next: NextFunc
     if (bankAccountId) filters.bankAccountId = bankAccountId as string;
     if (type) filters.type = type as string;
     if (movementType) filters.movementType = movementType as string;
+    if (referenceNumber) filters.referenceNumber = referenceNumber as string;
     if (startDate) filters.startDate = new Date(startDate as string);
     if (endDate) filters.endDate = new Date(endDate as string);
 

@@ -37,6 +37,13 @@ export interface CreateOrderDTO {
     method: string;
     reference?: string;
   };
+  payments?: Array<{
+    amount: number;
+    method: string;
+    bankAccountId?: string;
+    reference?: string;
+    notes?: string;
+  }>;
   creditAmount?: number;
   parentOrderId?: string;
   orderNumber?: string;
@@ -170,74 +177,80 @@ export class CreateOrderUseCase {
 
         const paymentsToCreate = [];
         const financialRecordsToCreate = [];
+        const bankAccountIncrements = new Map<string, number>();
 
-        // 2. Prepare Initial Payment data
-        if (dto.initialPayment.amount > 0) {
-          if (!dto.bankAccountId) {
-            throw new Error('Bank account is required for initial payment');
-          }
+        // 2. Determine Payments to process (Multi-payment vs Simple)
+        const sources = (dto.payments && dto.payments.length > 0)
+          ? dto.payments 
+          : (dto.initialPayment.amount > 0 ? [dto.initialPayment] : []);
 
-          const initialPaymentReceiptNumber = `REC-ABO-${(nextPaymentNumber++).toString().padStart(6, '0')}`;
-          
+        for (const p of sources) {
+          const pAmount = Number(p.amount);
+          if (pAmount <= 0) continue;
+
+          const pReceiptNumber = `REC-ABO-${(nextPaymentNumber++).toString().padStart(6, '0')}`;
+          const isWallet = p.method === 'BILLETERA_VIRTUAL' || p.method === 'CREDITO_CLIENTE';
+          const pBankId = (p as any).bankAccountId || dto.bankAccountId;
+
           paymentsToCreate.push({
-            amount: dto.initialPayment.amount,
-            method: dto.initialPayment.method,
-            reference: dto.initialPayment.reference,
-            receiptNumber: initialPaymentReceiptNumber,
-            description: 'Abono inicial'
+            amount: pAmount,
+            method: p.method,
+            reference: p.reference,
+            receiptNumber: pReceiptNumber,
+            description: (p as any).notes || (dto.type === 'CATALOGO' ? 'Venta de catálogo' : 'Abono inicial')
           });
 
-          financialRecordsToCreate.push({
-            type: 'PAYMENT',
-            source: 'ORDER_PAYMENT',
-            movementType: 'INCOME',
-            referenceNumber: dto.initialPayment.method !== 'EFECTIVO' && dto.initialPayment.reference
-              ? dto.initialPayment.reference
-              : `REF-INI-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-            amount: dto.initialPayment.amount,
-            date: new Date(),
-            clientId: dto.clientId,
-            clientName: dto.clientName,
-            createdBy,
-            notes: `Abono inicial pedido ${receiptNumber}`,
-            bankAccountId: dto.bankAccountId,
-            paymentMethod: dto.initialPayment.method,
-            version: 1
-          });
+          if (!isWallet) {
+            if (!pBankId) {
+              throw new Error(`Bank account is required for payment method ${p.method}`);
+            }
+
+            financialRecordsToCreate.push({
+              type: 'PAYMENT',
+              source: 'ORDER_PAYMENT',
+              movementType: 'INCOME',
+              referenceNumber: p.method !== 'EFECTIVO' && p.reference
+                ? p.reference
+                : `REF-INI-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+              amount: pAmount,
+              date: new Date(),
+              clientId: dto.clientId,
+              clientName: dto.clientName,
+              createdBy,
+              notes: (p as any).notes || `Abono pedido ${receiptNumber} (${p.method})`,
+              bankAccountId: pBankId,
+              paymentMethod: p.method,
+              version: 1
+            });
+
+            const current = bankAccountIncrements.get(pBankId) || 0;
+            bankAccountIncrements.set(pBankId, current + pAmount);
+          }
         }
 
-        // 3. Prepare Credit Usage data
-        if (dto.creditAmount && dto.creditAmount > 0) {
-          const creditPaymentReceiptNumber = `REC-ABO-${(nextPaymentNumber++).toString().padStart(6, '0')}`;
-          
-          paymentsToCreate.push({
-            amount: dto.creditAmount,
-            method: 'CREDITO_CLIENTE',
-            receiptNumber: creditPaymentReceiptNumber,
-            description: 'Saldo a favor aplicado'
-          });
+        // 3. Prepare Credit Usage data (legacy field compatibility)
+        let totalCreditToUse = dto.creditAmount || 0;
+        // Also if any payment was 'CREDITO_CLIENTE', add to totalCreditToUse if not already part of it
+        const directWalletAmount = (dto.payments || [])
+          .filter(p => p.method === 'BILLETERA_VIRTUAL' || p.method === 'CREDITO_CLIENTE')
+          .reduce((sum, p) => sum + Number(p.amount), 0);
+        
+        if (directWalletAmount > totalCreditToUse) {
+          totalCreditToUse = directWalletAmount;
+        }
 
-          let creditBankAccountId = dto.bankAccountId;
-          if (!creditBankAccountId || creditBankAccountId === 'default') {
-            const cashAcc = await tx.bankAccount.findFirst({ where: { type: 'CASH' } });
-            if (cashAcc) creditBankAccountId = cashAcc.id;
+        if (totalCreditToUse > 0) {
+          // If NOT already added to paymentsToCreate above, add it
+          const alreadyAddedWallet = paymentsToCreate.some(p => p.method === 'CREDITO_CLIENTE' || p.method === 'BILLETERA_VIRTUAL');
+          if (!alreadyAddedWallet) {
+              const creditPaymentReceiptNumber = `REC-ABO-${(nextPaymentNumber++).toString().padStart(6, '0')}`;
+              paymentsToCreate.push({
+                amount: totalCreditToUse,
+                method: 'CREDITO_CLIENTE',
+                receiptNumber: creditPaymentReceiptNumber,
+                description: 'Saldo a favor aplicado'
+              });
           }
-
-          financialRecordsToCreate.push({
-            type: 'PAYMENT',
-            source: 'ORDER_PAYMENT',
-            movementType: 'INCOME',
-            referenceNumber: `REF-CRED-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-            amount: dto.creditAmount,
-            date: new Date(),
-            clientId: dto.clientId,
-            clientName: dto.clientName,
-            createdBy,
-            notes: `Saldo a favor aplicado al pedido ${receiptNumber}`,
-            bankAccountId: creditBankAccountId!,
-            paymentMethod: 'CREDITO_CLIENTE',
-            version: 1
-          });
         }
 
         // 4. Create order with items and payments in ONE call
@@ -284,23 +297,23 @@ export class CreateOrderUseCase {
           }));
         }
 
-        // Bank account balance update with optimistic locking
-        if (dto.initialPayment.amount > 0 && dto.bankAccountId) {
+        // Bank account balance update with optimistic locking (Loop over all affected accounts)
+        for (const [accountId, increment] of bankAccountIncrements.entries()) {
           // Read account with version
           const bankAccount = await tx.bankAccount.findUnique({
-            where: { id: dto.bankAccountId },
+            where: { id: accountId },
             select: { id: true, currentBalance: true, version: true, name: true }
           });
 
           if (!bankAccount) {
-            throw new Error(`Bank account ${dto.bankAccountId} not found`);
+            throw new Error(`Bank account ${accountId} not found`);
           }
 
           // Validate financial integrity
           validateBankAccountBalance(
             Number(bankAccount.currentBalance),
-            dto.initialPayment.amount,
-            dto.bankAccountId,
+            increment,
+            accountId,
             bankAccount.name
           );
 
@@ -308,11 +321,11 @@ export class CreateOrderUseCase {
           financialAndBankOps.push((async () => {
             const result = await tx.bankAccount.updateMany({
               where: {
-                id: dto.bankAccountId,
+                id: accountId,
                 version: bankAccount.version
               },
               data: {
-                currentBalance: { increment: dto.initialPayment.amount },
+                currentBalance: { increment: increment },
                 updatedAt: new Date(),
                 version: { increment: 1 }
               }
@@ -322,14 +335,14 @@ export class CreateOrderUseCase {
               throw new ConcurrencyError(
                 'Bank account was modified by another transaction. Please retry.',
                 'BankAccount',
-                dto.bankAccountId
+                accountId
               );
             }
           })());
         }
 
-        // 6. Handle Credit Reversion if applicable
-        if (dto.creditAmount && dto.creditAmount > 0) {
+        // 6. Handle Wallet/Credit Reversion if applicable
+        if (totalCreditToUse > 0.01) {
           const availableCredits = await tx.clientCredit.findMany({
             where: {
               clientAccount: { clientId: dto.clientId },
@@ -344,10 +357,10 @@ export class CreateOrderUseCase {
             orderBy: { createdAt: 'asc' }
           });
 
-          let remainingToSubtract = dto.creditAmount;
+          let remToSub = totalCreditToUse;
           for (const credit of availableCredits) {
-            if (remainingToSubtract <= 0) break;
-            const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
+            if (remToSub <= 0.01) break;
+            const amountToSubtract = Math.min(Number(credit.remainingAmount), remToSub);
 
             // Validate financial integrity
             validateClientCreditBalance(
@@ -382,11 +395,11 @@ export class CreateOrderUseCase {
               }
             })());
 
-            remainingToSubtract -= amountToSubtract;
+            remToSub -= amountToSubtract;
           }
 
-          if (remainingToSubtract > 0.01) {
-            throw new Error(`Saldo a favor insuficiente para cubrir $${dto.creditAmount.toFixed(2)}`);
+          if (remToSub > 0.01) {
+            throw new Error(`Saldo a favor insuficiente para cubrir $${totalCreditToUse.toFixed(2)}`);
           }
         }
 

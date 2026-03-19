@@ -12,6 +12,12 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
     if (filters.bankAccountId) where.bankAccountId = filters.bankAccountId;
     if (filters.type) where.type = filters.type;
     if (filters.movementType) where.movementType = filters.movementType;
+    if (filters.referenceNumber) {
+      where.referenceNumber = {
+        contains: filters.referenceNumber,
+        mode: 'insensitive'
+      };
+    }
 
     if (filters.startDate || filters.endDate) {
       where.date = {};

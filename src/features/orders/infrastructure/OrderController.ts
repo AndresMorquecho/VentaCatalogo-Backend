@@ -212,6 +212,7 @@ export class OrderController {
           reference: req.body.transaction_reference || ''
         },
         creditAmount: Number(req.body.credit_to_use ?? req.body.creditToUse ?? 0),
+        payments: req.body.payments,
         parentOrderId: req.body.parentOrderId || req.body.parent_order_id,
         orderNumber: req.body.orderNumber || req.body.order_number
       };
@@ -647,7 +648,21 @@ export class OrderController {
           paymentMethod: item.paymentMethod || item.payment_method,
           reference: item.referenceNumber || item.reference_number || undefined,
           documentType: item.documentType || item.document_type,
-          entryDate: item.entryDate || item.entry_date
+          entryDate: item.entryDate || item.entry_date,
+          creditDistribution: (() => {
+            const cd = item.creditDistribution || item.credit_distribution;
+            if (!cd) return undefined;
+            return {
+              sourceOrderId: cd.sourceOrderId || cd.source_order_id,
+              totalCreditAmount: Number(cd.totalCreditAmount || cd.total_credit_amount || 0),
+              distributions: (cd.distributions || []).map((d: any) => ({
+                targetOrderId: d.targetOrderId || d.target_order_id,
+                amount: Number(d.amount || 0),
+                description: d.description,
+                isCashReturn: d.isCashReturn || d.is_cash_return
+              }))
+            };
+          })()
         }))
       };
 

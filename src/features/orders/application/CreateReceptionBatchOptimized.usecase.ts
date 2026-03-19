@@ -19,9 +19,10 @@ export interface CreditDistribution {
   sourceOrderId: string;
   totalCreditAmount: number;
   distributions: {
-    targetOrderId?: string; // null = billetera virtual
+    targetOrderId?: string; // null = billetera virtual o devolucion
     amount: number;
     description: string;
+    isCashReturn?: boolean; // true = devolucion en efectivo (no crea credito en billetera)
   }[];
 }
 
@@ -43,6 +44,7 @@ interface ProcessedOrder {
   realInvoiceTotal: number;
   invoiceNumber: string | null;
   documentType: string | null;
+  payments: any[]; // NUEVO: Incluir pagos para que el frontend calcule saldos
 }
 
 /**
@@ -166,15 +168,24 @@ export class CreateReceptionBatchOptimizedUseCase {
           brandId: true,
           brand: {
             select: {
+              id: true,
               name: true
             }
           },
           total: true,
+          realInvoiceTotal: true,
           status: true,
+          invoiceNumber: true,
+          documentType: true,
           payments: {
             select: {
               id: true,
-              amount: true
+              amount: true,
+              method: true,
+              reference: true,
+              receiptNumber: true,
+              description: true,
+              createdAt: true
             }
           }
         }
@@ -227,17 +238,30 @@ export class CreateReceptionBatchOptimizedUseCase {
       const bankAccountTotals = new Map<string, number>();
       const clientAccountCredits = new Map<string, number>();
       
-      // Get last payment number for consecutive generation
-      const lastPayment = await tx.orderPayment.findFirst({
-        where: { receiptNumber: { startsWith: 'REC-ABO-' } },
-        orderBy: { createdAt: 'desc' },
-        select: { receiptNumber: true }
-      });
+      // 2. Get last receipt numbers for concurrent generation
+      const [lastAbono, lastSaldo] = await Promise.all([
+        tx.orderPayment.findFirst({
+          where: { receiptNumber: { startsWith: 'REC-ABO-' } },
+          orderBy: { receiptNumber: 'desc' },
+          select: { receiptNumber: true }
+        }),
+        tx.orderPayment.findFirst({
+          where: { receiptNumber: { startsWith: 'REC-SALDO-' } },
+          orderBy: { receiptNumber: 'desc' },
+          select: { receiptNumber: true }
+        })
+      ]);
       
-      let nextPaymentNumber = 1;
-      if (lastPayment?.receiptNumber) {
-        const match = lastPayment.receiptNumber.match(/(\d+)$/);
-        if (match) nextPaymentNumber = parseInt(match[1]) + 1;
+      let nextAbonoNumber = 1;
+      if (lastAbono?.receiptNumber) {
+        const match = lastAbono.receiptNumber.match(/(\d+)$/);
+        if (match) nextAbonoNumber = parseInt(match[1]) + 1;
+      }
+
+      let nextSaldoNumber = 1;
+      if (lastSaldo?.receiptNumber) {
+        const match = lastSaldo.receiptNumber.match(/(\d+)$/);
+        if (match) nextSaldoNumber = parseInt(match[1]) + 1;
       }
 
       // Get last order number for consecutive generation (format: ORD-YYYYMMDD-XXX)
@@ -294,7 +318,7 @@ export class CreateReceptionBatchOptimizedUseCase {
         // Handle payment (abono)
         if (item.abonoRecepcion && item.abonoRecepcion > 0 && item.bankAccountId) {
           const paymentId = crypto.randomUUID();
-          const receiptNumber = `REC-ABO-${(nextPaymentNumber++).toString().padStart(6, '0')}`;
+          const receiptNumber = `REC-ABO-${(nextAbonoNumber++).toString().padStart(6, '0')}`;
           
           orderPayments.push({
             id: paymentId,
@@ -308,7 +332,7 @@ export class CreateReceptionBatchOptimizedUseCase {
           });
 
           const referenceNumber = item.paymentMethod !== 'EFECTIVO' && item.reference
-            ? item.reference
+            ? `${item.reference}-${Math.floor(Math.random() * 1000)}`
             : `REF-REC-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
           financialRecords.push({
@@ -341,14 +365,23 @@ export class CreateReceptionBatchOptimizedUseCase {
         const newPaidAmount = paidAmount + (item.abonoRecepcion || 0);
         const pendingAmount = item.finalTotal - newPaidAmount;
 
+        // ====== DEBUG LOGGING ======
+        console.log(`\n📦 Processing order ${order.receiptNumber} (${order.id})`);
+        console.log(`   total=${order.total}, finalTotal=${item.finalTotal}, existingPaid=${paidAmount}, abonoRecepcion=${item.abonoRecepcion || 0}`);
+        console.log(`   newPaidAmount=${newPaidAmount}, pendingAmount=${pendingAmount}`);
+        console.log(`   creditDistribution received:`, JSON.stringify(item.creditDistribution, null, 2));
+        // ====== END DEBUG ======
+
         if (pendingAmount < -0.01) {
           const creditAmount = Math.abs(pendingAmount);
           
+          console.log(`   ✅ Credit generated: $${creditAmount}`);
+
           // 1. ENTRADA: Registrar generación del saldo a favor
           financialRecords.push({
             id: crypto.randomUUID(),
             type: 'CREDIT_GENERATION',
-            referenceNumber: `CREDIT-GEN-${order.id}-${Date.now()}`,
+            referenceNumber: `CREDIT-GEN-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             amount: creditAmount,
             date: new Date(),
             clientId: order.clientId,
@@ -365,13 +398,19 @@ export class CreateReceptionBatchOptimizedUseCase {
           });
 
           // 2. Procesar distribuciones si existen
-          if (item.creditDistribution && item.creditDistribution.distributions.length > 0) {
+          if (item.creditDistribution && item.creditDistribution.distributions && item.creditDistribution.distributions.length > 0) {
+            console.log(`   📋 Processing ${item.creditDistribution.distributions.length} distributions for ${order.receiptNumber}:`);
+            
+            let distIdx = 0;
             for (const dist of item.creditDistribution.distributions) {
+              distIdx++;
+              console.log(`      - [${distIdx}] dist: targetOrderId=${dist.targetOrderId}, amount=${dist.amount}, isCashReturn=${dist.isCashReturn}`);
+              
               // SALIDA: Registrar aplicación del saldo
               financialRecords.push({
                 id: crypto.randomUUID(),
                 type: 'CREDIT_APPLICATION',
-                referenceNumber: `CREDIT-APP-${dist.targetOrderId || 'WALLET'}-${Date.now()}`,
+                referenceNumber: `CREDIT-APP-${dist.targetOrderId || 'WALLET'}-${order.id}-${distIdx}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
                 amount: dist.amount,
                 date: new Date(),
                 clientId: order.clientId,
@@ -390,7 +429,9 @@ export class CreateReceptionBatchOptimizedUseCase {
               // Si es distribución a otro pedido, crear el pago
               if (dist.targetOrderId) {
                 const paymentId = crypto.randomUUID();
-                const receiptNumber = `REC-SALDO-${(nextPaymentNumber++).toString().padStart(6, '0')}`;
+                const receiptNumber = `REC-SALDO-${(nextSaldoNumber++).toString().padStart(6, '0')}`;
+                
+                console.log(`      ✅ Creating orderPayment of $${dist.amount} for order ${dist.targetOrderId}`);
                 
                 orderPayments.push({
                   id: paymentId,
@@ -402,18 +443,43 @@ export class CreateReceptionBatchOptimizedUseCase {
                   description: `Saldo a favor aplicado desde pedido ${order.receiptNumber}`,
                   createdAt: new Date()
                 });
+
+                // ENTRADA: Registrar el pago en el pedido destino (en records financieros)
+                financialRecords.push({
+                  id: crypto.randomUUID(),
+                  type: 'ORDER_PAYMENT',
+                  referenceNumber: `${receiptNumber}-${Math.floor(Math.random() * 1000)}`,
+                  amount: dist.amount,
+                  date: new Date(),
+                  clientId: order.clientId,
+                  clientName: order.clientName,
+                  orderId: dist.targetOrderId,
+                  bankAccountId: 'virtual-credit-account',
+                  source: 'CREDIT_DISTRIBUTION',
+                  paymentMethod: 'SALDO_A_FAVOR',
+                  movementType: 'INCOME', // Es un ingreso para el pedido destino
+                  createdBy: userId,
+                  notes: `Pago con saldo a favor - Origen: Pedido ${order.receiptNumber}`,
+                  version: 1,
+                  createdAt: new Date()
+                });
               }
             }
 
-            // Solo crear crédito en billetera para distribuciones que van a billetera virtual
-            const walletDistributions = item.creditDistribution.distributions.filter(d => !d.targetOrderId);
+            // Solo crear crédito en billetera para distribuciones que van a billetera virtual (NO devolución en efectivo)
+            const walletDistributions = item.creditDistribution.distributions.filter(d => !d.targetOrderId && !d.isCashReturn);
+            console.log(`   💰 Wallet distributions detected: ${walletDistributions.length}`);
+            
+            let walletIdx = 0;
             for (const walletDist of walletDistributions) {
+              walletIdx++;
+              console.log(`      - wallet amount: $${walletDist.amount} for client ${order.clientId}`);
               clientCredits.push({
                 id: crypto.randomUUID(),
                 clientAccountId: '', // Will be filled after getting/creating client account
                 amount: walletDist.amount,
                 remainingAmount: walletDist.amount,
-                originTransactionId: `RECEPTION-DIST-${order.id}-${Date.now()}`,
+                originTransactionId: `RECEPTION-DIST-${order.id}-${walletIdx}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
                 originOrderId: order.id,
                 status: 'AVAILABLE',
                 createdAt: new Date()
@@ -423,14 +489,39 @@ export class CreateReceptionBatchOptimizedUseCase {
               const currentCredit = clientAccountCredits.get(order.clientId) || 0;
               clientAccountCredits.set(order.clientId, currentCredit + walletDist.amount);
             }
+            
+            // Register cash returns separately (financial record only, no wallet credit)
+            const cashReturnDistributions = item.creditDistribution.distributions.filter(d => !d.targetOrderId && d.isCashReturn);
+            for (const cashDist of cashReturnDistributions) {
+              console.log(`      - cash return: $${cashDist.amount}`);
+              financialRecords.push({
+                id: crypto.randomUUID(),
+                type: 'CREDIT_APPLICATION',
+                referenceNumber: `CASH-RETURN-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                amount: cashDist.amount,
+                date: new Date(),
+                clientId: order.clientId,
+                clientName: order.clientName,
+                orderId: null,
+                bankAccountId: 'cash-return',
+                source: 'CASH_RETURN',
+                paymentMethod: 'EFECTIVO',
+                movementType: 'EXPENSE',
+                createdBy: userId,
+                notes: `Devolución en efectivo al cliente - Origen: Pedido ${order.receiptNumber}`,
+                version: 1,
+                createdAt: new Date()
+              });
+            }
           } else {
+            console.log(`   ⚠️ No creditDistribution provided - sending all $${creditAmount} to wallet automatically`);
             // Si no hay distribución, todo va a billetera virtual (comportamiento actual)
             clientCredits.push({
               id: crypto.randomUUID(),
               clientAccountId: '', // Will be filled after getting/creating client account
               amount: creditAmount,
               remainingAmount: creditAmount,
-              originTransactionId: `RECEPTION-${order.id}-${Date.now()}`,
+              originTransactionId: `RECEPTION-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
               originOrderId: order.id,
               status: 'AVAILABLE',
               createdAt: new Date()
@@ -440,7 +531,7 @@ export class CreateReceptionBatchOptimizedUseCase {
             financialRecords.push({
               id: crypto.randomUUID(),
               type: 'CREDIT_APPLICATION',
-              referenceNumber: `CREDIT-WALLET-${order.id}-${Date.now()}`,
+              referenceNumber: `CREDIT-WALLET-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
               amount: creditAmount,
               date: new Date(),
               clientId: order.clientId,
@@ -460,8 +551,15 @@ export class CreateReceptionBatchOptimizedUseCase {
             const currentCredit = clientAccountCredits.get(order.clientId) || 0;
             clientAccountCredits.set(order.clientId, currentCredit + creditAmount);
           }
+        } else {
+          console.log(`   ℹ️ No credit generated (pendingAmount=${pendingAmount.toFixed(2)} >= 0)`);
         }
       }
+      
+      console.log('\n📊 Summary:');
+      console.log(`   orderPayments to insert: ${orderPayments.length}`, orderPayments.map(p => `${p.orderId.substring(0,8)}=$${p.amount}(${p.method})`));
+      console.log(`   clientCredits to insert: ${clientCredits.length}`, clientCredits.map(c => `$${c.amount}`));
+      console.log(`   clientAccountCredits:`, Object.fromEntries(clientAccountCredits));
       
       console.timeEnd('⏱️ STEP_4_PREPARE');
 
@@ -580,19 +678,31 @@ export class CreateReceptionBatchOptimizedUseCase {
       // ============================================================================
       // STEP 8: Return complete order data for frontend
       // ============================================================================
-      const processedOrders: ProcessedOrder[] = orderUpdates.map(u => {
-        const order = ordersMap.get(u.id)!;
+      const processedOrders: ProcessedOrder[] = dto.items.map(item => {
+        const order = ordersMap.get(item.orderId)!;
+        const update = orderUpdates.find(u => u.id === item.orderId);
+        
+        // Combine existing payments with new payments generated in this batch (including distributions)
+        const existingPayments = order.payments || [];
+        const newPaymentsForThisOrder = orderPayments
+          .filter(p => p.orderId === item.orderId)
+          .map(p => ({
+            ...p,
+            amount: Number(p.amount)
+          }));
+
         return {
-          id: u.id,
+          id: item.orderId,
           receiptNumber: order.receiptNumber,
-          orderNumber: u.orderNumber,
-          status: u.status,
+          orderNumber: update?.orderNumber || order.orderNumber,
+          status: update?.status || order.status,
           clientId: order.clientId,
           clientName: order.clientName,
           brandName: order.brand.name,
-          realInvoiceTotal: u.realInvoiceTotal,
-          invoiceNumber: u.invoiceNumber,
-          documentType: u.documentType
+          realInvoiceTotal: update?.realInvoiceTotal || Number(order.realInvoiceTotal || order.total),
+          invoiceNumber: update?.invoiceNumber || order.invoiceNumber,
+          documentType: update?.documentType || order.documentType,
+          payments: [...existingPayments, ...newPaymentsForThisOrder] // RETORNAR PAGOS PARA EL PDF
         };
       });
 
@@ -610,16 +720,18 @@ export class CreateReceptionBatchOptimizedUseCase {
   }
 
   private async handleBatchEdit(tx: any, dto: BatchReceptionDTO, userId: string): Promise<any> {
-    // Get existing batch
+    // Get existing batch with all its orders
     const batch = await tx.receptionBatch.findUnique({
       where: { id: dto.id },
       select: {
         id: true,
+        packingNumber: true,
         orders: {
           select: {
             id: true,
             receiptNumber: true,
-            status: true
+            status: true,
+            clientId: true
           }
         }
       }
@@ -627,111 +739,120 @@ export class CreateReceptionBatchOptimizedUseCase {
 
     if (!batch) throw new Error('El lote a editar no existe');
 
-    // Identify orders to remove
-    const newItemOrderIds = dto.items.map(i => i.orderId);
-    const orderIdsToRemove = batch.orders
-      .filter((o: any) => !newItemOrderIds.includes(o.id))
-      .map((o: any) => o.id);
+    const oldOrderIds = batch.orders.map((o: any) => o.id);
+    const newOrderIds = dto.items.map(i => i.orderId);
+    
+    // Identify orders to remove completely from batch (not in new items)
+    const orderIdsToRemove = oldOrderIds.filter((id: string) => !newOrderIds.includes(id));
 
-    // Validate no delivered orders are being removed
-    const ordersToRemove = batch.orders.filter((o: any) => orderIdsToRemove.includes(o.id));
-    for (const order of ordersToRemove) {
+    // Validate no delivered orders are being removed or were in the batch
+    for (const order of batch.orders) {
       if (order.status === 'ENTREGADO') {
-        throw new Error(`No se puede quitar el pedido ${order.receiptNumber} porque ya ha sido entregado.`);
+        throw new Error(`No se puede editar el packing porque el pedido ${order.receiptNumber} ya fue entregado.`);
       }
     }
 
-    if (orderIdsToRemove.length > 0) {
-      // Bulk delete operations
-      await tx.inventoryMovement.deleteMany({
-        where: {
-          orderId: { in: orderIdsToRemove },
-          type: 'ENTRY'
-        }
-      });
+    console.log(`🔄 Reverting previous effects for ${oldOrderIds.length} orders in batch ${batch.id}`);
 
-      // Get payments to revert
-      const paymentsToRevert = await tx.orderPayment.findMany({
-        where: {
-          orderId: { in: orderIdsToRemove },
-          description: 'Abono en recepción de bodega (Packing)'
-        },
-        select: { id: true }
-      });
+    // ============================================================================
+    // REVERT ALL FINANCIAL EFFECTS FOR ALL ORDERS IN BATCH
+    // ============================================================================
+    
+    // 1. Find all payments created by this reception (Abonos + Distributive Credits)
+    const paymentsToRevert = await tx.orderPayment.findMany({
+      where: {
+        OR: [
+          // Basic cash payments during reception
+          { orderId: { in: oldOrderIds }, description: 'Abono en recepción de bodega (Packing)' },
+          // Distributive payments from orders in this batch (Target is ANY order)
+          { reference: { in: oldOrderIds.map((id: string) => `SALDO-DIST-${id}`) } },
+          // Distributive payments TO orders in this batch (Source can be ANY order)
+          { orderId: { in: oldOrderIds }, method: 'CREDITO_CLIENTE', reference: { startsWith: 'SALDO-DIST-' } }
+        ]
+      },
+      select: { id: true, amount: true, orderId: true, method: true }
+    });
 
+    if (paymentsToRevert.length > 0) {
       const paymentIds = paymentsToRevert.map((p: any) => p.id);
+      
+      // 2. Find financial records associated with these payments
+      const recordsToRevert = await tx.financialRecord.findMany({
+        where: { orderPaymentId: { in: paymentIds } },
+        select: { id: true, bankAccountId: true, amount: true, movementType: true }
+      });
 
-      if (paymentIds.length > 0) {
-        // Get financial records
-        const financialRecordsToRevert = await tx.financialRecord.findMany({
-          where: { orderPaymentId: { in: paymentIds } },
-          select: { id: true, bankAccountId: true, amount: true }
-        });
+      // 3. Find other records (CREDIT_GENERATION, CREDIT_APPLICATION, CASH_RETURN) associated with these orders
+      const otherRecords = await tx.financialRecord.findMany({
+        where: {
+          OR: [
+            { orderId: { in: oldOrderIds }, type: { in: ['CREDIT_GENERATION', 'CREDIT_APPLICATION'] } },
+            { notes: { contains: `Origen: Pedido` }, type: 'CREDIT_APPLICATION' } // Catch returns/wallet mentions
+          ],
+          // Match the packing number in notes to be safe
+          notes: { contains: batch.packingNumber }
+        },
+        select: { id: true, bankAccountId: true, amount: true, movementType: true }
+      });
 
-        // Accumulate bank account reversions
-        const bankReversions = new Map<string, number>();
-        for (const fr of financialRecordsToRevert) {
-          const current = bankReversions.get(fr.bankAccountId) || 0;
-          bankReversions.set(fr.bankAccountId, current + Number(fr.amount));
-        }
+      const allRecordsToRevert = [...recordsToRevert, ...otherRecords];
 
-        // Bulk revert bank accounts
-        for (const [bankAccountId, amount] of bankReversions) {
-          await tx.bankAccount.update({
-            where: { id: bankAccountId },
-            data: {
-              currentBalance: { decrement: amount },
-              version: { increment: 1 }
-            }
-          });
-        }
+      // 4. Revert Bank Accounts
+      const bankReversions = new Map<string, number>();
+      for (const rec of allRecordsToRevert) {
+        if (rec.bankAccountId === 'virtual-credit-account' || rec.bankAccountId === 'cash-return') continue;
+        
+        const current = bankReversions.get(rec.bankAccountId) || 0;
+        // If it was income, we decrement. If it was expense, we increment.
+        const change = rec.movementType === 'INCOME' ? -Number(rec.amount) : Number(rec.amount);
+        bankReversions.set(rec.bankAccountId, current + change);
+      }
 
-        // Bulk delete financial records
-        await tx.financialRecord.deleteMany({
-          where: { id: { in: financialRecordsToRevert.map((fr: any) => fr.id) } }
-        });
-
-        // Bulk delete payments
-        await tx.orderPayment.deleteMany({
-          where: { id: { in: paymentIds } }
+      for (const [bankAccountId, amount] of bankReversions) {
+        if (amount === 0) continue;
+        await tx.bankAccount.update({
+          where: { id: bankAccountId },
+          data: { currentBalance: { increment: amount }, version: { increment: 1 } }
         });
       }
 
-      // Revert credits
+      // 5. Revert Client Credits (Wallet)
       const creditsToRevert = await tx.clientCredit.findMany({
-        where: {
-          originOrderId: { in: orderIdsToRemove },
-          status: 'AVAILABLE'
-        },
+        where: { originOrderId: { in: oldOrderIds }, status: 'AVAILABLE' },
         select: { id: true, clientAccountId: true, remainingAmount: true }
       });
 
       if (creditsToRevert.length > 0) {
-        // Accumulate credit reversions
         const creditReversions = new Map<string, number>();
         for (const credit of creditsToRevert) {
           const current = creditReversions.get(credit.clientAccountId) || 0;
           creditReversions.set(credit.clientAccountId, current + Number(credit.remainingAmount));
         }
 
-        // Bulk update client accounts
         for (const [accountId, amount] of creditReversions) {
           await tx.clientAccount.update({
             where: { id: accountId },
-            data: {
-              totalCreditAvailable: { decrement: amount },
-              version: { increment: 1 }
-            }
+            data: { totalCreditAvailable: { decrement: amount }, version: { increment: 1 } }
           });
         }
 
-        // Bulk delete credits
-        await tx.clientCredit.deleteMany({
-          where: { id: { in: creditsToRevert.map((c: any) => c.id) } }
-        });
+        await tx.clientCredit.deleteMany({ where: { id: { in: creditsToRevert.map((c: any) => c.id) } } });
       }
 
-      // Bulk update orders to pending
+      // 6. Delete all identified records and payments
+      if (allRecordsToRevert.length > 0) {
+        await tx.financialRecord.deleteMany({ where: { id: { in: allRecordsToRevert.map(r => r.id) } } });
+      }
+      await tx.orderPayment.deleteMany({ where: { id: { in: paymentIds } } });
+    }
+
+    // 7. Delete inventory movements for these orders
+    await tx.inventoryMovement.deleteMany({
+      where: { orderId: { in: oldOrderIds }, type: 'ENTRY' }
+    });
+
+    // 8. Revert orders that are REMOVED from batch
+    if (orderIdsToRemove.length > 0) {
       await tx.order.updateMany({
         where: { id: { in: orderIdsToRemove } },
         data: {
@@ -740,13 +861,17 @@ export class CreateReceptionBatchOptimizedUseCase {
           receivedByName: null,
           realInvoiceTotal: null,
           invoiceNumber: null,
+          documentType: 'FACTURA',
           receptionBatchId: null,
+          packingNumber: null,
+          packingTotal: null,
+          orderNumber: null,
           version: { increment: 1 }
         }
       });
     }
 
-    // Update batch
+    // Update batch metadata
     return await tx.receptionBatch.update({
       where: { id: dto.id },
       data: {

@@ -32,7 +32,9 @@ export class GetCatalogDeliveriesUseCase {
           const lastOrder = await prisma.order.findFirst({
             where: {
               clientId: delivery.clientId,
-              brandId: delivery.brandId
+              brandId: delivery.brandId,
+              type: { not: 'CATALOGO' },
+              transactionDate: { gte: delivery.deliveredAt }
             },
             orderBy: { transactionDate: 'desc' },
             select: { transactionDate: true }
