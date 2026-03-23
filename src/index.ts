@@ -32,6 +32,7 @@ import clientCreditsRouter from './routes/clientCredits.routes';
 import usersRouter from './routes/users.routes';
 import rolesRouter from './routes/roles.routes';
 import auditRouter from './routes/audit.routes';
+import exchangesRouter from './routes/exchanges.routes';
 
 const app = express();
 const PORT = env.PORT;
@@ -104,6 +105,7 @@ app.use('/api/client-credits', clientCreditsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);
 app.use('/api/audit', auditRouter);
+app.use('/api/exchanges', exchangesRouter);
 
 // Error handling
 app.use(errorHandler);

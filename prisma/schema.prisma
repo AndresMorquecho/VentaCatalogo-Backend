@@ -40,6 +40,7 @@ model Client {
   clientAccount        ClientAccount?
   referredBy           Client?             @relation("ClientReferral", fields: [referredById], references: [id])
   referrals            Client[]            @relation("ClientReferral")
+  exchanges            OrderExchange[]
   financialRecords     FinancialRecord[]
   inventoryMovements   InventoryMovement[]
   rewardRedemptions    LoyaltyRedemption[]
@@ -181,6 +182,7 @@ model Order {
   receipt              OrderReceipt?       @relation(fields: [receiptId], references: [id])
   receptionBatch       ReceptionBatch?     @relation(fields: [receptionBatchId], references: [id])
   rewardApplications   RewardApplication?
+  exchangeItems        OrderExchangeItem[]
 
   @@index([clientId])
   @@index([brandId])
@@ -226,26 +228,30 @@ model OrderPayment {
 }
 
 model FinancialRecord {
-  id              String        @id @default(uuid())
-  type            String
-  referenceNumber String        @unique @map("reference_number")
-  amount          Decimal       @db.Decimal(10, 2)
-  date            DateTime
-  clientId        String        @map("client_id")
-  clientName      String        @map("client_name")
-  orderId         String?       @map("order_id")
-  createdBy       String        @map("created_by")
-  notes           String?
-  bankAccountId   String        @map("bank_account_id")
-  source          String
-  paymentMethod   String?       @map("payment_method")
-  movementType    String        @map("movement_type")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  version         Int           @default(1)
-  orderPaymentId  String?       @map("order_payment_id")
-  bankAccount     BankAccount   @relation(fields: [bankAccountId], references: [id])
-  client          Client        @relation(fields: [clientId], references: [id])
-  order           Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  id                String       @id @default(uuid())
+  type              String
+  referenceNumber   String       @unique @map("reference_number")
+  userReference     String?      @map("user_reference")
+  amount            Decimal      @db.Decimal(10, 2)
+  date              DateTime
+  clientId          String       @map("client_id")
+  clientName        String       @map("client_name")
+  orderId           String?      @map("order_id")
+  createdBy         String       @map("created_by")
+  notes             String?
+  bankAccountId     String       @map("bank_account_id")
+  source            String
+  paymentMethod     String?      @map("payment_method")
+  movementType      String       @map("movement_type")
+  fromAccountType   String?      @map("from_account_type")
+  toAccountType     String?      @map("to_account_type")
+  transactionGroupId String?     @map("transaction_group_id")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  version           Int          @default(1)
+  orderPaymentId    String?      @map("order_payment_id")
+  bankAccount     BankAccount  @relation(fields: [bankAccountId], references: [id])
+  client          Client       @relation(fields: [clientId], references: [id])
+  order           Order?       @relation(fields: [orderId], references: [id], onDelete: Restrict)
   orderPayment    OrderPayment? @relation(fields: [orderPaymentId], references: [id])
 
   @@index([clientId])
@@ -544,4 +550,50 @@ model CatalogDelivery {
   @@index([clientId, brandId])
   @@index([type])
   @@map("catalog_deliveries")
+}
+
+
+
+// ============================================================================
+// ORDER EXCHANGES MODULE
+// ============================================================================
+
+model OrderExchange {
+  id             String              @id @default(uuid())
+  exchangeNumber String              @unique @map("exchange_number")
+  clientId       String              @map("client_id")
+  clientName     String              @map("client_name")
+  status         String              @default("RECEIVED_FROM_CLIENT")
+  notes          String?
+  createdByName  String?             @map("created_by_name")
+  sentAt         DateTime?           @map("sent_at")
+  receivedAt     DateTime?           @map("received_at")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+  client         Client              @relation(fields: [clientId], references: [id])
+  items          OrderExchangeItem[]
+
+  @@index([clientId])
+  @@index([status])
+  @@map("order_exchanges")
+}
+
+model OrderExchangeItem {
+  id                 String        @id @default(uuid())
+  exchangeId         String        @map("exchange_id")
+  originalOrderId    String        @map("original_order_id")
+  productName        String        @map("product_name")
+  originalValue      Decimal       @map("original_value") @db.Decimal(10, 2)
+  newValue           Decimal?      @map("new_value") @db.Decimal(10, 2)
+  differenceValue    Decimal?      @map("difference_value") @db.Decimal(10, 2)
+  status             String        @default("PENDING")
+  financialProcessed Boolean       @default(false) @map("financial_processed")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+  exchange           OrderExchange @relation(fields: [exchangeId], references: [id], onDelete: Cascade)
+  order              Order         @relation(fields: [originalOrderId], references: [id])
+
+  @@index([exchangeId])
+  @@index([originalOrderId])
+  @@map("order_exchange_items")
 }

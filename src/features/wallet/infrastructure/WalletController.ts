@@ -2,6 +2,7 @@
 import { Request, Response } from 'express';
 import { CreateWalletRechargeUseCase } from '../application/CreateWalletRecharge.usecase';
 import { ValidateWalletRechargesUseCase } from '../application/ValidateWalletRecharges.usecase';
+import { InstantWalletRechargeUseCase } from '../application/InstantWalletRecharge.usecase';
 import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
 import { AuthRequest } from '../../../middleware/auth';
 import { prisma } from '../../../lib/prisma';
@@ -9,7 +10,8 @@ import { prisma } from '../../../lib/prisma';
 export class WalletController {
     constructor(
         private createUseCase: CreateWalletRechargeUseCase,
-        private validateUseCase: ValidateWalletRechargesUseCase
+        private validateUseCase: ValidateWalletRechargesUseCase,
+        private instantRechargeUseCase?: InstantWalletRechargeUseCase
     ) { }
 
     async createRecharge(req: AuthRequest, res: Response) {
@@ -190,6 +192,30 @@ export class WalletController {
             return HttpResponse.ok(res, recharge);
         } catch (error: any) {
             return HttpResponse.fail(res, error || 'Internal Server Error');
+        }
+    }
+
+    async instantRecharge(req: AuthRequest, res: Response) {
+        try {
+            const body = req.body;
+            // Reuse the standard create flow — recharge goes to PENDIENTE_VALIDACION
+            // and must be validated in /wallet-validations before credit is applied.
+            const dto = {
+                clientId: body.clientId || body.client_id,
+                amount: Number(body.amount),
+                paymentMethod: body.paymentMethod || body.payment_method,
+                bankAccountId: body.bankAccountId || body.bank_account_id,
+                reference: body.reference,
+                notes: body.notes
+            };
+            const createdBy = req.user?.username || 'system';
+            const result = await this.createUseCase.execute(dto, createdBy);
+            if (result.isFailure) {
+                return HttpResponse.badRequest(res, result.error || 'Unknown error');
+            }
+            return HttpResponse.created(res, result.getValue());
+        } catch (error: any) {
+            return HttpResponse.fail(res, error?.message || 'Internal Server Error');
         }
     }
 

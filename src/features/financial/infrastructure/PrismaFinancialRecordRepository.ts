@@ -182,6 +182,7 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
         source: raw.source as FinancialSource,
         movementType: raw.movementType as MovementType,
         referenceNumber: raw.referenceNumber,
+        userReference: raw.userReference ?? undefined,
         amount: Number(raw.amount),
         date: raw.date,
         clientId: raw.clientId,
@@ -191,6 +192,9 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
         notes: raw.notes,
         bankAccountId: raw.bankAccountId,
         paymentMethod: raw.paymentMethod as PaymentMethod | undefined,
+        fromAccountType: raw.fromAccountType ?? undefined,
+        toAccountType: raw.toAccountType ?? undefined,
+        transactionGroupId: raw.transactionGroupId ?? undefined,
         createdAt: raw.createdAt,
         version: raw.version
       },
@@ -215,6 +219,7 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
       source: json.source,
       movementType: json.movementType,
       referenceNumber: json.referenceNumber,
+      userReference: json.userReference ?? null,
       amount: json.amount,
       date: json.date,
       clientId: json.clientId,
@@ -224,6 +229,9 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
       notes: json.notes,
       bankAccountId: json.bankAccountId,
       paymentMethod: json.paymentMethod,
+      fromAccountType: json.fromAccountType ?? null,
+      toAccountType: json.toAccountType ?? null,
+      transactionGroupId: json.transactionGroupId ?? null,
       version: json.version
     };
   }

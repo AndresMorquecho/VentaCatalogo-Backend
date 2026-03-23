@@ -48,6 +48,8 @@ export interface BatchCreateOrderDTO {
   }>;
 }
 
+const BLOCKED_PAYMENT_METHODS = ['TRANSFERENCIA', 'DEPOSITO', 'CHEQUE'];
+
 export class BatchCreateOrderUseCase {
   constructor(private orderRepository: IOrderRepository) {}
 
@@ -55,6 +57,17 @@ export class BatchCreateOrderUseCase {
     try {
       if (!dto.orders || dto.orders.length === 0) {
         return Result.fail('No orders provided in batch');
+      }
+
+      // Validate payment methods — TRANSFERENCIA/DEPOSITO/CHEQUE only allowed for wallet recharges
+      if (dto.paymentData?.payments) {
+        for (const p of dto.paymentData.payments) {
+          if (BLOCKED_PAYMENT_METHODS.includes(p.method)) {
+            return Result.fail(`El método "${p.method}" no está permitido para pedidos. Use EFECTIVO o BILLETERA_VIRTUAL.`);
+          }
+        }
+      } else if (BLOCKED_PAYMENT_METHODS.includes(dto.paymentMethod)) {
+        return Result.fail(`El método "${dto.paymentMethod}" no está permitido para pedidos. Use EFECTIVO o BILLETERA_VIRTUAL.`);
       }
 
       // 1. Pre-fetch shared data
@@ -153,6 +166,7 @@ export class BatchCreateOrderUseCase {
         const allFinancialRecords: any[] = [];
         const paymentIdMap = new Map<string, string>(); // orderId -> paymentId
         let totalBankIncrement = 0;
+        let firstSplitPaymentId: string | undefined = undefined; // track first order's split payment for FR linkage
 
         let orderCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
         const now = new Date();
@@ -204,52 +218,23 @@ export class BatchCreateOrderUseCase {
           });
 
           // Preparar Payments (múltiples métodos de pago o abono simple)
-          if (i === 0 && dto.paymentData && dto.paymentData.payments) {
-            // Procesar múltiples métodos de pago (solo en la primera iteración)
-            for (let paymentIndex = 0; paymentIndex < dto.paymentData.payments.length; paymentIndex++) {
-              const paymentItem = dto.paymentData.payments[paymentIndex];
-              const paymentAmount = Number(paymentItem.amount || 0);
-              
-              if (paymentAmount > 0) {
-                const paymentId = crypto.randomUUID();
-                
-                allPayments.push({
-                  id: paymentId,
-                  orderId: orderId,
-                  amount: paymentAmount,
-                  method: paymentItem.method,
-                  reference: paymentItem.transactionReference || undefined,
-                  receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
-                  description: paymentItem.notes || `Pago ${paymentIndex + 1} - ${paymentItem.method}`,
-                  createdAt: new Date()
-                });
-
-                // Preparar FinancialRecord (solo si no es billetera virtual)
-                if (paymentItem.method !== 'BILLETERA_VIRTUAL') {
-                  allFinancialRecords.push({
-                    id: crypto.randomUUID(),
-                    type: 'PAYMENT',
-                    source: 'ORDER_PAYMENT',
-                    movementType: 'INCOME',
-                    referenceNumber: paymentItem.method !== 'EFECTIVO' && paymentItem.transactionReference
-                      ? (paymentIndex === 0 ? paymentItem.transactionReference : `${paymentItem.transactionReference}-${paymentIndex + 1}`)
-                      : `REF-PAY-${Date.now()}-${paymentIndex}-${Math.random().toString(36).substring(7)}`,
-                    amount: paymentAmount,
-                    date: new Date(),
-                    clientId: dto.clientId,
-                    clientName: clientName,
-                    orderId: orderId,
-                    orderPaymentId: paymentId,
-                    createdBy,
-                    notes: paymentItem.notes || `Pago ${paymentIndex + 1} pedido ${receiptNumber}`,
-                    bankAccountId: paymentItem.bankAccountId || dto.bankAccountId,
-                    paymentMethod: paymentItem.method,
-                    version: 1
-                  });
-
-                  totalBankIncrement += paymentAmount;
-                }
-              }
+          if (dto.paymentData && dto.paymentData.payments && dto.paymentData.payments.length > 0) {
+            // SPLIT PAYMENT: Crear un OrderPayment por pedido con su depósito individual
+            // Los FinancialRecords se crean FUERA del loop (uno por método de pago)
+            const rowDeposit = Number(orderDto.deposit || 0);
+            if (rowDeposit > 0) {
+              const paymentId = crypto.randomUUID();
+              // Track the first order's paymentId so FRs can be linked to it
+              if (i === 0) firstSplitPaymentId = paymentId;
+              allPayments.push({
+                id: paymentId,
+                orderId: orderId,
+                amount: rowDeposit,
+                method: 'SPLIT_PAYMENT',
+                receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
+                description: `Split payment - ${receiptNumber} (fila ${i + 1})`,
+                createdAt: new Date()
+              });
             }
           } else {
             // Lógica original para abono simple por fila
@@ -271,14 +256,21 @@ export class BatchCreateOrderUseCase {
 
               // Preparar FinancialRecord (solo si no es billetera virtual)
               if (dto.paymentMethod !== 'BILLETERA_VIRTUAL') {
+                const simpleBankId = dto.bankAccountId && dto.bankAccountId.trim() ? dto.bankAccountId.trim() : null;
+                if (!simpleBankId) {
+                  throw new Error(`Cuenta bancaria requerida para el método de pago ${dto.paymentMethod}`);
+                }
                 allFinancialRecords.push({
                   id: crypto.randomUUID(),
                   type: 'PAYMENT',
                   source: 'ORDER_PAYMENT',
                   movementType: 'INCOME',
-                  referenceNumber: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
-                    ? (i === 0 ? dto.initialPayment.reference : `${dto.initialPayment.reference}-${i + 1}`)
-                    : `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
+                  fromAccountType: 'EXTERNAL',
+                  toAccountType: 'CASH',
+                  referenceNumber: `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
+                  userReference: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
+                    ? dto.initialPayment.reference
+                    : null,
                   amount: rowDeposit,
                   date: new Date(),
                   clientId: dto.clientId,
@@ -287,7 +279,7 @@ export class BatchCreateOrderUseCase {
                   orderPaymentId: paymentId,
                   createdBy,
                   notes: `Abono inicial pedido ${receiptNumber} (fila ${i + 1})`,
-                  bankAccountId: dto.bankAccountId,
+                  bankAccountId: simpleBankId,
                   paymentMethod: dto.paymentMethod,
                   version: 1
                 });
@@ -308,6 +300,86 @@ export class BatchCreateOrderUseCase {
               description: 'Saldo a favor aplicado',
               createdAt: new Date()
             });
+          }
+        }
+
+        // ============================================================================
+        // SPLIT PAYMENT: Crear FinancialRecords por método de pago (fuera del loop)
+        // Un FinancialRecord por método, independiente de la distribución por pedido
+        // ============================================================================
+        const splitBankIncrements = new Map<string, number>(); // bankAccountId -> totalAmount
+
+        if (dto.paymentData && dto.paymentData.payments && dto.paymentData.payments.length > 0) {
+          for (let paymentIndex = 0; paymentIndex < dto.paymentData.payments.length; paymentIndex++) {
+            const paymentItem = dto.paymentData.payments[paymentIndex];
+            const paymentAmount = Number(paymentItem.amount || 0);
+
+            if (paymentAmount <= 0) continue;
+
+            if (paymentItem.method !== 'BILLETERA_VIRTUAL') {
+              // Normalize bankAccountId — empty string is treated as missing
+              // Support both camelCase (bankAccountId) and snake_case (bank_account_id) from frontend
+              const rawBankId = (paymentItem as any).bank_account_id || paymentItem.bankAccountId;
+              const bankId = (rawBankId && typeof rawBankId === 'string' && rawBankId.trim())
+                ? rawBankId.trim()
+                : (dto.bankAccountId && dto.bankAccountId.trim() ? dto.bankAccountId.trim() : null);
+
+              if (!bankId) {
+                throw new Error(`Cuenta bancaria requerida para el método de pago ${paymentItem.method}`);
+              }
+
+              allFinancialRecords.push({
+                id: crypto.randomUUID(),
+                type: 'PAYMENT',
+                source: 'ORDER_PAYMENT',
+                movementType: 'INCOME',
+                fromAccountType: 'EXTERNAL',
+                toAccountType: 'CASH',
+                referenceNumber: `REF-SPL-${Date.now()}-${paymentIndex}`,
+                userReference: paymentItem.method !== 'EFECTIVO' && (paymentItem.transactionReference || (paymentItem as any).transaction_reference)
+                  ? (paymentItem.transactionReference || (paymentItem as any).transaction_reference)
+                  : null,
+                amount: paymentAmount,
+                date: new Date(),
+                clientId: dto.clientId,
+                clientName: clientName,
+                // Link to the first order's split payment so the UI can find these FRs
+                orderPaymentId: firstSplitPaymentId || undefined,
+                createdBy,
+                notes: paymentItem.notes || `Split payment ${paymentIndex + 1} - ${receiptNumber}`,
+                bankAccountId: bankId,
+                paymentMethod: paymentItem.method,
+                version: 1
+              });
+
+              // Acumular por cuenta bancaria (puede haber múltiples métodos en la misma cuenta)
+              splitBankIncrements.set(bankId, (splitBankIncrements.get(bankId) || 0) + paymentAmount);
+            } else {
+              // BILLETERA_VIRTUAL: WALLET → ORDER (internal transfer)
+              // Need a real bank account for FK — use default cash account or dto.bankAccountId
+              const walletBankId = dto.bankAccountId && dto.bankAccountId.trim() ? dto.bankAccountId.trim() : null;
+              if (walletBankId) {
+                allFinancialRecords.push({
+                  id: crypto.randomUUID(),
+                  type: 'PAYMENT',
+                  source: 'ORDER_PAYMENT',
+                  movementType: 'INTERNAL',
+                  fromAccountType: 'WALLET',
+                  toAccountType: 'ORDER',
+                  referenceNumber: `REF-WALLET-${Date.now()}-${paymentIndex}`,
+                  amount: paymentAmount,
+                  date: new Date(),
+                  clientId: dto.clientId,
+                  clientName: clientName,
+                  orderPaymentId: firstSplitPaymentId || undefined,
+                  createdBy,
+                  notes: `Pago con billetera virtual - ${receiptNumber}`,
+                  bankAccountId: walletBankId,
+                  paymentMethod: 'BILLETERA_VIRTUAL',
+                  version: 1
+                });
+              }
+            }
           }
         }
 
@@ -333,9 +405,32 @@ export class BatchCreateOrderUseCase {
           await tx.financialRecord.createMany({ data: allFinancialRecords });
         }
 
-        // 7. Actualizar BankAccount UNA SOLA VEZ con el total acumulado (solo si no es billetera virtual)
-        if (totalBankIncrement > 0 && dto.bankAccountId && dto.paymentMethod !== 'BILLETERA_VIRTUAL') {
-          // Read account with version
+        // 7. Actualizar BankAccount(s)
+        // Modo split: actualizar cada cuenta bancaria involucrada
+        if (splitBankIncrements.size > 0) {
+          for (const [bankId, amount] of splitBankIncrements.entries()) {
+            if (!bankId || amount <= 0) continue;
+
+            const bankAccount = await tx.bankAccount.findUnique({
+              where: { id: bankId },
+              select: { id: true, currentBalance: true, version: true, name: true }
+            });
+
+            if (!bankAccount) throw new Error(`Bank account ${bankId} not found`);
+
+            validateBankAccountBalance(Number(bankAccount.currentBalance), amount, bankId, bankAccount.name);
+
+            const result = await tx.bankAccount.updateMany({
+              where: { id: bankId, version: bankAccount.version },
+              data: { currentBalance: { increment: amount }, updatedAt: new Date(), version: { increment: 1 } }
+            });
+
+            if (result.count === 0) {
+              throw new ConcurrencyError('Bank account was modified by another transaction. Please retry.', 'BankAccount', bankId);
+            }
+          }
+        } else if (totalBankIncrement > 0 && dto.bankAccountId && dto.paymentMethod !== 'BILLETERA_VIRTUAL') {
+          // Modo simple: una sola cuenta bancaria
           const bankAccount = await tx.bankAccount.findUnique({
             where: { id: dto.bankAccountId },
             select: { id: true, currentBalance: true, version: true, name: true }
@@ -345,7 +440,6 @@ export class BatchCreateOrderUseCase {
             throw new Error(`Bank account ${dto.bankAccountId} not found`);
           }
 
-          // Validate financial integrity
           validateBankAccountBalance(
             Number(bankAccount.currentBalance),
             totalBankIncrement,
@@ -353,7 +447,6 @@ export class BatchCreateOrderUseCase {
             bankAccount.name
           );
 
-          // Update with optimistic locking
           const result = await tx.bankAccount.updateMany({
             where: {
               id: dto.bankAccountId,
@@ -376,7 +469,15 @@ export class BatchCreateOrderUseCase {
         }
 
         // 8. Aplicar crédito a favor (solo una vez)
-        if (dto.creditAmount && dto.creditAmount > 0) {
+        // En modo split: usar el monto de BILLETERA_VIRTUAL del paymentData
+        // En modo simple: usar creditAmount del DTO
+        const walletAmount = dto.paymentData?.payments
+          ? dto.paymentData.payments
+              .filter((p: any) => p.method === 'BILLETERA_VIRTUAL')
+              .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0)
+          : (dto.creditAmount || 0);
+
+        if (walletAmount > 0) {
           const availableCredits = await tx.clientCredit.findMany({
             where: { clientAccount: { clientId: dto.clientId }, status: 'AVAILABLE' },
             select: {
@@ -388,51 +489,49 @@ export class BatchCreateOrderUseCase {
             orderBy: { createdAt: 'asc' }
           });
           
-          let rem = Number(dto.creditAmount);
+          let rem = walletAmount;
           const creditsToUpdate: Array<Promise<void>> = [];
           
           for (const cr of availableCredits) {
             if (rem <= 0) break;
             const sub = Math.min(Number(cr.remainingAmount), rem);
             
-            // Validate financial integrity
-            validateClientCreditBalance(
-              Number(cr.remainingAmount),
-              sub,
-              cr.id
-            );
+            validateClientCreditBalance(Number(cr.remainingAmount), sub, cr.id);
 
             const newRemaining = Number(cr.remainingAmount) - sub;
             const newStatus = newRemaining <= 0.01 ? 'USED' : 'AVAILABLE';
             
-            // Update with optimistic locking
             creditsToUpdate.push((async () => {
               const result = await tx.clientCredit.updateMany({
-                where: {
-                  id: cr.id,
-                  version: cr.version
-                },
-                data: {
-                  remainingAmount: newRemaining,
-                  status: newStatus,
-                  version: { increment: 1 }
-                }
+                where: { id: cr.id, version: cr.version },
+                data: { remainingAmount: newRemaining, status: newStatus, version: { increment: 1 } }
               });
 
               if (result.count === 0) {
-                throw new ConcurrencyError(
-                  'Client credit was modified by another transaction. Please retry.',
-                  'ClientCredit',
-                  cr.id
-                );
+                throw new ConcurrencyError('Client credit was modified by another transaction. Please retry.', 'ClientCredit', cr.id);
               }
             })());
             
             rem -= sub;
           }
+
+          if (rem > 0.01) {
+            throw new Error(`Saldo insuficiente en billetera virtual. Falta: ${rem.toFixed(2)}`);
+          }
           
-          // Actualizar créditos en paralelo
           await Promise.all(creditsToUpdate);
+
+          // Actualizar ClientAccount.totalCreditAvailable
+          const clientAccount = await tx.clientAccount.findUnique({
+            where: { clientId: dto.clientId },
+            select: { id: true, totalCreditAvailable: true, version: true }
+          });
+          if (clientAccount) {
+            await tx.clientAccount.updateMany({
+              where: { id: clientAccount.id, version: clientAccount.version },
+              data: { totalCreditAvailable: { decrement: walletAmount }, version: { increment: 1 } }
+            });
+          }
         }
 
         // 9. Actualizar cliente

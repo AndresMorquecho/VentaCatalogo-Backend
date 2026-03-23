@@ -2,14 +2,24 @@ import { Entity } from '../../../shared/domain/Entity';
 
 export type FinancialRecordType = 'PAYMENT' | 'ADJUSTMENT' | 'EXPENSE';
 export type FinancialSource = 'ORDER_PAYMENT' | 'MANUAL' | 'ADJUSTMENT';
-export type MovementType = 'INCOME' | 'EXPENSE';
+export type MovementType = 'INCOME' | 'EXPENSE' | 'INTERNAL';
 export type PaymentMethod = 'EFECTIVO' | 'TRANSFERENCIA' | 'DEPOSITO' | 'CHEQUE' | 'CREDITO_CLIENTE' | 'BILLETERA_VIRTUAL';
+
+// Tipos de cuenta para trazabilidad origen → destino
+export type AccountType =
+  | 'EXTERNAL'       // Cliente (fuera del sistema)
+  | 'BANK_ACCOUNT'   // Cuenta bancaria real
+  | 'CASH'           // Caja / efectivo
+  | 'WALLET'         // Billetera virtual del cliente
+  | 'ORDER'          // Pedido (deuda del cliente)
+  | 'VIRTUAL';       // Cuenta virtual interna (créditos, ajustes)
 
 export interface FinancialRecordProps {
   type: FinancialRecordType;
   source: FinancialSource;
   movementType: MovementType;
   referenceNumber: string;
+  userReference?: string;
   amount: number;
   date: Date;
   clientId: string;
@@ -19,6 +29,9 @@ export interface FinancialRecordProps {
   notes?: string;
   bankAccountId: string;
   paymentMethod?: PaymentMethod;
+  fromAccountType?: AccountType;
+  toAccountType?: AccountType;
+  transactionGroupId?: string;
   createdAt: Date;
   version: number;
 }
@@ -46,6 +59,10 @@ export class FinancialRecord extends Entity<FinancialRecordProps> {
 
   get referenceNumber(): string {
     return this.props.referenceNumber;
+  }
+
+  get userReference(): string | undefined {
+    return this.props.userReference;
   }
 
   get amount(): number {
@@ -84,6 +101,18 @@ export class FinancialRecord extends Entity<FinancialRecordProps> {
     return this.props.paymentMethod;
   }
 
+  get fromAccountType(): AccountType | undefined {
+    return this.props.fromAccountType;
+  }
+
+  get toAccountType(): AccountType | undefined {
+    return this.props.toAccountType;
+  }
+
+  get transactionGroupId(): string | undefined {
+    return this.props.transactionGroupId;
+  }
+
   get createdAt(): Date {
     return this.props.createdAt;
   }
@@ -111,6 +140,7 @@ export class FinancialRecord extends Entity<FinancialRecordProps> {
       source: this.source,
       movementType: this.movementType,
       referenceNumber: this.referenceNumber,
+      userReference: this.userReference,
       amount: this.amount,
       date: this.date,
       clientId: this.clientId,
@@ -120,6 +150,9 @@ export class FinancialRecord extends Entity<FinancialRecordProps> {
       notes: this.notes,
       bankAccountId: this.bankAccountId,
       paymentMethod: this.paymentMethod,
+      fromAccountType: this.fromAccountType,
+      toAccountType: this.toAccountType,
+      transactionGroupId: this.transactionGroupId,
       createdAt: this.createdAt,
       version: this.version
     };

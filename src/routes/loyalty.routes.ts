@@ -273,13 +273,36 @@ router.get('/history/:clientId', authenticate, requirePermission('loyalty.view')
     try {
         const { clientId } = req.params;
         const page = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 20));
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
         const skip = (page - 1) * limit;
 
-        const [data, total] = await Promise.all([
+        // Fetch active rules to compute per-rule progress history
+        const rules = await prisma.loyaltyRule.findMany({
+            where: { isActive: true },
+            include: { brands: true, prize: true }
+        });
+
+        // All orders for this client (delivered, including redeemed ones)
+        const allOrders = await prisma.order.findMany({
+            where: { clientId, status: 'ENTREGADO' },
+            orderBy: { createdAt: 'asc' },
+            select: {
+                id: true,
+                receiptNumber: true,
+                orderNumber: true,
+                total: true,
+                realInvoiceTotal: true,
+                brandId: true,
+                createdAt: true,
+                loyaltyRedemptionId: true
+            }
+        });
+
+        // Redemptions for this client
+        const [redemptions, redemptionTotal] = await Promise.all([
             prisma.loyaltyRedemption.findMany({
                 where: { clientId },
-                include: { prize: true },
+                include: { prize: true, rule: true },
                 orderBy: { date: 'desc' },
                 skip,
                 take: limit
@@ -287,10 +310,72 @@ router.get('/history/:clientId', authenticate, requirePermission('loyalty.view')
             prisma.loyaltyRedemption.count({ where: { clientId } })
         ]);
 
+        // Build per-rule progress for each rule
+        const ruleProgress = rules.map(rule => {
+            const participatingBrandIds = rule.brands.map(b => b.brandId);
+            const eligibleOrders = allOrders.filter(o =>
+                participatingBrandIds.includes(o.brandId) && !o.loyaltyRedemptionId
+            );
+
+            let windowOrders = eligibleOrders;
+            if (rule.resetDays && eligibleOrders.length > 0) {
+                const cutoff = addDays(new Date(), -rule.resetDays);
+                windowOrders = eligibleOrders.filter(o => o.createdAt >= cutoff);
+            }
+
+            const currentCount = windowOrders.length;
+            const currentAmount = windowOrders.reduce((sum, o) => sum + Number(o.realInvoiceTotal || o.total), 0);
+            const target = Number(rule.targetValue);
+            const current = rule.type === 'POR_MONTO' ? currentAmount : currentCount;
+            const progress = Math.min(100, (current / target) * 100);
+
+            // Expiry
+            let expiringDays: number | null = null;
+            if (rule.resetDays && windowOrders.length > 0) {
+                const firstOrder = windowOrders[0];
+                const expiryDate = addDays(firstOrder.createdAt, rule.resetDays);
+                expiringDays = differenceInDays(expiryDate, new Date());
+            }
+
+            return {
+                ruleId: rule.id,
+                ruleName: rule.name,
+                ruleType: rule.type,
+                prizeName: rule.prize?.name || null,
+                target,
+                current,
+                progress,
+                canRedeem: progress >= 100,
+                expiringDays,
+                contributingOrders: windowOrders.map(o => ({
+                    id: o.id,
+                    receiptNumber: o.receiptNumber,
+                    orderNumber: o.orderNumber,
+                    amount: Number(o.realInvoiceTotal || o.total),
+                    date: o.createdAt
+                }))
+            };
+        }).filter(r => r.current > 0);
+
+        // Redemption history with consumed orders
+        const redemptionHistory = redemptions.map(r => ({
+            id: r.id,
+            date: r.date,
+            prizeName: r.prizeName,
+            ruleName: r.rule?.name || null,
+            ruleType: r.rule?.type || null,
+            valueClaimed: r.valueClaimed ? Number(r.valueClaimed) : null,
+            status: r.status,
+            consumedOrdersCount: allOrders.filter(o => o.loyaltyRedemptionId === r.id).length
+        }));
+
         res.json({
             success: true,
-            data,
-            pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+            data: {
+                ruleProgress,
+                redemptionHistory,
+            },
+            pagination: { page, limit, total: redemptionTotal, pages: Math.ceil(redemptionTotal / limit) }
         });
     } catch (error) {
         next(error);
@@ -401,10 +486,10 @@ router.get('/prizes', authenticate, requirePermission('loyalty.view'), async (re
 
 router.post('/prizes', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
     try {
-        const { name, description, type, points_required: pointsRequired, is_active: isActive } = req.body;
+        const { name, description, points_required: pointsRequired, is_active: isActive } = req.body;
         const prize = await prisma.loyaltyPrize.create({
             data: {
-                name, description, type,
+                name, description, type: 'ENVIO_GRATIS',
                 pointsRequired: pointsRequired ? parseInt(pointsRequired) : null,
                 isActive: isActive ?? true
             }
@@ -417,10 +502,10 @@ router.post('/prizes', authenticate, requirePermission('loyalty.manage_prizes'),
 
 router.put('/prizes/:id', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
     try {
-        const { name, description, type, points_required: pointsRequired, is_active: isActive } = req.body;
+        const { name, description, points_required: pointsRequired, is_active: isActive } = req.body;
         const prize = await prisma.loyaltyPrize.update({
             where: { id: req.params.id },
-            data: { name, description, type, pointsRequired: pointsRequired ? parseInt(pointsRequired) : null, isActive }
+            data: { name, description, pointsRequired: pointsRequired ? parseInt(pointsRequired) : null, isActive }
         });
         res.json({ success: true, data: prize });
     } catch (error) {

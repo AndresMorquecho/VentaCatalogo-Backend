@@ -76,7 +76,10 @@ export class BatchDeliverOrdersUseCase {
       let totalPending = 0;
       const orderPendingAmounts = orders.map(order => {
         const effectiveTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
-        const paidAmount = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+        const hasSplitPayment = order.payments.some(p => p.method === 'SPLIT_PAYMENT');
+        const paidAmount = order.payments
+          .filter(p => !(hasSplitPayment && p.method === 'CREDITO_CLIENTE'))
+          .reduce((sum, p) => sum + Number(p.amount), 0);
         const pending = effectiveTotal - paidAmount;
         totalPending += pending;
         return { orderId: order.id, pending, receiptNumber: order.receiptNumber };
@@ -266,10 +269,8 @@ export class BatchDeliverOrdersUseCase {
         }
       }
 
-      // 4. Actualizar pedidos y puntos
-      let totalPointsEarned = 0;
+      // 4. Actualizar pedidos
       let totalSpentInBatch = 0;
-      const rule = await tx.loyaltyRule.findFirst({ where: { isActive: true, type: 'POR_MONTO' } });
 
       for (const order of orders) {
         const effectiveTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
@@ -296,25 +297,6 @@ export class BatchDeliverOrdersUseCase {
             notes: `Entrega en lote (Pedido ${order.receiptNumber})`
           }
         });
-
-        if (rule) {
-          const paidBefore = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-          const appliedInBatch = appliedAmounts[order.id] || 0;
-          const totalPaidForOrder = paidBefore + appliedInBatch;
-
-          const divisor = parseFloat(rule.condition || '10');
-          const safeDivisor = isNaN(divisor) || divisor <= 0 ? 10 : divisor;
-          const points = Math.floor(totalPaidForOrder / safeDivisor) * rule.pointsValue;
-          totalPointsEarned += points;
-
-          await tx.rewardApplication.create({
-            data: {
-              clientAccountId: clientAccount.id,
-              orderId: order.id,
-              pointsEarned: points
-            }
-          });
-        }
       }
 
       // 5. Finalizar cuenta del cliente con optimistic locking
@@ -327,14 +309,8 @@ export class BatchDeliverOrdersUseCase {
         throw new Error(`Client account not found: ${clientAccount.id}`);
       }
 
-      const updatedPoints = clientAccount.totalRewardPoints + totalPointsEarned;
       const updatedOrders = clientAccount.totalOrders + orders.length;
       const updatedSpent = Number(clientAccount.totalSpent) + totalSpentInBatch;
-
-      let newLevel = 'BRONCE';
-      if (updatedPoints >= 600) newLevel = 'PLATINO';
-      else if (updatedPoints >= 300) newLevel = 'ORO';
-      else if (updatedPoints >= 100) newLevel = 'PLATA';
 
       const finalResult = await tx.clientAccount.updateMany({
         where: {
@@ -342,10 +318,8 @@ export class BatchDeliverOrdersUseCase {
           version: finalClientAccount.version
         },
         data: {
-          totalRewardPoints: updatedPoints,
           totalOrders: updatedOrders,
           totalSpent: updatedSpent,
-          rewardLevel: newLevel,
           version: { increment: 1 }
         }
       });
@@ -361,8 +335,8 @@ export class BatchDeliverOrdersUseCase {
       return {
         success: true,
         deliveredCount: orders.length,
-        totalPointsEarned,
-        newLevel
+        totalPointsEarned: 0,
+        newLevel: clientAccount.rewardLevel
       };
     });
   }

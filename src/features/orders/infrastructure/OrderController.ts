@@ -34,15 +34,30 @@ export class OrderController {
   getAll = async (req: Request, res: Response) => {
     const page = req.query.page ? parseInt(req.query.page as string) : undefined;
     const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+    const statusParam = req.query.status as string | undefined;
+
+    // "POR_PAGAR" and "PAGADO" are virtual statuses used by the payments module.
+    // They are NOT stored in the DB — they are derived from total vs sum(payments).
+    let hasPendingPayment: boolean | undefined = undefined;
+    let status: string | undefined = statusParam;
+
+    if (statusParam === 'POR_PAGAR') {
+      hasPendingPayment = true;
+      status = undefined;
+    } else if (statusParam === 'PAGADO') {
+      hasPendingPayment = false;
+      status = undefined;
+    }
 
     const filters = {
-      status: req.query.status as string,
+      status,
       clientId: req.query.clientId as string,
       brandId: req.query.brandId as string,
       startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
       endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
       search: req.query.search as string,
       onlyParents: req.query.onlyParents === 'true',
+      hasPendingPayment,
       page,
       limit
     };
@@ -122,6 +137,19 @@ export class OrderController {
         
         // Guardar datos de pago para procesamiento posterior
         paymentData = req.body.payment_data;
+
+        // Validaciones pre-transacción para split payment
+        const declaredTotal = Number(req.body.payment_data.totalAmount || 0);
+        const paymentsSum = payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+        const ordersDepositSum = (req.body.orders as any[]).reduce((sum: number, o: any) => sum + Number(o.deposit || 0), 0);
+
+        if (declaredTotal > 0 && Math.abs(paymentsSum - declaredTotal) > 0.01) {
+          return HttpResponse.badRequest(res, `La suma de los métodos de pago (${paymentsSum.toFixed(2)}) no coincide con el total declarado (${declaredTotal.toFixed(2)})`);
+        }
+
+        if (ordersDepositSum > 0 && paymentsSum > 0 && Math.abs(paymentsSum - ordersDepositSum) > 0.01) {
+          return HttpResponse.badRequest(res, `La suma de los métodos de pago (${paymentsSum.toFixed(2)}) no coincide con la suma de depósitos por pedido (${ordersDepositSum.toFixed(2)})`);
+        }
       }
 
       const dto = {

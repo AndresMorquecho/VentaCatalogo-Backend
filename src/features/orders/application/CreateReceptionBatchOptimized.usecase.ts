@@ -361,7 +361,10 @@ export class CreateReceptionBatchOptimizedUseCase {
         }
 
         // Handle credit (saldo a favor)
-        const paidAmount = order.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
+        const hasSplitPayment = order.payments.some((p: any) => p.method === 'SPLIT_PAYMENT');
+        const paidAmount = order.payments
+          .filter((p: any) => !(hasSplitPayment && p.method === 'CREDITO_CLIENTE'))
+          .reduce((sum: number, p: any) => sum + Number(p.amount), 0);
         const newPaidAmount = paidAmount + (item.abonoRecepcion || 0);
         const pendingAmount = item.finalTotal - newPaidAmount;
 

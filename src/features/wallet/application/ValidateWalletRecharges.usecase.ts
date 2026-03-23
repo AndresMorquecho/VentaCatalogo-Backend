@@ -80,22 +80,55 @@ export class ValidateWalletRechargesUseCase {
                         }
                     });
 
-                    // 4. Create FinancialRecord
-                    const finRef = recharge.reference || await this.financialRepository.generateReferenceNumber();
-                    await tx.financialRecord.create({
+                    // 4. Create FinancialRecords — two entries per recharge:
+                    //    a) INCOME: EXTERNAL → BANK_ACCOUNT (real money entering the system)
+                    //    b) INTERNAL: BANK_ACCOUNT → WALLET (internal transfer to client wallet)
+                    const groupId = crypto.randomUUID();
+                    const generatedRef = await this.financialRepository.generateReferenceNumber();
+                    const internalRef = `${generatedRef}-INT`;
+
+                    // 4a. Real income: client pays into bank account
+                    await (tx as any).financialRecord.create({
                         data: {
                             type: 'PAYMENT',
-                            referenceNumber: `REC-${recharge.id.substring(0, 5)}-${recharge.reference || 'EFECT'}`,
+                            referenceNumber: generatedRef,
+                            userReference: recharge.reference || null,
                             amount: recharge.amount,
                             date: new Date(),
                             clientId: recharge.clientId,
                             clientName: recharge.client.firstName,
                             createdBy: validatedBy,
-                            notes: recharge.notes || `Recarga de billetera validada (${recharge.paymentMethod})`,
+                            notes: `Transferencia recibida — recarga billetera (${recharge.paymentMethod})`,
                             bankAccountId: recharge.bankAccountId!,
                             source: 'MANUAL',
                             paymentMethod: recharge.paymentMethod,
                             movementType: 'INCOME',
+                            fromAccountType: 'EXTERNAL',
+                            toAccountType: 'BANK_ACCOUNT',
+                            transactionGroupId: groupId,
+                            version: 1
+                        }
+                    });
+
+                    // 4b. Internal transfer: bank account → client wallet
+                    await (tx as any).financialRecord.create({
+                        data: {
+                            type: 'PAYMENT',
+                            referenceNumber: internalRef,
+                            userReference: null,
+                            amount: recharge.amount,
+                            date: new Date(),
+                            clientId: recharge.clientId,
+                            clientName: recharge.client.firstName,
+                            createdBy: validatedBy,
+                            notes: `Recarga a billetera virtual`,
+                            bankAccountId: recharge.bankAccountId!,
+                            source: 'MANUAL',
+                            paymentMethod: recharge.paymentMethod,
+                            movementType: 'INTERNAL',
+                            fromAccountType: 'BANK_ACCOUNT',
+                            toAccountType: 'WALLET',
+                            transactionGroupId: groupId,
                             version: 1
                         }
                     });

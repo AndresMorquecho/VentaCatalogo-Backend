@@ -4,6 +4,17 @@ import { authenticate, requirePermission } from '../middleware/auth';
 
 const router = Router();
 
+router.get('/:id', authenticate, requirePermission('bank_accounts.view'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const account = await prisma.bankAccount.findUnique({ where: { id } });
+    if (!account) return res.status(404).json({ success: false, error: { message: 'Cuenta no encontrada' } });
+    return res.json({ success: true, data: { ...account, currentBalance: Number(account.currentBalance) } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/', authenticate, requirePermission('bank_accounts.view'), async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string) || 1);

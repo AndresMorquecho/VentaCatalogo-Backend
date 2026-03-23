@@ -10,6 +10,7 @@ export interface OrderFilters {
   page?: number;
   limit?: number;
   onlyParents?: boolean;
+  hasPendingPayment?: boolean; // Filter orders where total > sum(payments)
 }
 
 export interface IOrderRepository {
