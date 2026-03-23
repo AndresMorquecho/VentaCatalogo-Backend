@@ -7,6 +7,8 @@ import { UpdateExchangeStatusUseCase } from '../features/orders/application/Upda
 import { ProcessExchangeFinancialUseCase } from '../features/orders/application/ProcessExchangeFinancial.usecase';
 import { GetExchangesUseCase } from '../features/orders/application/GetExchanges.usecase';
 import { GetExchangeDetailUseCase } from '../features/orders/application/GetExchangeDetail.usecase';
+import { CreateExchangeBatchUseCase } from '../features/orders/application/CreateExchangeBatch.usecase';
+import { GetExchangeBatchesUseCase } from '../features/orders/application/GetExchangeBatches.usecase';
 
 const router = Router();
 
@@ -17,6 +19,86 @@ const updateExchangeStatus = new UpdateExchangeStatusUseCase();
 const processExchangeFinancial = new ProcessExchangeFinancialUseCase();
 const getExchanges = new GetExchangesUseCase();
 const getExchangeDetail = new GetExchangeDetailUseCase();
+const createExchangeBatch = new CreateExchangeBatchUseCase();
+const getExchangeBatches = new GetExchangeBatchesUseCase();
+
+// ── Exchange Batches (grupos de cambio) — MUST be before /:id ───────────────
+
+// GET /api/exchanges/batches — listar lotes
+router.get('/batches', authenticate, requirePermission('exchanges.view'), async (req, res, next): Promise<void> => {
+  try {
+    const { status, dateFrom, dateTo } = req.query;
+    const data = await getExchangeBatches.execute({
+      status: status as string | undefined,
+      dateFrom: dateFrom as string | undefined,
+      dateTo: dateTo as string | undefined,
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/exchanges/batches — crear lote
+router.post('/batches', authenticate, requirePermission('exchanges.manage'), async (req: any, res, next): Promise<void> => {
+  try {
+    const body = req.body;
+    const items = (body.items || []).map((item: any) => ({
+      orderId: item.orderId || item.order_id,
+      notes: item.notes,
+    }));
+    const data = await createExchangeBatch.execute({
+      trackingGuide: body.trackingGuide || body.tracking_guide,
+      notes: body.notes,
+      createdByName: req.user?.username || undefined,
+      items,
+    });
+    res.status(201).json({ success: true, data });
+  } catch (error: any) {
+    const clientErrors = [
+      'El lote debe tener al menos un pedido',
+      'Uno o más pedidos no fueron encontrados',
+    ];
+    if (clientErrors.includes(error.message) || error.message?.startsWith('El pedido')) {
+      res.status(400).json({ success: false, error: { message: error.message } });
+      return;
+    }
+    next(error);
+  }
+});
+
+// PATCH /api/exchanges/batches/:id/status — cambiar estado del lote
+router.patch('/batches/:id/status', authenticate, requirePermission('exchanges.manage'), async (req, res, next): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { newStatus } = req.body;
+    const validStatuses = ['PENDING', 'SENT', 'RECEIVED'];
+    if (!validStatuses.includes(newStatus)) {
+      res.status(400).json({ success: false, error: { message: 'Estado no válido. Use: PENDING, SENT o RECEIVED' } });
+      return;
+    }
+    const updateData: any = { status: newStatus, updatedAt: new Date() };
+    if (newStatus === 'SENT') updateData.sentAt = new Date();
+    if (newStatus === 'RECEIVED') updateData.receivedAt = new Date();
+
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+    const batch = await prisma.exchangeBatch.update({
+      where: { id },
+      data: updateData,
+      include: { items: true },
+    });
+    res.json({ success: true, data: batch });
+  } catch (error: any) {
+    if (error.code === 'P2025') {
+      res.status(404).json({ success: false, error: { message: 'Lote no encontrado' } });
+      return;
+    }
+    next(error);
+  }
+});
+
+// ── OrderExchange routes ─────────────────────────────────────────────────────
 
 // POST /api/exchanges — crear exchange
 router.post('/', authenticate, requirePermission('exchanges.manage'), async (req, res, next): Promise<void> => {

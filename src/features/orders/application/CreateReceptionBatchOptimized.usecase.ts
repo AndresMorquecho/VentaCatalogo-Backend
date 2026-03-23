@@ -12,7 +12,8 @@ export interface BatchReceptionItemDTO {
   reference?: string;
   documentType?: string;
   entryDate?: string;
-  creditDistribution?: CreditDistribution; // NUEVO: Para distribución de saldos a favor
+  creditDistribution?: CreditDistribution;
+  fromExchangeBatch?: boolean; // Allow ENTREGADO orders from exchange batches
 }
 
 export interface CreditDistribution {
@@ -214,8 +215,10 @@ export class CreateReceptionBatchOptimizedUseCase {
             throw new Error(`El pedido ${order.receiptNumber} ya fue entregado y no puede ser editado`);
           }
         } else {
-          // Create mode: Only allow POR_RECIBIR
-          if (order.status !== 'POR_RECIBIR') {
+          // Create mode: Allow POR_RECIBIR, or ENTREGADO if coming from exchange batch
+          const itemDto = dto.items.find(i => i.orderId === order.id);
+          const isFromExchange = itemDto?.fromExchangeBatch === true;
+          if (order.status !== 'POR_RECIBIR' && !(isFromExchange && order.status === 'ENTREGADO')) {
             throw new Error(`El pedido ${order.receiptNumber} ya fue recibido anteriormente`);
           }
         }

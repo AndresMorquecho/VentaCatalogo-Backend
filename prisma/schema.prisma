@@ -183,6 +183,7 @@ model Order {
   receptionBatch       ReceptionBatch?     @relation(fields: [receptionBatchId], references: [id])
   rewardApplications   RewardApplication?
   exchangeItems        OrderExchangeItem[]
+  exchangeBatchItems   ExchangeBatchItem[]
 
   @@index([clientId])
   @@index([brandId])
@@ -557,6 +558,44 @@ model CatalogDelivery {
 // ============================================================================
 // ORDER EXCHANGES MODULE
 // ============================================================================
+
+model ExchangeBatch {
+  id             String               @id @default(uuid())
+  batchNumber    String               @unique @map("batch_number")
+  trackingGuide  String?              @map("tracking_guide")
+  status         String               @default("PENDING") // PENDING | SENT | RECEIVED
+  notes          String?
+  createdByName  String?              @map("created_by_name")
+  sentAt         DateTime?            @map("sent_at")
+  receivedAt     DateTime?            @map("received_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  items          ExchangeBatchItem[]
+
+  @@index([status])
+  @@map("exchange_batches")
+}
+
+model ExchangeBatchItem {
+  id            String        @id @default(uuid())
+  batchId       String        @map("batch_id")
+  orderId       String        @map("order_id")
+  clientId      String        @map("client_id")
+  clientName    String        @map("client_name")
+  receiptNumber String        @map("receipt_number")
+  orderTotal    Decimal       @map("order_total") @db.Decimal(10, 2)
+  invoiceTotal  Decimal?      @map("invoice_total") @db.Decimal(10, 2)
+  paidAmount    Decimal       @default(0) @map("paid_amount") @db.Decimal(10, 2)
+  pendingAmount Decimal       @default(0) @map("pending_amount") @db.Decimal(10, 2)
+  notes         String?
+  createdAt     DateTime      @default(now()) @map("created_at")
+  batch         ExchangeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  order         Order         @relation(fields: [orderId], references: [id])
+
+  @@index([batchId])
+  @@index([orderId])
+  @@map("exchange_batch_items")
+}
 
 model OrderExchange {
   id             String              @id @default(uuid())
