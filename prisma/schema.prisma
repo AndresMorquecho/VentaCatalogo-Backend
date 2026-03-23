@@ -574,11 +574,12 @@ model ExchangeBatch {
   id            String              @id @default(uuid())
   batchNumber   String              @unique @map("batch_number")
   trackingGuide String?             @map("tracking_guide")
-  status        String              @default("PENDING")
+  status        String              @default("ENVIADO")
   notes         String?
   createdByName String?             @map("created_by_name")
   sentAt        DateTime?           @map("sent_at")
   receivedAt    DateTime?           @map("received_at")
+  deliveredAt   DateTime?           @map("delivered_at")
   createdAt     DateTime            @default(now()) @map("created_at")
   updatedAt     DateTime            @updatedAt @map("updated_at")
   items         ExchangeBatchItem[]

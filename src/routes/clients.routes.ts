@@ -185,9 +185,9 @@ router.get('/', authenticate, requirePermission('clients.view'), async (req, res
       return res.json({ success: true, data: enrichedClients, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
     }
 
-    res.json({ success: true, data: clients, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+    return res.json({ success: true, data: clients, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 

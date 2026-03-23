@@ -11,7 +11,7 @@ router.get('/:id', authenticate, requirePermission('bank_accounts.view'), async 
     if (!account) return res.status(404).json({ success: false, error: { message: 'Cuenta no encontrada' } });
     return res.json({ success: true, data: { ...account, currentBalance: Number(account.currentBalance) } });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 

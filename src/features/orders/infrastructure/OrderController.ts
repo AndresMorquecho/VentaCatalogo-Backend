@@ -211,6 +211,12 @@ export class OrderController {
       }
 
       // Convert snake_case to camelCase and map deposit to initialPayment
+      // If bank_account_id is not in the root, try to get it from the first payment
+      const bankAccountId = req.body.bank_account_id || 
+                           (req.body.payments && req.body.payments[0] ? 
+                            (req.body.payments[0].bank_account_id || req.body.payments[0].bankAccountId) : 
+                            null);
+      
       const dto = {
         receiptNumber: req.body.receipt_number, // Use manual receipt number if provided
         salesChannel: req.body.sales_channel,
@@ -219,7 +225,7 @@ export class OrderController {
         brandName: req.body.brand_name,
         total: Number(req.body.total),
         paymentMethod: req.body.payment_method,
-        bankAccountId: req.body.bank_account_id || null,
+        bankAccountId: bankAccountId,
         transactionDate: new Date(req.body.transaction_date),
         possibleDeliveryDate: new Date(req.body.possible_delivery_date),
         clientId: req.body.client_id,
@@ -241,7 +247,13 @@ export class OrderController {
           reference: req.body.transaction_reference || ''
         },
         creditAmount: Number(req.body.credit_to_use ?? req.body.creditToUse ?? 0),
-        payments: req.body.payments,
+        payments: req.body.payments?.map((p: any) => ({
+          amount: p.amount,
+          method: p.method,
+          bankAccountId: p.bank_account_id || p.bankAccountId,
+          reference: p.reference,
+          notes: p.notes
+        })),
         parentOrderId: req.body.parentOrderId || req.body.parent_order_id,
         orderNumber: req.body.orderNumber || req.body.order_number
       };

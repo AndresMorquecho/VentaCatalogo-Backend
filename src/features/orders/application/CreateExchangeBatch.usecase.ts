@@ -1,4 +1,5 @@
 import { prisma } from '../../../lib/prisma';
+import { ValidationService } from './ValidationService';
 
 export interface ExchangeBatchItemInput {
   orderId: string;
@@ -39,12 +40,22 @@ async function generateOrderNumber(tx: any): Promise<string> {
 }
 
 export class CreateExchangeBatchUseCase {
+  private validationService: ValidationService;
+
+  constructor() {
+    this.validationService = new ValidationService();
+  }
+
   async execute(dto: CreateExchangeBatchDTO) {
     if (!dto.items || dto.items.length === 0) {
       throw new Error('El lote debe tener al menos un pedido');
     }
 
     const orderIds = dto.items.map((i) => i.orderId);
+
+    // Task 4.1: Validate orders using ValidationService
+    await this.validationService.validateOrdersForBatch(orderIds);
+
     const orders = await prisma.order.findMany({
       where: { id: { in: orderIds } },
       include: { 
@@ -57,23 +68,18 @@ export class CreateExchangeBatchUseCase {
       throw new Error('Uno o más pedidos no fueron encontrados');
     }
 
-    for (const order of orders) {
-      if (order.status !== 'ENTREGADO') {
-        throw new Error(`El pedido ${order.receiptNumber} no está en estado ENTREGADO`);
-      }
-    }
-
     const batchNumber = generateBatchNumber();
     console.log(`[CreateExchangeBatch] Creating batch ${batchNumber} with ${orders.length} orders`);
 
     return await prisma.$transaction(async (tx) => {
+      // Task 4.2: Create batch with status ENVIADO and sentAt timestamp
       const batch = await tx.exchangeBatch.create({
         data: {
           batchNumber,
           trackingGuide: dto.trackingGuide || null,
           notes: dto.notes || null,
           createdByName: dto.createdByName || null,
-          status: 'SENT',
+          status: 'ENVIADO',
           sentAt: new Date(),
           items: {
             create: orders.map((order) => {
@@ -101,7 +107,7 @@ export class CreateExchangeBatchUseCase {
       for (const order of orders) {
         console.log(`[CreateExchangeBatch] Processing order ${order.receiptNumber} (${order.id})`);
         
-        // 1. Update original order status
+        // Task 4.3: Update original order status to ENVIADO_A_CAMBIO within transaction
         await tx.order.update({
           where: { id: order.id },
           data: { 

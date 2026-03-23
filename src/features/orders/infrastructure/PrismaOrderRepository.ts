@@ -7,7 +7,16 @@ export class PrismaOrderRepository implements IOrderRepository {
   async findAll(filters: OrderFilters): Promise<{ data: Order[]; total: number }> {
     const where: Prisma.OrderWhereInput = {};
 
-    if (filters.status) where.status = filters.status;
+    // REGLA DE NEGOCIO: Las órdenes tipo CATALOGO no deben aparecer en la gestión de pedidos
+    // Solo deben reflejarse en transacciones financieras, cierre de caja y bancos
+    // A menos que se solicite explícitamente con el filtro type: 'CATALOGO'
+    if (!filters.type || filters.type !== 'CATALOGO') {
+      where.type = { not: 'CATALOGO' };
+    }
+
+    if (filters.status) {
+      where.status = filters.status;
+    }
     if (filters.clientId) where.clientId = filters.clientId;
     if (filters.brandId) where.brandId = filters.brandId;
     if (filters.onlyParents) {
