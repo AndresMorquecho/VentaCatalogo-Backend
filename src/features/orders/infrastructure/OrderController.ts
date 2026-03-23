@@ -56,6 +56,7 @@ export class OrderController {
       startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
       endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
       search: req.query.search as string,
+      type: req.query.type as string,
       onlyParents: req.query.onlyParents === 'true',
       hasPendingPayment,
       page,

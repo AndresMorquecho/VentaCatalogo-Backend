@@ -80,8 +80,7 @@ router.patch('/batches/:id/status', authenticate, requirePermission('exchanges.m
       return;
     }
 
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const { prisma } = await import('../lib/prisma');
 
     // Cargar el batch actual para validar la transición
     const current = await prisma.exchangeBatch.findUnique({ where: { id } });

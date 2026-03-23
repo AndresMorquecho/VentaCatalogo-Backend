@@ -580,6 +580,21 @@ export class CreateReceptionBatchOptimizedUseCase {
           where: { id: update.id },
           data: update
         });
+
+        // If it's an exchange order, update the source exchange item status
+        const order = ordersMap.get(update.id);
+        const exchangeItemId = (order as any).exchangeItemId;
+        if (order && exchangeItemId) {
+          const exchangeCredit = order.payments.find((p: any) => p.method === 'EXCHANGE_CREDIT')?.amount || 0;
+          await tx.orderExchangeItem.update({
+            where: { id: exchangeItemId },
+            data: { 
+              status: 'RECEIVED_FROM_SUPPLIER',
+              newValue: update.realInvoiceTotal,
+              differenceValue: Number(update.realInvoiceTotal) - Number(exchangeCredit)
+            }
+          });
+        }
       }
 
       // Bulk insert inventory movements

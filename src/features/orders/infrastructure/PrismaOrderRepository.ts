@@ -13,6 +13,9 @@ export class PrismaOrderRepository implements IOrderRepository {
     if (filters.onlyParents) {
       where.parentOrderId = null;
     }
+    if (filters.type) {
+      where.type = filters.type;
+    }
     if (filters.search) {
       where.OR = [
         { receiptNumber: { contains: filters.search, mode: 'insensitive' } },
@@ -319,6 +322,7 @@ export class PrismaOrderRepository implements IOrderRepository {
         deliveredByName: raw.deliveredByName || undefined,
         parentOrderId: raw.parentOrderId || undefined,
         orderNumber: raw.orderNumber || undefined,
+        exchangeItemId: raw.exchangeItemId || undefined,
         items: raw.items.map((item: any) => ({
           id: item.id,
           productName: item.productName,
@@ -404,6 +408,7 @@ export class PrismaOrderRepository implements IOrderRepository {
       deliveredByName: json.deliveredByName,
       parentOrderId: json.parentOrderId,
       orderNumber: json.orderNumber,
+      exchangeItemId: json.exchangeItemId,
       createdAt: json.createdAt,
       updatedAt: json.updatedAt,
       version: json.version

@@ -119,7 +119,7 @@ export class RegisterOrderPaymentUseCase {
                     validateBankAccountBalance(
                         Number(bankAccount.currentBalance),
                         dto.amount,
-                        dto.bankAccountId,
+                        dto.bankAccountId!,
                         bankAccount.name
                     );
 

@@ -309,7 +309,7 @@ export class DeliverOrderUseCase {
         const safeDivisor = isNaN(divisor) || divisor <= 0 ? 10 : divisor;
 
         // Se calculan puntos basados en el monto pagado
-        pointsEarned = Math.floor(newPaidAmount / safeDivisor) * rule.pointsValue;
+        pointsEarned = Math.floor(newPaidAmount / safeDivisor) * (rule.pointsValue || 1);
       }
 
       // Obtener o crear cuenta del cliente

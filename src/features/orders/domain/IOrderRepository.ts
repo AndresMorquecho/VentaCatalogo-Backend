@@ -7,6 +7,7 @@ export interface OrderFilters {
   startDate?: Date;
   endDate?: Date;
   search?: string;
+  type?: string;
   page?: number;
   limit?: number;
   onlyParents?: boolean;

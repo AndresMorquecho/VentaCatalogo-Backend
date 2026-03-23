@@ -30,6 +30,7 @@ export interface OrderProps {
   payments: OrderPayment[];
   childOrders?: Order[];
   childOrdersCount?: number;
+  exchangeItemId?: string;
   createdAt: Date;
   updatedAt: Date;
   version: number;

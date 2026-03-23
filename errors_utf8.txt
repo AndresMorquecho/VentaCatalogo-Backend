@@ -1,5 +1,0 @@
-﻿src/features/cash-closures/infrastructure/CashClosureController.ts(69,45): error TS2339: Property 'email' does not exist on type '{ id: string; username: string; role: string; name?: string | undefined; permissions?: string[] | undefined; }'.
-src/routes/bankAccounts.routes.ts(47,75): error TS7030: Not all code paths return a value.
-src/routes/clients.routes.ts(138,74): error TS7030: Not all code paths return a value.
-src/routes/payments.routes.ts(52,21): error TS2339: Property 'email' does not exist on type '{ id: string; username: string; role: string; name?: string | undefined; permissions?: string[] | undefined; }'.
-src/routes/payments.routes.ts(114,21): error TS2339: Property 'email' does not exist on type '{ id: string; username: string; role: string; name?: string | undefined; permissions?: string[] | undefined; }'.

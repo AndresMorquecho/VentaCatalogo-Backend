@@ -93,7 +93,7 @@ export class PaymentValidationService {
         isValid: false,
         error: 'Unable to verify wallet balance',
         code: 'WALLET_VALIDATION_ERROR',
-        details: { originalError: error.message }
+        details: { originalError: error instanceof Error ? error.message : String(error) }
       };
     }
   }
@@ -138,7 +138,7 @@ export class PaymentValidationService {
         isValid: false,
         error: 'Unable to verify bank accounts',
         code: 'BANK_VALIDATION_ERROR',
-        details: { originalError: error.message }
+        details: { originalError: error instanceof Error ? error.message : String(error) }
       };
     }
   }
@@ -228,7 +228,7 @@ export class PaymentValidationService {
         isValid: false,
         error: 'Unable to verify request idempotency',
         code: 'IDEMPOTENCY_VALIDATION_ERROR',
-        details: { originalError: error.message }
+        details: { originalError: error instanceof Error ? error.message : String(error) }
       };
     }
   }
@@ -286,7 +286,7 @@ export class PaymentValidationService {
     if (!defaultAccount) {
       throw new FinancialIntegrityError(
         `No default bank account found for payment method: ${paymentMethod}`,
-        'NO_DEFAULT_BANK_ACCOUNT'
+        'OTHER'
       );
     }
     

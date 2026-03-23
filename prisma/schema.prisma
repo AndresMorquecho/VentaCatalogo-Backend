@@ -40,10 +40,10 @@ model Client {
   clientAccount        ClientAccount?
   referredBy           Client?             @relation("ClientReferral", fields: [referredById], references: [id])
   referrals            Client[]            @relation("ClientReferral")
-  exchanges            OrderExchange[]
   financialRecords     FinancialRecord[]
   inventoryMovements   InventoryMovement[]
   rewardRedemptions    LoyaltyRedemption[]
+  exchanges            OrderExchange[]
   orderReceipts        OrderReceipt[]
   orders               Order[]
   walletRecharges      WalletRecharge[]
@@ -167,10 +167,14 @@ model Order {
   packingTotal         Decimal?            @map("packing_total") @db.Decimal(10, 2)
   receptionBatchId     String?             @map("reception_batch_id")
   loyaltyRedemptionId  String?             @map("loyalty_redemption_id")
+  exchangeItemId       String?             @unique @map("exchange_item_id")
   calls                Call[]
   catalogDelivery      CatalogDelivery?    @relation("CatalogOrder")
+  exchangeBatchItems   ExchangeBatchItem[]
   financialRecords     FinancialRecord[]
   inventoryMovements   InventoryMovement[]
+  exchangeItems        OrderExchangeItem[] @relation("OriginalOrderExchanges")
+  exchangeItem         OrderExchangeItem?  @relation("NewOrderExchange", fields: [exchangeItemId], references: [id])
   items                OrderItem[]
   payments             OrderPayment[]
   bankAccount          BankAccount?        @relation(fields: [bankAccountId], references: [id])
@@ -182,8 +186,6 @@ model Order {
   receipt              OrderReceipt?       @relation(fields: [receiptId], references: [id])
   receptionBatch       ReceptionBatch?     @relation(fields: [receptionBatchId], references: [id])
   rewardApplications   RewardApplication?
-  exchangeItems        OrderExchangeItem[]
-  exchangeBatchItems   ExchangeBatchItem[]
 
   @@index([clientId])
   @@index([brandId])
@@ -213,47 +215,50 @@ model OrderItem {
 }
 
 model OrderPayment {
-  id               String            @id @default(uuid())
-  orderId          String            @map("order_id")
-  amount           Decimal           @db.Decimal(10, 2)
-  method           String
-  reference        String?
-  description      String?
-  createdAt        DateTime          @default(now()) @map("created_at")
-  receiptNumber    String?           @map("receipt_number")
-  financialRecords FinancialRecord[]
-  order            Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id                  String            @id @default(uuid())
+  orderId             String            @map("order_id")
+  amount              Decimal           @db.Decimal(10, 2)
+  method              String
+  reference           String?
+  description         String?
+  createdAt           DateTime          @default(now()) @map("created_at")
+  receiptNumber       String?           @map("receipt_number")
+  processingRequestId String?           @map("processing_request_id")
+  financialRecords    FinancialRecord[]
+  order               Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  processingRequest   ProcessingRequest? @relation(fields: [processingRequestId], references: [id])
 
   @@index([orderId])
+  @@index([processingRequestId])
   @@map("order_payments")
 }
 
 model FinancialRecord {
-  id                String       @id @default(uuid())
-  type              String
-  referenceNumber   String       @unique @map("reference_number")
-  userReference     String?      @map("user_reference")
-  amount            Decimal      @db.Decimal(10, 2)
-  date              DateTime
-  clientId          String       @map("client_id")
-  clientName        String       @map("client_name")
-  orderId           String?      @map("order_id")
-  createdBy         String       @map("created_by")
-  notes             String?
-  bankAccountId     String       @map("bank_account_id")
-  source            String
-  paymentMethod     String?      @map("payment_method")
-  movementType      String       @map("movement_type")
-  fromAccountType   String?      @map("from_account_type")
-  toAccountType     String?      @map("to_account_type")
-  transactionGroupId String?     @map("transaction_group_id")
-  createdAt         DateTime     @default(now()) @map("created_at")
-  version           Int          @default(1)
-  orderPaymentId    String?      @map("order_payment_id")
-  bankAccount     BankAccount  @relation(fields: [bankAccountId], references: [id])
-  client          Client       @relation(fields: [clientId], references: [id])
-  order           Order?       @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  orderPayment    OrderPayment? @relation(fields: [orderPaymentId], references: [id])
+  id                 String        @id @default(uuid())
+  type               String
+  referenceNumber    String        @unique @map("reference_number")
+  amount             Decimal       @db.Decimal(10, 2)
+  date               DateTime
+  clientId           String        @map("client_id")
+  clientName         String        @map("client_name")
+  orderId            String?       @map("order_id")
+  createdBy          String        @map("created_by")
+  notes              String?
+  bankAccountId      String        @map("bank_account_id")
+  source             String
+  paymentMethod      String?       @map("payment_method")
+  movementType       String        @map("movement_type")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  version            Int           @default(1)
+  orderPaymentId     String?       @map("order_payment_id")
+  userReference      String?       @map("user_reference")
+  fromAccountType    String?       @map("from_account_type")
+  toAccountType      String?       @map("to_account_type")
+  transactionGroupId String?       @map("transaction_group_id")
+  bankAccount        BankAccount   @relation(fields: [bankAccountId], references: [id])
+  client             Client        @relation(fields: [clientId], references: [id])
+  order              Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderPayment       OrderPayment? @relation(fields: [orderPaymentId], references: [id])
 
   @@index([clientId])
   @@index([orderId])
@@ -426,26 +431,38 @@ model Role {
   @@map("roles")
 }
 
-// ============================================================================
-// LOYALTY MODULE CORE
-// ============================================================================
-
 model LoyaltyRule {
-  id              String             @id @default(uuid())
-  name            String
-  description     String?
-  type            String
-  targetValue     Decimal            @map("target_value") @db.Decimal(10, 2)
-  resetDays       Int?               @map("reset_days")
-  isActive        Boolean            @default(true) @map("is_active")
-  createdAt       DateTime           @default(now()) @map("created_at")
-  updatedAt       DateTime           @updatedAt @map("updated_at")
-  prizeId         String?            @map("prize_id")
-  prize           LoyaltyPrize?      @relation(fields: [prizeId], references: [id])
-  brands          LoyaltyRuleBrand[]
-  redemptions     LoyaltyRedemption[]
+  id          String              @id @default(uuid())
+  name        String
+  type        String
+  isActive    Boolean             @default(true) @map("is_active")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+  description String?
+  prizeId     String?             @map("prize_id")
+  resetDays   Int?                @map("reset_days")
+  targetValue Decimal             @map("target_value") @db.Decimal(10, 2)
+  pointsValue Int?                @map("points_value")
+  condition   String?
+  redemptions LoyaltyRedemption[]
+  brands      LoyaltyRuleBrand[]
+  prize       LoyaltyPrize?       @relation(fields: [prizeId], references: [id])
 
   @@map("loyalty_rules")
+}
+
+model ProcessingRequest {
+  id          String         @id @default(uuid())
+  requestId   String         @unique @map("request_id")
+  payload     Json
+  result      Json?
+  status      String
+  error       String?
+  createdAt   DateTime       @default(now()) @map("created_at")
+  completedAt DateTime?      @map("completed_at")
+  payments    OrderPayment[]
+
+  @@map("processing_requests")
 }
 
 model LoyaltyRuleBrand {
@@ -467,8 +484,8 @@ model LoyaltyPrize {
   isActive       Boolean             @default(true) @map("is_active")
   createdAt      DateTime            @default(now()) @map("created_at")
   updatedAt      DateTime            @updatedAt @map("updated_at")
-  rules          LoyaltyRule[]
   redemptions    LoyaltyRedemption[]
+  rules          LoyaltyRule[]
 
   @@map("loyalty_prizes")
 }
@@ -477,15 +494,15 @@ model LoyaltyRedemption {
   id             String       @id @default(uuid())
   clientId       String       @map("client_id")
   clientName     String       @map("client_name")
-  ruleId         String?      @map("rule_id")
   prizeId        String       @map("prize_id")
   prizeName      String       @map("prize_name")
-  valueClaimed   Decimal?     @map("value_claimed") @db.Decimal(10, 2)
   status         String       @default("COMPLETADO")
   date           DateTime     @default(now()) @map("date")
   authorId       String?      @map("author_id")
+  ruleId         String?      @map("rule_id")
+  valueClaimed   Decimal?     @map("value_claimed") @db.Decimal(10, 2)
   author         User?        @relation("RedemptionAuthor", fields: [authorId], references: [id])
-  client         Client?      @relation(fields: [clientId], references: [id])
+  client         Client       @relation(fields: [clientId], references: [id])
   prize          LoyaltyPrize @relation(fields: [prizeId], references: [id])
   rule           LoyaltyRule? @relation(fields: [ruleId], references: [id])
   consumedOrders Order[]
@@ -553,24 +570,18 @@ model CatalogDelivery {
   @@map("catalog_deliveries")
 }
 
-
-
-// ============================================================================
-// ORDER EXCHANGES MODULE
-// ============================================================================
-
 model ExchangeBatch {
-  id             String               @id @default(uuid())
-  batchNumber    String               @unique @map("batch_number")
-  trackingGuide  String?              @map("tracking_guide")
-  status         String               @default("PENDING") // PENDING | SENT | RECEIVED
-  notes          String?
-  createdByName  String?              @map("created_by_name")
-  sentAt         DateTime?            @map("sent_at")
-  receivedAt     DateTime?            @map("received_at")
-  createdAt      DateTime             @default(now()) @map("created_at")
-  updatedAt      DateTime             @updatedAt @map("updated_at")
-  items          ExchangeBatchItem[]
+  id            String              @id @default(uuid())
+  batchNumber   String              @unique @map("batch_number")
+  trackingGuide String?             @map("tracking_guide")
+  status        String              @default("PENDING")
+  notes         String?
+  createdByName String?             @map("created_by_name")
+  sentAt        DateTime?           @map("sent_at")
+  receivedAt    DateTime?           @map("received_at")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+  items         ExchangeBatchItem[]
 
   @@index([status])
   @@map("exchange_batches")
@@ -588,8 +599,8 @@ model ExchangeBatchItem {
   paidAmount         Decimal       @default(0) @map("paid_amount") @db.Decimal(10, 2)
   pendingAmount      Decimal       @default(0) @map("pending_amount") @db.Decimal(10, 2)
   notes              String?
-  financialProcessed Boolean       @default(false) @map("financial_processed")
   createdAt          DateTime      @default(now()) @map("created_at")
+  financialProcessed Boolean       @default(false) @map("financial_processed")
   batch              ExchangeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
   order              Order         @relation(fields: [orderId], references: [id])
 
@@ -610,8 +621,8 @@ model OrderExchange {
   receivedAt     DateTime?           @map("received_at")
   createdAt      DateTime            @default(now()) @map("created_at")
   updatedAt      DateTime            @updatedAt @map("updated_at")
-  client         Client              @relation(fields: [clientId], references: [id])
   items          OrderExchangeItem[]
+  client         Client              @relation(fields: [clientId], references: [id])
 
   @@index([clientId])
   @@index([status])
@@ -631,7 +642,8 @@ model OrderExchangeItem {
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
   exchange           OrderExchange @relation(fields: [exchangeId], references: [id], onDelete: Cascade)
-  order              Order         @relation(fields: [originalOrderId], references: [id])
+  originalOrder      Order         @relation("OriginalOrderExchanges", fields: [originalOrderId], references: [id])
+  newOrder           Order?        @relation("NewOrderExchange")
 
   @@index([exchangeId])
   @@index([originalOrderId])
