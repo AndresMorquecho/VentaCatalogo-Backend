@@ -60,7 +60,8 @@ export class CreateExchangeBatchUseCase {
         trackingGuide: dto.trackingGuide || null,
         notes: dto.notes || null,
         createdByName: dto.createdByName || null,
-        status: 'PENDING',
+        status: 'SENT',
+        sentAt: new Date(),
         items: {
           create: orders.map((order) => {
             const paid = calcPaid(order.payments);

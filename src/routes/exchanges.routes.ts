@@ -9,6 +9,7 @@ import { GetExchangesUseCase } from '../features/orders/application/GetExchanges
 import { GetExchangeDetailUseCase } from '../features/orders/application/GetExchangeDetail.usecase';
 import { CreateExchangeBatchUseCase } from '../features/orders/application/CreateExchangeBatch.usecase';
 import { GetExchangeBatchesUseCase } from '../features/orders/application/GetExchangeBatches.usecase';
+import { ReceiveExchangeBatchUseCase } from '../features/orders/application/ReceiveExchangeBatch.usecase';
 
 const router = Router();
 
@@ -21,6 +22,7 @@ const getExchanges = new GetExchangesUseCase();
 const getExchangeDetail = new GetExchangeDetailUseCase();
 const createExchangeBatch = new CreateExchangeBatchUseCase();
 const getExchangeBatches = new GetExchangeBatchesUseCase();
+const receiveExchangeBatch = new ReceiveExchangeBatchUseCase();
 
 // ── Exchange Batches (grupos de cambio) — MUST be before /:id ───────────────
 
@@ -77,12 +79,31 @@ router.patch('/batches/:id/status', authenticate, requirePermission('exchanges.m
       res.status(400).json({ success: false, error: { message: 'Estado no válido. Use: PENDING, SENT o RECEIVED' } });
       return;
     }
+
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    // Cargar el batch actual para validar la transición
+    const current = await prisma.exchangeBatch.findUnique({ where: { id } });
+    if (!current) {
+      res.status(404).json({ success: false, error: { message: 'Lote no encontrado' } });
+      return;
+    }
+
+    // Transiciones válidas: PENDING→SENT, SENT→RECEIVED
+    const validTransitions: Record<string, string> = {
+      PENDING: 'SENT',
+      SENT: 'RECEIVED',
+    };
+    if (validTransitions[current.status] !== newStatus) {
+      res.status(400).json({ success: false, error: { message: 'Transición de estado no válida para el lote' } });
+      return;
+    }
+
     const updateData: any = { status: newStatus, updatedAt: new Date() };
     if (newStatus === 'SENT') updateData.sentAt = new Date();
     if (newStatus === 'RECEIVED') updateData.receivedAt = new Date();
 
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
     const batch = await prisma.exchangeBatch.update({
       where: { id },
       data: updateData,
@@ -92,6 +113,39 @@ router.patch('/batches/:id/status', authenticate, requirePermission('exchanges.m
   } catch (error: any) {
     if (error.code === 'P2025') {
       res.status(404).json({ success: false, error: { message: 'Lote no encontrado' } });
+      return;
+    }
+    next(error);
+  }
+});
+
+// POST /api/exchanges/batches/:id/receive — receptar lote con lógica financiera
+router.post('/batches/:id/receive', authenticate, requirePermission('exchanges.manage'), async (req: any, res, next): Promise<void> => {
+  try {
+    const items = (req.body.items || []).map((item: any) => ({
+      batchItemId: item.batchItemId,
+      orderId: item.orderId,
+      newInvoiceValue: Number(item.newInvoiceValue),
+      creditDestination: item.creditDestination,
+      bankAccountId: item.bankAccountId,
+    }));
+
+    const data = await receiveExchangeBatch.execute({
+      batchId: req.params.id,
+      items,
+      receivedBy: req.user?.id || 'system',
+    });
+    res.json({ success: true, data });
+  } catch (error: any) {
+    const clientErrors = [
+      'Lote no encontrado',
+      'Solo se pueden receptar lotes en estado Enviado',
+      'El procesamiento financiero de este pedido ya fue ejecutado',
+      'Se requiere una cuenta bancaria para registrar la devolución en efectivo',
+    ];
+    if (clientErrors.includes(error.message) || error.message?.startsWith('El ítem')) {
+      const status = error.message === 'Lote no encontrado' ? 404 : 400;
+      res.status(status).json({ success: false, error: { message: error.message } });
       return;
     }
     next(error);

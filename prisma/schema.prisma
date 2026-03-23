@@ -577,20 +577,21 @@ model ExchangeBatch {
 }
 
 model ExchangeBatchItem {
-  id            String        @id @default(uuid())
-  batchId       String        @map("batch_id")
-  orderId       String        @map("order_id")
-  clientId      String        @map("client_id")
-  clientName    String        @map("client_name")
-  receiptNumber String        @map("receipt_number")
-  orderTotal    Decimal       @map("order_total") @db.Decimal(10, 2)
-  invoiceTotal  Decimal?      @map("invoice_total") @db.Decimal(10, 2)
-  paidAmount    Decimal       @default(0) @map("paid_amount") @db.Decimal(10, 2)
-  pendingAmount Decimal       @default(0) @map("pending_amount") @db.Decimal(10, 2)
-  notes         String?
-  createdAt     DateTime      @default(now()) @map("created_at")
-  batch         ExchangeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  order         Order         @relation(fields: [orderId], references: [id])
+  id                 String        @id @default(uuid())
+  batchId            String        @map("batch_id")
+  orderId            String        @map("order_id")
+  clientId           String        @map("client_id")
+  clientName         String        @map("client_name")
+  receiptNumber      String        @map("receipt_number")
+  orderTotal         Decimal       @map("order_total") @db.Decimal(10, 2)
+  invoiceTotal       Decimal?      @map("invoice_total") @db.Decimal(10, 2)
+  paidAmount         Decimal       @default(0) @map("paid_amount") @db.Decimal(10, 2)
+  pendingAmount      Decimal       @default(0) @map("pending_amount") @db.Decimal(10, 2)
+  notes              String?
+  financialProcessed Boolean       @default(false) @map("financial_processed")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  batch              ExchangeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  order              Order         @relation(fields: [orderId], references: [id])
 
   @@index([batchId])
   @@index([orderId])
