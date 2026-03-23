@@ -677,6 +677,7 @@ export class OrderController {
           reference: item.referenceNumber || item.reference_number || undefined,
           documentType: item.documentType || item.document_type,
           entryDate: item.entryDate || item.entry_date,
+          fromExchangeBatch: item.fromExchangeBatch || item.from_exchange_batch || false,
           creditDistribution: (() => {
             const cd = item.creditDistribution || item.credit_distribution;
             if (!cd) return undefined;
