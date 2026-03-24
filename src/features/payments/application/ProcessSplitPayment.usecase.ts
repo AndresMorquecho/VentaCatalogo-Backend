@@ -201,6 +201,7 @@ export class ProcessSplitPaymentUseCase {
                 clientName: ordersValidation.data![0].clientName,
                 clientDocument: ordersValidation.data![0].client?.identificationNumber ?? null,
                 orderId: dto.orders.length === 1 ? dto.orders[0].orderId : null,
+                notes: `Abono | ` + ordersValidation.data!.map((o: any) => `Orden: ${o.receiptNumber} | Pedido: ${o.orderNumber || 'N/A'} | Marca: ${o.brandName || o.brand?.name || 'Varios'}`).join(', '),
                 createdBy: dto.createdBy,
                 bankAccountId,
                 paymentMethod: paymentAllocation.method,

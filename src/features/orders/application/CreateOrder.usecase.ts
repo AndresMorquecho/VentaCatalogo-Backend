@@ -131,6 +131,10 @@ export class CreateOrderUseCase {
 
 
       // Execute everything in a transaction for atomicity
+      const orderReceiptNumber = receiptNumber || await this.orderRepository.generateReceiptNumber();
+      const actualOrderNumber = dto.orderNumber || await this.orderRepository.generateOrderNumber();
+      const clientDoc = client?.identificationNumber || 'S/N';
+
       const savedOrder = await prisma.$transaction(async (tx) => {
         // ✅ CORRECCIÓN: Verificar si OrderReceipt ya existe antes de crear
         let receiptId: string;
@@ -217,7 +221,8 @@ export class CreateOrderUseCase {
               clientId: dto.clientId,
               clientName: dto.clientName,
               createdBy,
-              notes: (p as any).notes || `Abono pedido ${receiptNumber} (${p.method})`,
+              notes: ((p as any).notes ? ((p as any).notes + ' | ') : `Pedido inicial | `) + `Cédula: ${clientDoc} | Orden: ${orderReceiptNumber} | Pedido: ${actualOrderNumber} | Marca: ${dto.brandName} | Tipo: ${dto.type.toUpperCase()}`,
+              userReference: pReceiptNumber,
               bankAccountId: pBankId,
               paymentMethod: p.method,
               version: 1

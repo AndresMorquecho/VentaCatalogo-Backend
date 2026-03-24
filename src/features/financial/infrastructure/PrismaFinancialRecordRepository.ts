@@ -5,25 +5,60 @@ import { Prisma } from '@prisma/client';
 
 export class PrismaFinancialRecordRepository implements IFinancialRecordRepository {
   async findAll(filters: FinancialRecordFilters, pagination?: { skip?: number; take?: number }): Promise<{ data: FinancialRecord[]; total: number }> {
-    const where: Prisma.FinancialRecordWhereInput = {};
+    const andClauses: Prisma.FinancialRecordWhereInput[] = [];
 
-    if (filters.clientId) where.clientId = filters.clientId;
-    if (filters.orderId) where.orderId = filters.orderId;
-    if (filters.bankAccountId) where.bankAccountId = filters.bankAccountId;
-    if (filters.type) where.type = filters.type;
-    if (filters.movementType) where.movementType = filters.movementType;
+    if (filters.clientId) {
+      // If clientId looks like a search term (not a UUID), search by name or document
+      if (filters.clientId.length < 36 || !filters.clientId.includes('-')) {
+        andClauses.push({
+          OR: [
+            { clientName: { contains: filters.clientId, mode: 'insensitive' } },
+            { clientDocument: { contains: filters.clientId, mode: 'insensitive' } }
+          ]
+        });
+      } else {
+        andClauses.push({ clientId: filters.clientId });
+      }
+    }
+    if (filters.orderId) andClauses.push({ orderId: filters.orderId });
+    if (filters.bankAccountId) andClauses.push({ bankAccountId: filters.bankAccountId });
+    if (filters.type) andClauses.push({ type: filters.type });
+    if (filters.movementType) andClauses.push({ movementType: filters.movementType });
+    if (filters.createdBy) andClauses.push({ createdBy: { contains: filters.createdBy, mode: 'insensitive' } });
+
     if (filters.referenceNumber) {
-      where.referenceNumber = {
-        contains: filters.referenceNumber,
-        mode: 'insensitive'
-      };
+      andClauses.push({
+        OR: [
+          { referenceNumber: { contains: filters.referenceNumber, mode: 'insensitive' } },
+          { userReference: { contains: filters.referenceNumber, mode: 'insensitive' } }
+        ]
+      });
     }
 
     if (filters.startDate || filters.endDate) {
-      where.date = {};
-      if (filters.startDate) where.date.gte = filters.startDate;
-      if (filters.endDate) where.date.lte = filters.endDate;
+      const dateCond: Prisma.DateTimeFilter = {};
+      if (filters.startDate) dateCond.gte = filters.startDate;
+      if (filters.endDate) {
+        const endOfDay = new Date(filters.endDate);
+        endOfDay.setHours(23, 59, 59, 999);
+        dateCond.lte = endOfDay;
+      }
+      andClauses.push({ date: dateCond });
     }
+
+    if (filters.accountType) {
+      andClauses.push({
+        OR: [
+          { fromAccountType: filters.accountType },
+          { toAccountType: filters.accountType }
+        ]
+      });
+    }
+
+    const where: Prisma.FinancialRecordWhereInput = andClauses.length > 0 ? { AND: andClauses } : {};
+
+    console.log('[FinancialRecordRepository] Filters:', JSON.stringify(filters, null, 2));
+    console.log('[FinancialRecordRepository] Where clause:', JSON.stringify(where, null, 2));
 
     const [records, total] = await Promise.all([
       prisma.financialRecord.findMany({

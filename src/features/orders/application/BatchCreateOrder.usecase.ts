@@ -1,4 +1,6 @@
 import { IOrderRepository } from '../domain/IOrderRepository';
+import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRecordRepository';
+import { IBankAccountRepository } from '../../financial/domain/IBankAccountRepository';
 import { Order, OrderStatus } from '../domain/Order.entity';
 import { Result } from '../../../shared/domain/Result';
 import { prisma } from '../../../lib/prisma';
@@ -43,15 +45,19 @@ export interface BatchCreateOrderDTO {
       quantity: number;
       unitPrice: number;
     }>;
-    deposit?: number; // Añadir esto
-    orderNumber?: string; // Añadir esto
+    deposit?: number;
+    orderNumber?: string;
   }>;
 }
 
 const BLOCKED_PAYMENT_METHODS = ['TRANSFERENCIA', 'DEPOSITO', 'CHEQUE'];
 
 export class BatchCreateOrderUseCase {
-  constructor(private orderRepository: IOrderRepository) {}
+  constructor(
+    private orderRepository: IOrderRepository,
+    private financialRepository: IFinancialRecordRepository,
+    private bankAccountRepository: IBankAccountRepository
+  ) {}
 
   async execute(dto: BatchCreateOrderDTO, createdBy: string): Promise<Result<Order[]>> {
     try {
@@ -82,6 +88,15 @@ export class BatchCreateOrderUseCase {
       if (lastClosure && new Date(dto.transactionDate) <= lastClosure.toDate) {
         return Result.fail('Periodo de caja cerrado');
       }
+
+      // Pre-fetch client document for metadata
+      const clientDoc = client.identificationNumber || 'S/N';
+      
+      // Pre-generate order numbers for metadata if missing
+      const processedOrders = await Promise.all(dto.orders.map(async o => ({
+        ...o,
+        actualOrderNumber: o.orderNumber || await this.orderRepository.generateOrderNumber()
+      })));
 
       // 2. Validate all brands
       const brandIds = [...new Set(dto.orders.map(o => o.brandId))];
@@ -332,7 +347,7 @@ export class BatchCreateOrderUseCase {
                   clientName: clientName,
                   orderId: orderId,
                   createdBy,
-                  notes: `Pago con billetera virtual - ${receiptNumber} | Pedido: ${orderDto.orderNumber || orderId.slice(-8).toUpperCase()} | Marca: ${orderDto.brandName}`,
+                  notes: `Pedido inicial | Cédula: ${clientDoc} | Orden: ${receiptNumber} | Pedido: ${processedOrders[i].actualOrderNumber} | Marca: ${orderDto.brandName} | Tipo: ${orderDto.type.toUpperCase()}`,
                   bankAccountId: walletBankId,
                   paymentMethod: 'BILLETERA_VIRTUAL',
                   balanceBefore: balanceBefore,
@@ -389,9 +404,9 @@ export class BatchCreateOrderUseCase {
                 fromAccountType: 'EXTERNAL',
                 toAccountType: 'CASH',
                 referenceNumber: `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
-                userReference: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
+                userReference: (dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference)
                   ? dto.initialPayment.reference
-                  : null,
+                  : `AB${(nextPaymentNumber - 1).toString().padStart(3, '0')}`,
                 amount: rowDeposit,
                 date: new Date(),
                 clientId: dto.clientId,
@@ -399,7 +414,7 @@ export class BatchCreateOrderUseCase {
                 orderId: orderId,
                 orderPaymentId: paymentId,
                 createdBy,
-                notes: `Abono inicial pedido ${receiptNumber} (fila ${i + 1})`,
+                notes: `Pedido inicial | Orden: ${receiptNumber} | Pedido: ${orderDto.orderNumber || 'N/A'} | Marca: ${orderDto.brandName} | Tipo: ${orderDto.type.toUpperCase()}`,
                 bankAccountId: simpleBankId,
                 paymentMethod: dto.paymentMethod,
                 balanceBefore: balanceBefore,
@@ -470,10 +485,10 @@ export class BatchCreateOrderUseCase {
               }
 
               // Build notes with order info
-              let notesText = paymentItem.notes || `Split payment ${paymentIndex + 1} - ${receiptNumber}`;
+              let notesText = (paymentItem.notes ? (paymentItem.notes + ' | ') : 'Pedido inicial | ') + `Orden: ${receiptNumber} | Pedido: VARIOS | Marca: ${dto.orders.map(o => o.brandName).join(', ')} | Tipo: VARIOS`;
               if (dto.orders.length === 1) {
                 const singleOrder = dto.orders[0];
-                notesText = `${paymentItem.method} - ${receiptNumber} | Pedido: ${singleOrder.orderNumber || allOrders[0].id.slice(-8).toUpperCase()} | Marca: ${singleOrder.brandName}`;
+                notesText = (paymentItem.notes ? (paymentItem.notes + ' | ') : `Pedido inicial | `) + `Orden: ${receiptNumber} | Pedido: ${singleOrder.orderNumber || 'N/A'} | Marca: ${singleOrder.brandName} | Tipo: ${singleOrder.type.toUpperCase()}`;
               }
 
               allFinancialRecords.push({
@@ -486,7 +501,7 @@ export class BatchCreateOrderUseCase {
                 referenceNumber: `REF-SPL-${Date.now()}-${paymentIndex}`,
                 userReference: paymentItem.method !== 'EFECTIVO' && (paymentItem.transactionReference || (paymentItem as any).transaction_reference)
                   ? (paymentItem.transactionReference || (paymentItem as any).transaction_reference)
-                  : receiptNumber,
+                  : `AB-SPL-${receiptNumber}`,
                 amount: paymentAmount,
                 date: new Date(),
                 clientId: dto.clientId,
@@ -580,10 +595,10 @@ export class BatchCreateOrderUseCase {
                 }
 
                 // Build notes with order info
-                let notesText = `Pago con billetera virtual - ${receiptNumber}`;
+                let notesText = `Pedido inicial | Cédula: ${clientDoc} | Orden: ${receiptNumber} | Pedido: VARIOS | Marca: ${dto.orders.map(o => o.brandName).join(', ')} | Tipo: VARIOS`;
                 if (dto.orders.length === 1) {
-                  const singleOrder = dto.orders[0];
-                  notesText += ` | Pedido: ${singleOrder.orderNumber || allOrders[0].id.slice(-8).toUpperCase()} | Marca: ${singleOrder.brandName}`;
+                  const singleOrderIndex = 0;
+                  notesText = `Pedido inicial | Cédula: ${clientDoc} | Orden: ${receiptNumber} | Pedido: ${processedOrders[singleOrderIndex].actualOrderNumber} | Marca: ${processedOrders[singleOrderIndex].brandName} | Tipo: ${processedOrders[singleOrderIndex].type.toUpperCase()}`;
                 } else {
                   notesText += ` | ${dto.orders.length} pedidos`;
                 }

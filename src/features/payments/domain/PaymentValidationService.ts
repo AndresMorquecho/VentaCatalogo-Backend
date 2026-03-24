@@ -243,15 +243,8 @@ export class PaymentValidationService {
       const foundOrders = await prisma.order.findMany({
         where: { id: { in: orderIds } },
         include: {
-          client: { select: { identificationNumber: true } }
-        },
-        select: { 
-          id: true, 
-          clientId: true, 
-          clientName: true, 
-          status: true, 
-          total: true,
-          client: true
+          client: true,
+          brand: true
         }
       });
       

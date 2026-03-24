@@ -101,6 +101,22 @@ export class Order extends Entity<OrderProps> {
     return this.props.items;
   }
 
+  get type(): string {
+    return this.props.type;
+  }
+
+  get orderNumber(): string | undefined {
+    return this.props.orderNumber;
+  }
+
+  get brandId(): string {
+    return this.props.brandId;
+  }
+
+  get brandName(): string {
+    return this.props.brandName;
+  }
+
   getPaidAmount(): number {
     const hasSplitPayment = this.props.payments.some(p => p.method === 'SPLIT_PAYMENT');
     return this.props.payments

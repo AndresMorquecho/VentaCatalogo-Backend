@@ -9,6 +9,8 @@ export interface FinancialRecordFilters {
   type?: string;
   movementType?: string;
   referenceNumber?: string;
+  accountType?: string; // 'CASH' | 'BANK_ACCOUNT' | 'WALLET'
+  createdBy?: string; // Filter by user who created the record
 }
 
 export interface IFinancialRecordRepository {
