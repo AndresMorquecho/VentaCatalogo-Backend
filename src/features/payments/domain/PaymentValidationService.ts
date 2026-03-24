@@ -242,12 +242,16 @@ export class PaymentValidationService {
       
       const foundOrders = await prisma.order.findMany({
         where: { id: { in: orderIds } },
+        include: {
+          client: { select: { identificationNumber: true } }
+        },
         select: { 
           id: true, 
           clientId: true, 
           clientName: true, 
           status: true, 
-          total: true 
+          total: true,
+          client: true
         }
       });
       
@@ -275,10 +279,13 @@ export class PaymentValidationService {
    * UTILIDAD: Obtener cuenta bancaria por defecto para un método de pago
    */
   async getDefaultBankAccount(paymentMethod: string): Promise<string> {
+    // Para billetera virtual, usar cuenta de caja (no afecta el balance real del banco)
+    const accountType = (paymentMethod === 'EFECTIVO' || paymentMethod === 'BILLETERA_VIRTUAL') ? 'CASH' : 'BANK';
+    
     const defaultAccount = await prisma.bankAccount.findFirst({
       where: { 
         isActive: true,
-        type: paymentMethod === 'EFECTIVO' ? 'CASH' : 'BANK'
+        type: accountType
       },
       select: { id: true }
     });

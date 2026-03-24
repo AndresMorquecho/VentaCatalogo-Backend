@@ -93,48 +93,96 @@ export class InstantWalletRechargeUseCase {
                     }
                 });
 
-                // 3. Create ClientCredit
-                await tx.clientCredit.create({
-                    data: {
-                        clientAccountId,
-                        amount: dto.amount,
-                        remainingAmount: dto.amount,
-                        originTransactionId: recharge.id,
-                        status: 'AVAILABLE'
-                    }
-                });
+                // 3. Create FinancialRecords FIRST (INCOME + INTERNAL, grouped)
+                const refNumber = dto.reference || await this.financialRepository.generateReferenceNumber();
+                const groupId = crypto.randomUUID();
+                const internalRef = `REC-${recharge.id.substring(0, 8)}-${refNumber}-INT`;
 
-                // 4. Update ClientAccount.totalCreditAvailable with optimistic locking
+                // Bank balance snapshot BEFORE update
+                const bankSnap = await tx.bankAccount.findUnique({
+                    where: { id: dto.bankAccountId },
+                    select: { currentBalance: true }
+                });
+                const balanceBefore = bankSnap ? parseFloat(bankSnap.currentBalance.toString()) : 0;
+                const balanceAfter = balanceBefore + dto.amount;
+
+                // Wallet balance snapshot BEFORE update
                 const currentAccount = await tx.clientAccount.findUnique({
                     where: { id: clientAccountId },
-                    select: { id: true, totalCreditAvailable: true, version: true }
+                    select: { totalCreditAvailable: true, version: true }
                 });
+                const walletBalanceBefore = parseFloat(currentAccount!.totalCreditAvailable.toString());
+                const walletBalanceAfter = walletBalanceBefore + dto.amount;
 
-                await tx.clientAccount.updateMany({
-                    where: { id: clientAccountId, version: currentAccount!.version },
-                    data: {
-                        totalCreditAvailable: { increment: dto.amount },
-                        version: { increment: 1 }
-                    }
-                });
-
-                // 5. Create FinancialRecord
-                const refNumber = dto.reference || await this.financialRepository.generateReferenceNumber();
-                await tx.financialRecord.create({
+                // 3a. INCOME: external money → bank account
+                const incomeFR = await tx.financialRecord.create({
                     data: {
                         type: 'PAYMENT',
                         referenceNumber: `REC-${recharge.id.substring(0, 8)}-${refNumber}`,
+                        userReference: dto.reference || null,
                         amount: dto.amount,
                         date: new Date(),
                         clientId: dto.clientId,
                         clientName,
+                        clientDocument: (client as any).identificationNumber ?? null,
                         createdBy,
                         notes: dto.notes || `Recarga rápida de billetera (${dto.paymentMethod})`,
                         bankAccountId: dto.bankAccountId,
                         source: 'MANUAL',
                         paymentMethod: dto.paymentMethod,
                         movementType: 'INCOME',
+                        fromAccountType: 'EXTERNAL',
+                        toAccountType: 'BANK_ACCOUNT',
+                        transactionGroupId: groupId,
+                        balanceBefore,
+                        balanceAfter,
                         version: 1
+                    }
+                });
+
+                // 3b. INTERNAL: bank account → client wallet
+                await tx.financialRecord.create({
+                    data: {
+                        type: 'PAYMENT',
+                        referenceNumber: internalRef,
+                        userReference: null,
+                        amount: dto.amount,
+                        date: new Date(),
+                        clientId: dto.clientId,
+                        clientName,
+                        clientDocument: (client as any).identificationNumber ?? null,
+                        createdBy,
+                        notes: `Recarga a billetera virtual`,
+                        bankAccountId: dto.bankAccountId,
+                        source: 'MANUAL',
+                        paymentMethod: dto.paymentMethod,
+                        movementType: 'INTERNAL',
+                        fromAccountType: 'BANK_ACCOUNT',
+                        toAccountType: 'WALLET',
+                        transactionGroupId: groupId,
+                        balanceBefore: walletBalanceBefore,
+                        balanceAfter: walletBalanceAfter,
+                        version: 1
+                    }
+                });
+
+                // 4. Create ClientCredit with CORRECT originTransactionId (INCOME FR)
+                await tx.clientCredit.create({
+                    data: {
+                        clientAccountId,
+                        amount: dto.amount,
+                        remainingAmount: dto.amount,
+                        originTransactionId: incomeFR.id,
+                        status: 'AVAILABLE'
+                    }
+                });
+
+                // 5. Update ClientAccount.totalCreditAvailable with optimistic locking
+                await tx.clientAccount.updateMany({
+                    where: { id: clientAccountId, version: currentAccount!.version },
+                    data: {
+                        totalCreditAvailable: { increment: dto.amount },
+                        version: { increment: 1 }
                     }
                 });
 

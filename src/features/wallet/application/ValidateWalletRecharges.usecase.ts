@@ -60,35 +60,33 @@ export class ValidateWalletRechargesUseCase {
                         clientAccountId = newAccount.id;
                     }
 
-                    // 2. Create ClientCredit
-                    await tx.clientCredit.create({
-                        data: {
-                            clientAccountId: clientAccountId,
-                            amount: recharge.amount,
-                            remainingAmount: recharge.amount,
-                            originTransactionId: recharge.id,
-                            status: 'AVAILABLE'
-                        }
-                    });
-
-                    // 3. Update ClientAccount
-                    await tx.clientAccount.update({
+                    // Read wallet balance BEFORE update for snapshot
+                    const walletSnap = await tx.clientAccount.findUnique({
                         where: { id: clientAccountId },
-                        data: {
-                            totalCreditAvailable: { increment: recharge.amount },
-                            version: { increment: 1 }
-                        }
+                        select: { totalCreditAvailable: true }
                     });
+                    const walletBalanceBefore = walletSnap ? parseFloat(walletSnap.totalCreditAvailable.toString()) : 0;
+                    const walletBalanceAfter = walletBalanceBefore + parseFloat(recharge.amount.toString());
 
-                    // 4. Create FinancialRecords — two entries per recharge:
+                    // 2. Create FinancialRecords FIRST — two entries per recharge:
                     //    a) INCOME: EXTERNAL → BANK_ACCOUNT (real money entering the system)
                     //    b) INTERNAL: BANK_ACCOUNT → WALLET (internal transfer to client wallet)
                     const groupId = crypto.randomUUID();
                     const generatedRef = await this.financialRepository.generateReferenceNumber();
                     const internalRef = `${generatedRef}-INT`;
 
-                    // 4a. Real income: client pays into bank account
-                    await (tx as any).financialRecord.create({
+                    // Read current bank balance for snapshot BEFORE the update
+                    const bankSnap = recharge.bankAccountId
+                        ? await tx.bankAccount.findUnique({
+                            where: { id: recharge.bankAccountId },
+                            select: { currentBalance: true }
+                        })
+                        : null;
+                    const balanceBefore = bankSnap ? parseFloat(bankSnap.currentBalance.toString()) : 0;
+                    const balanceAfter = balanceBefore + parseFloat(recharge.amount.toString());
+
+                    // 2a. Real income: client pays into bank account
+                    const incomeFR = await (tx as any).financialRecord.create({
                         data: {
                             type: 'PAYMENT',
                             referenceNumber: generatedRef,
@@ -97,6 +95,7 @@ export class ValidateWalletRechargesUseCase {
                             date: new Date(),
                             clientId: recharge.clientId,
                             clientName: recharge.client.firstName,
+                            clientDocument: recharge.client.identificationNumber,
                             createdBy: validatedBy,
                             notes: `Transferencia recibida — recarga billetera (${recharge.paymentMethod})`,
                             bankAccountId: recharge.bankAccountId!,
@@ -106,11 +105,13 @@ export class ValidateWalletRechargesUseCase {
                             fromAccountType: 'EXTERNAL',
                             toAccountType: 'BANK_ACCOUNT',
                             transactionGroupId: groupId,
+                            balanceBefore,
+                            balanceAfter,
                             version: 1
                         }
                     });
 
-                    // 4b. Internal transfer: bank account → client wallet
+                    // 2b. Internal transfer: bank account → client wallet
                     await (tx as any).financialRecord.create({
                         data: {
                             type: 'PAYMENT',
@@ -120,6 +121,7 @@ export class ValidateWalletRechargesUseCase {
                             date: new Date(),
                             clientId: recharge.clientId,
                             clientName: recharge.client.firstName,
+                            clientDocument: recharge.client.identificationNumber,
                             createdBy: validatedBy,
                             notes: `Recarga a billetera virtual`,
                             bankAccountId: recharge.bankAccountId!,
@@ -129,7 +131,29 @@ export class ValidateWalletRechargesUseCase {
                             fromAccountType: 'BANK_ACCOUNT',
                             toAccountType: 'WALLET',
                             transactionGroupId: groupId,
+                            balanceBefore: walletBalanceBefore,
+                            balanceAfter: walletBalanceAfter,
                             version: 1
+                        }
+                    });
+
+                    // 3. Create ClientCredit with CORRECT originTransactionId (INCOME FR)
+                    await tx.clientCredit.create({
+                        data: {
+                            clientAccountId: clientAccountId,
+                            amount: recharge.amount,
+                            remainingAmount: recharge.amount,
+                            originTransactionId: incomeFR.id,
+                            status: 'AVAILABLE'
+                        }
+                    });
+
+                    // 4. Update ClientAccount
+                    await tx.clientAccount.update({
+                        where: { id: clientAccountId },
+                        data: {
+                            totalCreditAvailable: { increment: recharge.amount },
+                            version: { increment: 1 }
                         }
                     });
 

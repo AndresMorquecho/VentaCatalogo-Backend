@@ -16,7 +16,10 @@ export class ProcessExchangeFinancialUseCase {
     // Pre-transaction validations
     const exchange = await prisma.orderExchange.findUnique({
       where: { id: exchangeId },
-      include: { items: true },
+      include: { 
+        items: true,
+        client: { select: { identificationNumber: true } }
+      },
     });
     if (!exchange) {
       throw new Error('Cambio no encontrado');
@@ -46,7 +49,7 @@ export class ProcessExchangeFinancialUseCase {
 
       if (diff === 0) {
         // CASO A: mismo valor — solo trazabilidad
-        const fr = await tx.financialRecord.create({
+        const fr = await (tx as any).financialRecord.create({
           data: {
             type: 'EXCHANGE_SAME_VALUE',
             referenceNumber: `EX-SV-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -54,6 +57,7 @@ export class ProcessExchangeFinancialUseCase {
             date: new Date(),
             clientId: exchange.clientId,
             clientName: exchange.clientName,
+            clientDocument: (exchange as any).client?.identificationNumber ?? null,
             orderId: item.originalOrderId,
             createdBy,
             notes: `${baseNotes} | Mismo valor`,
@@ -76,7 +80,7 @@ export class ProcessExchangeFinancialUseCase {
           },
         });
 
-        const fr = await tx.financialRecord.create({
+        const fr = await (tx as any).financialRecord.create({
           data: {
             type: 'EXCHANGE_ADDITIONAL_CHARGE',
             referenceNumber: `EX-AC-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -84,6 +88,7 @@ export class ProcessExchangeFinancialUseCase {
             date: new Date(),
             clientId: exchange.clientId,
             clientName: exchange.clientName,
+            clientDocument: (exchange as any).client?.identificationNumber ?? null,
             orderId: item.originalOrderId,
             orderPaymentId: payment.id,
             createdBy,
@@ -133,7 +138,7 @@ export class ProcessExchangeFinancialUseCase {
             data: { totalCreditAvailable: { increment: absAmount } },
           });
 
-          const fr = await tx.financialRecord.create({
+          const fr = await (tx as any).financialRecord.create({
             data: {
               type: 'EXCHANGE_CREDIT',
               referenceNumber: `EX-CR-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -141,6 +146,7 @@ export class ProcessExchangeFinancialUseCase {
               date: new Date(),
               clientId: exchange.clientId,
               clientName: exchange.clientName,
+              clientDocument: (exchange as any).client?.identificationNumber ?? null,
               orderId: item.originalOrderId,
               createdBy,
               notes: `${baseNotes} | Crédito a billetera`,
@@ -153,7 +159,7 @@ export class ProcessExchangeFinancialUseCase {
           action = 'CREDIT_CREATED';
 
         } else if (creditDestination === 'CASH_RETURN') {
-          const fr = await tx.financialRecord.create({
+          const fr = await (tx as any).financialRecord.create({
             data: {
               type: 'CASH_RETURN',
               referenceNumber: `EX-RT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -161,6 +167,7 @@ export class ProcessExchangeFinancialUseCase {
               date: new Date(),
               clientId: exchange.clientId,
               clientName: exchange.clientName,
+              clientDocument: (exchange as any).client?.identificationNumber ?? null,
               orderId: item.originalOrderId,
               createdBy,
               notes: `${baseNotes} | Devolución en efectivo`,
@@ -174,7 +181,7 @@ export class ProcessExchangeFinancialUseCase {
 
         } else {
           // DISTRIBUTE
-          const fr = await tx.financialRecord.create({
+          const fr = await (tx as any).financialRecord.create({
             data: {
               type: 'EXCHANGE_CREDIT',
               referenceNumber: `EX-DT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -182,6 +189,7 @@ export class ProcessExchangeFinancialUseCase {
               date: new Date(),
               clientId: exchange.clientId,
               clientName: exchange.clientName,
+              clientDocument: (exchange as any).client?.identificationNumber ?? null,
               orderId: item.originalOrderId,
               createdBy,
               notes: `${baseNotes} | Crédito para distribuir`,

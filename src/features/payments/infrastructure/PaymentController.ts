@@ -87,6 +87,7 @@ export class PaymentController {
 
                 // Para billetera virtual, usar creditAmount en lugar de amount
                 if (method === 'BILLETERA_VIRTUAL') {
+                    console.log('🔵 WALLET PAYMENT DETECTED - Creating CREDITO_CLIENTE record');
                     const dto = {
                         orderId,
                         amount: 0,
@@ -101,8 +102,10 @@ export class PaymentController {
                     if (result.isFailure) {
                         return HttpResponse.fail(res, result.error!);
                     }
+                    console.log('✅ WALLET PAYMENT PROCESSED - Result:', result.getValue());
                     results.push(result.getValue());
                 } else {
+                    console.log('🟢 NORMAL PAYMENT DETECTED - Creating payment with method:', method);
                     // Pago manual normal
                     if (!bankAccountId) {
                         return HttpResponse.badRequest(res, 'bankAccountId is required for non-virtual wallet payments.');
@@ -122,6 +125,7 @@ export class PaymentController {
                     if (result.isFailure) {
                         return HttpResponse.fail(res, result.error!);
                     }
+                    console.log('✅ NORMAL PAYMENT PROCESSED - Result:', result.getValue());
                     results.push(result.getValue());
                 }
             }

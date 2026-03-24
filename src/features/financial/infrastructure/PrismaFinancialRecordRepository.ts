@@ -91,8 +91,34 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
   async save(record: FinancialRecord): Promise<FinancialRecord> {
     const data = this.toPersistence(record);
 
+    // Calculate running balance for this bank account
+    const sumResult = await prisma.financialRecord.aggregate({
+      where: { bankAccountId: record.bankAccountId },
+      _sum: { amount: true }
+    });
+
+    // Sum of all INCOME minus EXPENSE records for this account
+    const incomeSum = await prisma.financialRecord.aggregate({
+      where: { bankAccountId: record.bankAccountId, movementType: 'INCOME' },
+      _sum: { amount: true }
+    });
+    const expenseSum = await prisma.financialRecord.aggregate({
+      where: { bankAccountId: record.bankAccountId, movementType: { in: ['EXPENSE'] } },
+      _sum: { amount: true }
+    });
+
+    const balanceBefore = Number(incomeSum._sum.amount ?? 0) - Number(expenseSum._sum.amount ?? 0);
+    const delta = record.movementType === 'INCOME' ? record.amount
+      : record.movementType === 'EXPENSE' ? -record.amount
+      : 0;
+    const balanceAfter = balanceBefore + delta;
+
     const created = await prisma.financialRecord.create({
-      data
+      data: {
+        ...data,
+        balanceBefore,
+        balanceAfter
+      }
     });
 
     return this.toDomain(created);
@@ -195,6 +221,9 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
         fromAccountType: raw.fromAccountType ?? undefined,
         toAccountType: raw.toAccountType ?? undefined,
         transactionGroupId: raw.transactionGroupId ?? undefined,
+        balanceBefore: raw.balanceBefore != null ? Number(raw.balanceBefore) : undefined,
+        balanceAfter: raw.balanceAfter != null ? Number(raw.balanceAfter) : undefined,
+        clientDocument: raw.clientDocument ?? undefined,
         createdAt: raw.createdAt,
         version: raw.version
       },
@@ -207,7 +236,10 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
     const json = record.toJSON();
     return {
       ...json,
-      bankAccountName: raw.bankAccount?.name || 'Sin cuenta'
+      bankAccountName: raw.bankAccount?.name || 'Sin cuenta',
+      balanceBefore: raw.balanceBefore != null ? Number(raw.balanceBefore) : undefined,
+      balanceAfter: raw.balanceAfter != null ? Number(raw.balanceAfter) : undefined,
+      clientDocument: raw.clientDocument ?? undefined,
     };
   }
 
@@ -232,6 +264,9 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
       fromAccountType: json.fromAccountType ?? null,
       toAccountType: json.toAccountType ?? null,
       transactionGroupId: json.transactionGroupId ?? null,
+      balanceBefore: json.balanceBefore ?? null,
+      balanceAfter: json.balanceAfter ?? null,
+      clientDocument: json.clientDocument ?? null,
       version: json.version
     };
   }

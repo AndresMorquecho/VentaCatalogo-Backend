@@ -155,35 +155,74 @@ export class ProcessSplitPaymentUseCase {
 
         // 4.2 CREAR FinancialRecords (Accounting Logic) - UNO POR MÉTODO DE PAGO
         for (const paymentAllocation of dto.payments) {
-          const bankAccountId = paymentAllocation.bankAccountId || 
-            await this.paymentValidationService.getDefaultBankAccount(paymentAllocation.method);
+          try {
+            const bankAccountId = paymentAllocation.bankAccountId || 
+              await this.paymentValidationService.getDefaultBankAccount(paymentAllocation.method);
 
-          const financialRecord = await (tx as any).financialRecord.create({
-            data: {
-              type: 'PAYMENT',
-              source: 'ORDER_PAYMENT',
-              movementType: paymentAllocation.method === 'BILLETERA_VIRTUAL' ? 'INTERNAL' : 'INCOME',
-              fromAccountType: paymentAllocation.method === 'BILLETERA_VIRTUAL' ? 'WALLET' : 'EXTERNAL',
-              toAccountType: paymentAllocation.method === 'BILLETERA_VIRTUAL' ? 'ORDER' : 'CASH',
-              referenceNumber: await this.generateReferenceNumber(paymentAllocation.method),
-              amount: paymentAllocation.amount,
-              date: new Date(),
-              clientId: dto.clientId,
-              clientName: ordersValidation.data![0].clientName,
-              createdBy: dto.createdBy,
-              bankAccountId,
-              paymentMethod: paymentAllocation.method,
-              createdAt: new Date(),
-              version: 1
+            console.log(`[ProcessSplitPayment] Creating financial record for ${paymentAllocation.method}, bankAccountId: ${bankAccountId}`);
+
+            // Capture balance snapshots before updates
+            let balanceBefore: number | undefined;
+            let balanceAfter: number | undefined;
+
+            if (paymentAllocation.method === 'BILLETERA_VIRTUAL') {
+              const clientAccount = await (tx as any).clientAccount.findUnique({
+                where: { clientId: dto.clientId },
+                select: { totalCreditAvailable: true }
+              });
+              if (clientAccount) {
+                balanceBefore = parseFloat(clientAccount.totalCreditAvailable.toString());
+                balanceAfter = balanceBefore - paymentAllocation.amount;
+              }
+              console.log(`[ProcessSplitPayment] Wallet balance: ${balanceBefore} → ${balanceAfter}`);
+            } else {
+              const bankAcc = await (tx as any).bankAccount.findUnique({
+                where: { id: bankAccountId },
+                select: { currentBalance: true }
+              });
+              if (bankAcc) {
+                balanceBefore = parseFloat(bankAcc.currentBalance.toString());
+                balanceAfter = balanceBefore + paymentAllocation.amount;
+              }
             }
-          });
 
-          financialRecords.push({
-            id: financialRecord.id,
-            method: financialRecord.paymentMethod!,
-            amount: Number(financialRecord.amount),
-            bankAccountId: financialRecord.bankAccountId
-          });
+            const financialRecord = await (tx as any).financialRecord.create({
+              data: {
+                type: 'PAYMENT',
+                source: 'ORDER_PAYMENT',
+                movementType: paymentAllocation.method === 'BILLETERA_VIRTUAL' ? 'INTERNAL' : 'INCOME',
+                fromAccountType: paymentAllocation.method === 'BILLETERA_VIRTUAL' ? 'WALLET' : 'EXTERNAL',
+                toAccountType: paymentAllocation.method === 'BILLETERA_VIRTUAL' ? 'ORDER' : 'CASH',
+                referenceNumber: await this.generateReferenceNumber(paymentAllocation.method),
+                userReference: receiptNumber,
+                amount: paymentAllocation.amount,
+                date: new Date(),
+                clientId: dto.clientId,
+                clientName: ordersValidation.data![0].clientName,
+                clientDocument: ordersValidation.data![0].client?.identificationNumber ?? null,
+                orderId: dto.orders.length === 1 ? dto.orders[0].orderId : null,
+                createdBy: dto.createdBy,
+                bankAccountId,
+                paymentMethod: paymentAllocation.method,
+                balanceBefore: balanceBefore ?? null,
+                balanceAfter: balanceAfter ?? null,
+                createdAt: new Date(),
+                version: 1
+              }
+            });
+
+            console.log(`[ProcessSplitPayment] Financial record created: ${financialRecord.id}`);
+
+            financialRecords.push({
+              id: financialRecord.id,
+              method: financialRecord.paymentMethod!,
+              amount: Number(financialRecord.amount),
+              bankAccountId: financialRecord.bankAccountId
+            });
+          } catch (error) {
+            console.error(`[ProcessSplitPayment] ERROR creating financial record for ${paymentAllocation.method}:`, error);
+            throw error;
+          }
         }
 
         // 4.3 ACTUALIZAR BankAccount Balances (Solo métodos no-wallet)

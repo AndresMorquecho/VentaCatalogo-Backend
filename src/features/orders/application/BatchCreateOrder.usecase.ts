@@ -238,8 +238,115 @@ export class BatchCreateOrderUseCase {
             }
           } else {
             // Lógica original para abono simple por fila
+            console.log(`[BatchCreateOrder] Simple payment flow - paymentMethod: ${dto.paymentMethod}, creditAmount: ${dto.creditAmount}`);
+            
             const rowDeposit = Number(orderDto.deposit || 0);
-            if (rowDeposit > 0) {
+            
+            // BILLETERA_VIRTUAL en flujo simple: crear financial record INTERNAL
+            if (dto.paymentMethod === 'BILLETERA_VIRTUAL' && dto.creditAmount && dto.creditAmount > 0 && i === 0) {
+              console.log(`[BatchCreateOrder] Creating financial record for simple BILLETERA_VIRTUAL payment`);
+              console.log(`  - creditAmount: ${dto.creditAmount}`);
+              
+              // Buscar el crédito más antiguo (FIFO) y obtener el bankAccountId de su FinancialRecord de origen
+              const oldestCredit = await tx.clientCredit.findFirst({
+                where: {
+                  clientAccount: { clientId: dto.clientId },
+                  status: 'AVAILABLE',
+                  remainingAmount: { gt: 0 }
+                },
+                orderBy: { createdAt: 'asc' },
+                select: {
+                  id: true,
+                  originTransactionId: true
+                }
+              });
+              
+              let walletBankId: string | null = null;
+              
+              if (oldestCredit?.originTransactionId) {
+                console.log(`  - Found credit with originTransactionId: ${oldestCredit.originTransactionId}`);
+                
+                // Buscar el FinancialRecord que generó este crédito
+                const originFR = await tx.financialRecord.findUnique({
+                  where: { id: oldestCredit.originTransactionId },
+                  select: { bankAccountId: true }
+                });
+                
+                if (originFR?.bankAccountId) {
+                  walletBankId = originFR.bankAccountId;
+                  console.log(`  - Using bankAccountId from origin FR: ${walletBankId}`);
+                } else {
+                  console.log(`  - Origin FR found but no bankAccountId`);
+                }
+              } else {
+                console.log(`  - No credit found with originTransactionId`);
+              }
+              
+              // Fallback: buscar una cuenta de tipo CASH
+              if (!walletBankId) {
+                console.log(`  - Trying to find any CASH account as fallback`);
+                const cashAccount = await tx.bankAccount.findFirst({
+                  where: { type: 'CASH', isActive: true },
+                  select: { id: true }
+                });
+                
+                if (cashAccount) {
+                  walletBankId = cashAccount.id;
+                  console.log(`  - Using CASH account as fallback: ${walletBankId}`);
+                }
+              }
+              
+              if (!walletBankId) {
+                console.error(`[BatchCreateOrder] ERROR: Could not find bankAccountId for wallet payment`);
+                console.error(`  - No origin FinancialRecord with bankAccountId`);
+                console.error(`  - No CASH account found as fallback`);
+                console.error(`  - Financial record will NOT be created`);
+              } else {
+                // Capture wallet balance snapshot
+                const clientAccount = await tx.clientAccount.findUnique({
+                  where: { clientId: dto.clientId },
+                  select: { totalCreditAvailable: true }
+                });
+                
+                let balanceBefore: number | null = null;
+                let balanceAfter: number | null = null;
+                
+                if (clientAccount) {
+                  balanceBefore = parseFloat(clientAccount.totalCreditAvailable.toString());
+                  balanceAfter = balanceBefore - Number(dto.creditAmount);
+                  console.log(`[BatchCreateOrder] Wallet balance: ${balanceBefore} → ${balanceAfter}`);
+                }
+
+                allFinancialRecords.push({
+                  id: crypto.randomUUID(),
+                  type: 'PAYMENT',
+                  source: 'ORDER_PAYMENT',
+                  movementType: 'INTERNAL',
+                  fromAccountType: 'WALLET',
+                  toAccountType: 'ORDER',
+                  referenceNumber: `REF-WALLET-SIMPLE-${Date.now()}`,
+                  userReference: receiptNumber,
+                  amount: Number(dto.creditAmount),
+                  date: new Date(),
+                  clientId: dto.clientId,
+                  clientName: clientName,
+                  orderId: orderId,
+                  createdBy,
+                  notes: `Pago con billetera virtual - ${receiptNumber} | Pedido: ${orderDto.orderNumber || orderId.slice(-8).toUpperCase()} | Marca: ${orderDto.brandName}`,
+                  bankAccountId: walletBankId,
+                  paymentMethod: 'BILLETERA_VIRTUAL',
+                  balanceBefore: balanceBefore,
+                  balanceAfter: balanceAfter,
+                  version: 1
+                });
+                
+                console.log(`[BatchCreateOrder] Financial record for simple wallet payment added to batch`);
+              }
+            }
+            
+            // BUGFIX: No crear pago con método BILLETERA_VIRTUAL si hay creditAmount
+            // porque ya se creará un pago CREDITO_CLIENTE más abajo
+            if (rowDeposit > 0 && dto.paymentMethod !== 'BILLETERA_VIRTUAL') {
               const paymentId = crypto.randomUUID();
               paymentIdMap.set(orderId, paymentId);
               
@@ -254,38 +361,53 @@ export class BatchCreateOrderUseCase {
                 createdAt: new Date()
               });
 
-              // Preparar FinancialRecord (solo si no es billetera virtual)
-              if (dto.paymentMethod !== 'BILLETERA_VIRTUAL') {
-                const simpleBankId = dto.bankAccountId && dto.bankAccountId.trim() ? dto.bankAccountId.trim() : null;
-                if (!simpleBankId) {
-                  throw new Error(`Cuenta bancaria requerida para el método de pago ${dto.paymentMethod}`);
-                }
-                allFinancialRecords.push({
-                  id: crypto.randomUUID(),
-                  type: 'PAYMENT',
-                  source: 'ORDER_PAYMENT',
-                  movementType: 'INCOME',
-                  fromAccountType: 'EXTERNAL',
-                  toAccountType: 'CASH',
-                  referenceNumber: `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
-                  userReference: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
-                    ? dto.initialPayment.reference
-                    : null,
-                  amount: rowDeposit,
-                  date: new Date(),
-                  clientId: dto.clientId,
-                  clientName: clientName,
-                  orderId: orderId,
-                  orderPaymentId: paymentId,
-                  createdBy,
-                  notes: `Abono inicial pedido ${receiptNumber} (fila ${i + 1})`,
-                  bankAccountId: simpleBankId,
-                  paymentMethod: dto.paymentMethod,
-                  version: 1
-                });
-
-                totalBankIncrement += rowDeposit;
+              // Preparar FinancialRecord
+              const simpleBankId = dto.bankAccountId && dto.bankAccountId.trim() ? dto.bankAccountId.trim() : null;
+              if (!simpleBankId) {
+                throw new Error(`Cuenta bancaria requerida para el método de pago ${dto.paymentMethod}`);
               }
+              
+              // Capture bank balance snapshot BEFORE the payment
+              const bankAcc = await tx.bankAccount.findUnique({
+                where: { id: simpleBankId },
+                select: { currentBalance: true }
+              });
+              
+              let balanceBefore: number | null = null;
+              let balanceAfter: number | null = null;
+              
+              if (bankAcc) {
+                balanceBefore = parseFloat(bankAcc.currentBalance.toString());
+                balanceAfter = balanceBefore + rowDeposit;
+              }
+              
+              allFinancialRecords.push({
+                id: crypto.randomUUID(),
+                type: 'PAYMENT',
+                source: 'ORDER_PAYMENT',
+                movementType: 'INCOME',
+                fromAccountType: 'EXTERNAL',
+                toAccountType: 'CASH',
+                referenceNumber: `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
+                userReference: dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference
+                  ? dto.initialPayment.reference
+                  : null,
+                amount: rowDeposit,
+                date: new Date(),
+                clientId: dto.clientId,
+                clientName: clientName,
+                orderId: orderId,
+                orderPaymentId: paymentId,
+                createdBy,
+                notes: `Abono inicial pedido ${receiptNumber} (fila ${i + 1})`,
+                bankAccountId: simpleBankId,
+                paymentMethod: dto.paymentMethod,
+                balanceBefore: balanceBefore,
+                balanceAfter: balanceAfter,
+                version: 1
+              });
+
+              totalBankIncrement += rowDeposit;
             }
           }
 
@@ -310,9 +432,14 @@ export class BatchCreateOrderUseCase {
         const splitBankIncrements = new Map<string, number>(); // bankAccountId -> totalAmount
 
         if (dto.paymentData && dto.paymentData.payments && dto.paymentData.payments.length > 0) {
+          console.log(`[BatchCreateOrder] Processing split payment with ${dto.paymentData.payments.length} payment methods`);
+          console.log(`[BatchCreateOrder] dto.bankAccountId: ${dto.bankAccountId}`);
+          
           for (let paymentIndex = 0; paymentIndex < dto.paymentData.payments.length; paymentIndex++) {
             const paymentItem = dto.paymentData.payments[paymentIndex];
             const paymentAmount = Number(paymentItem.amount || 0);
+
+            console.log(`[BatchCreateOrder] Payment ${paymentIndex + 1}: method=${paymentItem.method}, amount=${paymentAmount}`);
 
             if (paymentAmount <= 0) continue;
 
@@ -328,6 +455,27 @@ export class BatchCreateOrderUseCase {
                 throw new Error(`Cuenta bancaria requerida para el método de pago ${paymentItem.method}`);
               }
 
+              // Capture bank balance snapshot BEFORE the payment is processed
+              const bankAcc = await tx.bankAccount.findUnique({
+                where: { id: bankId },
+                select: { currentBalance: true }
+              });
+              
+              let balanceBefore: number | null = null;
+              let balanceAfter: number | null = null;
+              
+              if (bankAcc) {
+                balanceBefore = parseFloat(bankAcc.currentBalance.toString());
+                balanceAfter = balanceBefore + paymentAmount;
+              }
+
+              // Build notes with order info
+              let notesText = paymentItem.notes || `Split payment ${paymentIndex + 1} - ${receiptNumber}`;
+              if (dto.orders.length === 1) {
+                const singleOrder = dto.orders[0];
+                notesText = `${paymentItem.method} - ${receiptNumber} | Pedido: ${singleOrder.orderNumber || allOrders[0].id.slice(-8).toUpperCase()} | Marca: ${singleOrder.brandName}`;
+              }
+
               allFinancialRecords.push({
                 id: crypto.randomUUID(),
                 type: 'PAYMENT',
@@ -338,17 +486,20 @@ export class BatchCreateOrderUseCase {
                 referenceNumber: `REF-SPL-${Date.now()}-${paymentIndex}`,
                 userReference: paymentItem.method !== 'EFECTIVO' && (paymentItem.transactionReference || (paymentItem as any).transaction_reference)
                   ? (paymentItem.transactionReference || (paymentItem as any).transaction_reference)
-                  : null,
+                  : receiptNumber,
                 amount: paymentAmount,
                 date: new Date(),
                 clientId: dto.clientId,
                 clientName: clientName,
                 // Link to the first order's split payment so the UI can find these FRs
                 orderPaymentId: firstSplitPaymentId || undefined,
+                orderId: dto.orders.length === 1 ? allOrders[0].id : null,
                 createdBy,
-                notes: paymentItem.notes || `Split payment ${paymentIndex + 1} - ${receiptNumber}`,
+                notes: notesText,
                 bankAccountId: bankId,
                 paymentMethod: paymentItem.method,
+                balanceBefore: balanceBefore,
+                balanceAfter: balanceAfter,
                 version: 1
               });
 
@@ -356,9 +507,87 @@ export class BatchCreateOrderUseCase {
               splitBankIncrements.set(bankId, (splitBankIncrements.get(bankId) || 0) + paymentAmount);
             } else {
               // BILLETERA_VIRTUAL: WALLET → ORDER (internal transfer)
-              // Need a real bank account for FK — use default cash account or dto.bankAccountId
-              const walletBankId = dto.bankAccountId && dto.bankAccountId.trim() ? dto.bankAccountId.trim() : null;
-              if (walletBankId) {
+              console.log(`[BatchCreateOrder] Processing BILLETERA_VIRTUAL payment:`);
+              console.log(`  - paymentAmount: ${paymentAmount}`);
+              
+              // Buscar el crédito más antiguo (FIFO) y su FinancialRecord de origen
+              const oldestCredit = await tx.clientCredit.findFirst({
+                where: {
+                  clientAccount: { clientId: dto.clientId },
+                  status: 'AVAILABLE',
+                  remainingAmount: { gt: 0 }
+                },
+                orderBy: { createdAt: 'asc' },
+                select: {
+                  id: true,
+                  originTransactionId: true
+                }
+              });
+              
+              let walletBankId: string | null = null;
+              
+              if (oldestCredit?.originTransactionId) {
+                // Buscar el FinancialRecord que generó este crédito
+                const originFR = await tx.financialRecord.findUnique({
+                  where: { id: oldestCredit.originTransactionId },
+                  select: { bankAccountId: true }
+                });
+                
+                if (originFR?.bankAccountId) {
+                  walletBankId = originFR.bankAccountId;
+                  console.log(`  - Using bankAccountId from origin FR: ${walletBankId}`);
+                } else {
+                  console.log(`  - Origin FR found but no bankAccountId`);
+                }
+              } else {
+                console.log(`  - No credit found with originTransactionId`);
+              }
+              
+              // Fallback: buscar una cuenta de tipo CASH
+              if (!walletBankId) {
+                console.log(`  - Trying to find any CASH account as fallback`);
+                const cashAccount = await tx.bankAccount.findFirst({
+                  where: { type: 'CASH', isActive: true },
+                  select: { id: true }
+                });
+                
+                if (cashAccount) {
+                  walletBankId = cashAccount.id;
+                  console.log(`  - Using CASH account as fallback: ${walletBankId}`);
+                }
+              }
+              
+              if (!walletBankId) {
+                console.error(`[BatchCreateOrder] ERROR: Could not find bankAccountId for wallet payment - FR will NOT be created!`);
+              } else {
+                console.log(`[BatchCreateOrder] Creating financial record for wallet payment...`);
+                
+                // Capture wallet balance snapshot BEFORE the payment is processed
+                const clientAccount = await tx.clientAccount.findUnique({
+                  where: { clientId: dto.clientId },
+                  select: { totalCreditAvailable: true }
+                });
+                
+                let balanceBefore: number | null = null;
+                let balanceAfter: number | null = null;
+                
+                if (clientAccount) {
+                  balanceBefore = parseFloat(clientAccount.totalCreditAvailable.toString());
+                  balanceAfter = balanceBefore - paymentAmount;
+                  console.log(`[BatchCreateOrder] Wallet balance: ${balanceBefore} → ${balanceAfter}`);
+                } else {
+                  console.error(`[BatchCreateOrder] ERROR: clientAccount not found for clientId: ${dto.clientId}`);
+                }
+
+                // Build notes with order info
+                let notesText = `Pago con billetera virtual - ${receiptNumber}`;
+                if (dto.orders.length === 1) {
+                  const singleOrder = dto.orders[0];
+                  notesText += ` | Pedido: ${singleOrder.orderNumber || allOrders[0].id.slice(-8).toUpperCase()} | Marca: ${singleOrder.brandName}`;
+                } else {
+                  notesText += ` | ${dto.orders.length} pedidos`;
+                }
+
                 allFinancialRecords.push({
                   id: crypto.randomUUID(),
                   type: 'PAYMENT',
@@ -367,17 +596,23 @@ export class BatchCreateOrderUseCase {
                   fromAccountType: 'WALLET',
                   toAccountType: 'ORDER',
                   referenceNumber: `REF-WALLET-${Date.now()}-${paymentIndex}`,
+                  userReference: receiptNumber,
                   amount: paymentAmount,
                   date: new Date(),
                   clientId: dto.clientId,
                   clientName: clientName,
                   orderPaymentId: firstSplitPaymentId || undefined,
+                  orderId: dto.orders.length === 1 ? allOrders[0].id : null,
                   createdBy,
-                  notes: `Pago con billetera virtual - ${receiptNumber}`,
+                  notes: notesText,
                   bankAccountId: walletBankId,
                   paymentMethod: 'BILLETERA_VIRTUAL',
+                  balanceBefore: balanceBefore,
+                  balanceAfter: balanceAfter,
                   version: 1
                 });
+                
+                console.log(`[BatchCreateOrder] Financial record added to batch (will be created with createMany)`);
               }
             }
           }

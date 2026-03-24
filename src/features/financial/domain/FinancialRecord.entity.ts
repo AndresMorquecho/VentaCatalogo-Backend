@@ -32,6 +32,9 @@ export interface FinancialRecordProps {
   fromAccountType?: AccountType;
   toAccountType?: AccountType;
   transactionGroupId?: string;
+  balanceBefore?: number;
+  balanceAfter?: number;
+  clientDocument?: string;
   createdAt: Date;
   version: number;
 }
@@ -113,6 +116,18 @@ export class FinancialRecord extends Entity<FinancialRecordProps> {
     return this.props.transactionGroupId;
   }
 
+  get balanceBefore(): number | undefined {
+    return this.props.balanceBefore;
+  }
+
+  get balanceAfter(): number | undefined {
+    return this.props.balanceAfter;
+  }
+
+  get clientDocument(): string | undefined {
+    return this.props.clientDocument;
+  }
+
   get createdAt(): Date {
     return this.props.createdAt;
   }
@@ -153,6 +168,9 @@ export class FinancialRecord extends Entity<FinancialRecordProps> {
       fromAccountType: this.fromAccountType,
       toAccountType: this.toAccountType,
       transactionGroupId: this.transactionGroupId,
+      balanceBefore: this.balanceBefore,
+      balanceAfter: this.balanceAfter,
+      clientDocument: this.clientDocument,
       createdAt: this.createdAt,
       version: this.version
     };
