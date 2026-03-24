@@ -90,17 +90,7 @@ export class ValidationService {
     }[] = [];
 
     for (const order of orders) {
-      // Check if order is a shadow order (parentOrderId is not null)
-      if (order.parentOrderId !== null) {
-        invalidOrders.push({
-          orderId: order.id,
-          receiptNumber: order.receiptNumber,
-          currentStatus: order.status
-        });
-        continue;
-      }
-
-      // Check if order is in ENTREGADO status
+      // Check if order is in ENTREGADO status (Requirement 3.2: Only delivered orders can be exchanged)
       if (order.status !== 'ENTREGADO') {
         invalidOrders.push({
           orderId: order.id,
@@ -110,7 +100,7 @@ export class ValidationService {
         continue;
       }
 
-      // Check if order is already in an active batch
+      // Check if order is already in an active batch (Requirement 3.5: No multiple active batches)
       const activeBatchNumbers = await this.getActiveBatchNumbers(order.id);
       if (activeBatchNumbers.length > 0) {
         invalidOrders.push({

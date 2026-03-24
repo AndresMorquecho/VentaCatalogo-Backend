@@ -23,9 +23,7 @@ function generateBatchNumber(): string {
 }
 
 function calcPaid(payments: { method: string; amount: any }[]): number {
-  const hasSplit = payments.some((p) => p.method === 'SPLIT_PAYMENT');
   return payments
-    .filter((p) => !(hasSplit && p.method === 'CREDITO_CLIENTE'))
     .reduce((sum, p) => sum + Number(p.amount), 0);
 }
 
@@ -123,6 +121,7 @@ export class CreateExchangeBatchUseCase {
         
         console.log(`[CreateExchangeBatch] Creating shadow order ${revReceipt} (${orderNumber}) for client ${order.clientName}`);
 
+        // Transfer the paid amount as a credit payment
         await tx.order.create({
           data: {
             receiptNumber: revReceipt,
@@ -149,7 +148,6 @@ export class CreateExchangeBatchUseCase {
                 brandName: (order as any).brand?.name || 'Marca'
               }
             },
-            // Transfer the paid amount as a credit payment
             payments: {
               create: {
                 amount: paid,
@@ -160,6 +158,31 @@ export class CreateExchangeBatchUseCase {
             }
           }
         });
+
+        // Task: Add FinancialRecord for the exchange transfer to maintain audit trail
+        if (paid > 0) {
+          const client = await tx.client.findUnique({ where: { id: order.clientId }, select: { identificationNumber: true } });
+          await tx.financialRecord.create({
+            data: {
+              type: 'EXCHANGE_CREDIT',
+              referenceNumber: `EXC-TRANS-${order.id.substring(0, 8)}-${Date.now()}`,
+              amount: paid,
+              date: new Date(),
+              clientId: order.clientId,
+              clientName: order.clientName,
+              clientDocument: client?.identificationNumber || '—',
+              orderId: order.id,
+              bankAccountId: order.bankAccountId || '00000000-0000-0000-0000-000000000000', // Use dummy/internal if not set
+              source: 'EXCHANGE',
+              paymentMethod: 'SALDO_A_FAVOR',
+              movementType: 'INTERNAL',
+              createdBy: dto.createdByName || 'system',
+              notes: `Transferencia de abono por cambio | Cédula: ${client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: CAMBIO_REPOSICION`,
+              version: 1,
+              createdAt: new Date()
+            }
+          });
+        }
       }
 
       return batch;

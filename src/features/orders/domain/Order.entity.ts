@@ -40,7 +40,8 @@ export enum OrderStatus {
   POR_RECIBIR = 'POR_RECIBIR',
   RECIBIDO_EN_BODEGA = 'RECIBIDO_EN_BODEGA',
   ENTREGADO = 'ENTREGADO',
-  ANULADO = 'ANULADO'
+  ANULADO = 'ANULADO',
+  ENVIADO_A_CAMBIO = 'ENVIADO_A_CAMBIO'
 }
 
 export interface OrderItem {

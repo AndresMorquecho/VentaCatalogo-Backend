@@ -74,6 +74,27 @@ export class RegisterOrderPaymentUseCase {
 
                 // --- MANUAL PAYMENT PORTION ---
                 if (dto.amount > 0) {
+                    // Fetch account once for both validation and balance snapshot
+                    const bankAccount = await tx.bankAccount.findUnique({
+                        where: { id: dto.bankAccountId },
+                        select: { id: true, currentBalance: true, version: true, name: true, type: true }
+                    });
+
+                    if (!bankAccount) {
+                        throw new Error(`Bank account ${dto.bankAccountId} not found`);
+                    }
+
+                    // Validate financial integrity
+                    validateBankAccountBalance(
+                        Number(bankAccount.currentBalance),
+                        dto.amount,
+                        dto.bankAccountId!,
+                        bankAccount.name
+                    );
+
+                    const balanceBefore = Number(bankAccount.currentBalance);
+                    const balanceAfter = balanceBefore + dto.amount;
+
                     const finRef = dto.method !== 'EFECTIVO' && dto.referenceNumber
                         ? dto.referenceNumber
                         : await this.financialRepository.generateReferenceNumber();
@@ -101,7 +122,7 @@ export class RegisterOrderPaymentUseCase {
                             orderId: order.id,
                             orderPaymentId: mainPayment.id,
                             createdBy,
-                            notes: (dto.notes || `Abono a pedido`) + ` | Cédula: ${clientDoc} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brandName} | Tipo: ${order.type.toUpperCase()}`,
+                            notes: (dto.notes || `Abono a pedido`) + ` | Cédula: ${clientDoc} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brandName || '—'} | Tipo: ${order.type.toUpperCase()}`,
                             userReference: payRef,
                             bankAccountId: dto.bankAccountId!,
                             source: 'ORDER_PAYMENT',
@@ -110,34 +131,16 @@ export class RegisterOrderPaymentUseCase {
                             fromAccountType: dto.method === 'BILLETERA_VIRTUAL' ? 'WALLET' : 'EXTERNAL',
                             toAccountType: dto.method === 'BILLETERA_VIRTUAL' ? 'ORDER' : 'CASH',
                             clientDocument: clientDoc,
-                            version: 1
+                            balanceBefore,
+                            balanceAfter,
+                            version: 1,
+                            createdAt: new Date()
                         }
                     });
 
-                    // Read account with version
-                    const bankAccount = await tx.bankAccount.findUnique({
-                        where: { id: dto.bankAccountId },
-                        select: { id: true, currentBalance: true, version: true, name: true }
-                    });
-
-                    if (!bankAccount) {
-                        throw new Error(`Bank account ${dto.bankAccountId} not found`);
-                    }
-
-                    // Validate financial integrity
-                    validateBankAccountBalance(
-                        Number(bankAccount.currentBalance),
-                        dto.amount,
-                        dto.bankAccountId!,
-                        bankAccount.name
-                    );
-
                     // Update with optimistic locking
                     const result = await tx.bankAccount.updateMany({
-                        where: {
-                            id: dto.bankAccountId,
-                            version: bankAccount.version
-                        },
+                        where: { id: dto.bankAccountId, version: bankAccount.version },
                         data: {
                             currentBalance: { increment: dto.amount },
                             updatedAt: new Date(),
