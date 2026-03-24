@@ -3,10 +3,10 @@ import { Result } from '../../../shared/domain/Result';
 import { IOrderRepository } from '../../orders/domain/IOrderRepository';
 import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRecordRepository';
 import { IBankAccountRepository } from '../../financial/domain/IBankAccountRepository';
-import { FinancialRecord } from '../../financial/domain/FinancialRecord.entity';
 import { prisma } from '../../../lib/prisma';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
+import { Order, OrderStatus } from '../../orders/domain/Order.entity';
 
 export interface RegisterOrderPaymentDTO {
     orderId: string;
@@ -27,7 +27,8 @@ export class RegisterOrderPaymentUseCase {
 
     private static readonly BLOCKED_METHODS = ['TRANSFERENCIA', 'DEPOSITO', 'CHEQUE'];
 
-    async execute(dto: RegisterOrderPaymentDTO, createdBy: string): Promise<Result<any>> {
+    async execute(dto: RegisterOrderPaymentDTO, createdBy: string, existingTx?: any): Promise<Result<any>> {
+        const txClient = existingTx || prisma;
         try {
             // Validate payment method — TRANSFERENCIA/DEPOSITO/CHEQUE only allowed for wallet recharges
             if (RegisterOrderPaymentUseCase.BLOCKED_METHODS.includes(dto.method)) {
@@ -37,6 +38,12 @@ export class RegisterOrderPaymentUseCase {
             // 1. Verify existence of core entities before transaction
             const order = await this.orderRepository.findById(dto.orderId);
             if (!order) return Result.fail(`Order with ID ${dto.orderId} not found`);
+
+            const client = await txClient.client.findUnique({
+                where: { id: order.clientId },
+                select: { identificationNumber: true, id: true }
+            });
+            const clientDoc = client?.identificationNumber || 'S/N';
 
             if (dto.amount > 0 && !dto.bankAccountId) {
                 return Result.fail(`Bank account is required when adding a payment amount`);
@@ -54,7 +61,7 @@ export class RegisterOrderPaymentUseCase {
 
             // 2. Validate reference duplicates if not CASH
             if (dto.amount > 0 && dto.method !== 'EFECTIVO' && dto.referenceNumber) {
-                const existing = await prisma.financialRecord.findFirst({
+                const existing = await txClient.financialRecord.findFirst({
                     where: { referenceNumber: dto.referenceNumber }
                 });
                 if (existing) {
@@ -62,7 +69,7 @@ export class RegisterOrderPaymentUseCase {
                 }
             }
 
-            const result = await prisma.$transaction(async (tx) => {
+            const runInTransaction = async (tx: any) => {
                 let mainPayment = null;
 
                 // --- MANUAL PAYMENT PORTION ---
@@ -94,7 +101,7 @@ export class RegisterOrderPaymentUseCase {
                             orderId: order.id,
                             orderPaymentId: mainPayment.id,
                             createdBy,
-                            notes: (dto.notes || `Abono a pedido`) + ` | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brandName} | Tipo: ${order.type.toUpperCase()}`,
+                            notes: (dto.notes || `Abono a pedido`) + ` | Cédula: ${clientDoc} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brandName} | Tipo: ${order.type.toUpperCase()}`,
                             userReference: payRef,
                             bankAccountId: dto.bankAccountId!,
                             source: 'ORDER_PAYMENT',
@@ -102,6 +109,7 @@ export class RegisterOrderPaymentUseCase {
                             movementType: dto.method === 'BILLETERA_VIRTUAL' ? 'INTERNAL' : 'INCOME',
                             fromAccountType: dto.method === 'BILLETERA_VIRTUAL' ? 'WALLET' : 'EXTERNAL',
                             toAccountType: dto.method === 'BILLETERA_VIRTUAL' ? 'ORDER' : 'CASH',
+                            clientDocument: clientDoc,
                             version: 1
                         }
                     });
@@ -149,9 +157,19 @@ export class RegisterOrderPaymentUseCase {
                 // --- CREDIT USED PORTION ---
                 let creditPayment = null;
                 if (dto.creditAmount && dto.creditAmount > 0) {
+                    // Optimized query: get account specifically
+                    const clientAccount = await tx.clientAccount.findUnique({
+                        where: { clientId: order.clientId },
+                        select: { id: true, totalCreditAvailable: true, version: true }
+                    });
+
+                    if (!clientAccount) {
+                        throw new Error(`No se encontró cuenta activa para el cliente ${order.clientName}`);
+                    }
+
                     const availableCredits = await tx.clientCredit.findMany({
                         where: {
-                            clientAccount: { clientId: order.clientId },
+                            clientAccountId: clientAccount.id,
                             status: 'AVAILABLE'
                         },
                         select: {
@@ -204,31 +222,23 @@ export class RegisterOrderPaymentUseCase {
                         throw new Error(`Saldo a favor insuficiente para cubrir $${dto.creditAmount.toFixed(2)}`);
                     }
 
-                    // TASK-4.2: Sync ClientAccount.totalCreditAvailable after consuming credit with optimistic locking
-                    const clientAccount = await tx.clientAccount.findUnique({
-                        where: { clientId: order.clientId },
-                        select: { id: true, totalCreditAvailable: true, version: true }
+                    const accountResult = await tx.clientAccount.updateMany({
+                        where: {
+                            id: clientAccount.id,
+                            version: clientAccount.version
+                        },
+                        data: {
+                            totalCreditAvailable: { decrement: dto.creditAmount },
+                            version: { increment: 1 }
+                        }
                     });
 
-                    if (clientAccount) {
-                        const accountResult = await tx.clientAccount.updateMany({
-                            where: {
-                                id: clientAccount.id,
-                                version: clientAccount.version
-                            },
-                            data: {
-                                totalCreditAvailable: { decrement: dto.creditAmount },
-                                version: { increment: 1 }
-                            }
-                        });
-
-                        if (accountResult.count === 0) {
-                            throw new ConcurrencyError(
-                                'Client account was modified by another transaction. Please retry.',
-                                'ClientAccount',
-                                clientAccount.id
-                            );
-                        }
+                    if (accountResult.count === 0) {
+                        throw new ConcurrencyError(
+                            'Client account was modified by another transaction. Please retry.',
+                            'ClientAccount',
+                            clientAccount.id
+                        );
                     }
 
                     const creditPayRef = await this.financialRepository.generatePaymentReceiptNumber();
@@ -262,7 +272,7 @@ export class RegisterOrderPaymentUseCase {
                             orderId: order.id,
                             orderPaymentId: creditPayment.id,
                             createdBy,
-                            notes: `Abono con saldo a favor | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brandName} | Tipo: ${order.type.toUpperCase()}`,
+                            notes: `Abono con saldo a favor | Cédula: ${clientDoc} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brandName} | Tipo: ${order.type.toUpperCase()}`,
                             userReference: creditPayRef,
                             bankAccountId: creditBankAccountId!,
                             source: 'ORDER_PAYMENT',
@@ -270,15 +280,44 @@ export class RegisterOrderPaymentUseCase {
                             movementType: 'INTERNAL',
                             fromAccountType: 'WALLET',
                             toAccountType: 'ORDER',
+                            clientDocument: clientDoc,
                             version: 1
                         }
                     });
                 }
 
-                return mainPayment || creditPayment;
-            });
+                // --- SYNC ORDER STATUS ---
+                // We reload the order data from DB (in tx) or just use the updated payments count
+                const allPayments = await tx.orderPayment.findMany({
+                    where: { orderId: dto.orderId },
+                    select: { amount: true }
+                });
+                
+                const totalPaid = allPayments.reduce((acc: number, p: any) => acc + Number(p.amount), 0);
+                const orderTotal = Number(order.realInvoiceTotal || order.total);
 
-            return Result.ok(result);
+                if (totalPaid >= orderTotal - 0.01) {
+                    if (order.status !== OrderStatus.ENTREGADO && order.status !== OrderStatus.ANULADO) {
+                        await tx.order.update({
+                            where: { id: dto.orderId },
+                            data: { 
+                                status: OrderStatus.ENTREGADO,
+                                deliveryDate: new Date(),
+                                updatedAt: new Date()
+                            }
+                        });
+                    }
+                }
+
+                return mainPayment || creditPayment;
+            };
+
+            // Eexecute in existing transaction or new one
+            const finalResult = existingTx 
+                ? await runInTransaction(existingTx) 
+                : await prisma.$transaction(runInTransaction);
+
+            return Result.ok(finalResult);
 
         } catch (error) {
             console.error('RegisterOrderPaymentUseCase Error:', error);

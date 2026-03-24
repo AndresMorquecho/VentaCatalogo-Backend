@@ -226,7 +226,8 @@ export class ReceiveOrderUseCase {
               paymentMethod: data.paymentMethod!,
               movementType: 'INCOME',
               createdBy: userId,
-              notes: `Abono en recepción | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brandName} | Tipo: ${order.type.toUpperCase()}`,
+              notes: `Abono en recepción | Cédula: ${order.client.identificationNumber} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brandName} | Tipo: ${order.type.toUpperCase()}`,
+              clientDocument: order.client.identificationNumber,
               userReference: abonoReceiptNumber
             }
           });

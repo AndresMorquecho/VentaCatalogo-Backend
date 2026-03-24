@@ -39,7 +39,8 @@ export interface OrderProps {
 export enum OrderStatus {
   POR_RECIBIR = 'POR_RECIBIR',
   RECIBIDO_EN_BODEGA = 'RECIBIDO_EN_BODEGA',
-  ENTREGADO = 'ENTREGADO'
+  ENTREGADO = 'ENTREGADO',
+  ANULADO = 'ANULADO'
 }
 
 export interface OrderItem {
@@ -117,15 +118,13 @@ export class Order extends Entity<OrderProps> {
     return this.props.brandName;
   }
 
+  get realInvoiceTotal(): number | undefined {
+    return this.props.realInvoiceTotal;
+  }
+
   getPaidAmount(): number {
-    const hasSplitPayment = this.props.payments.some(p => p.method === 'SPLIT_PAYMENT');
     return this.props.payments
-      .filter(p => {
-        // When SPLIT_PAYMENT exists, CREDITO_CLIENTE is already included in the split total
-        if (hasSplitPayment && p.method === 'CREDITO_CLIENTE') return false;
-        return true;
-      })
-      .reduce((sum, p) => sum + p.amount, 0);
+      .reduce((sum, p) => sum + Number(p.amount), 0);
   }
 
   getPendingAmount(): number {

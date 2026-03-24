@@ -221,6 +221,7 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
         notes: data.notes || `Abono a pedido`,
         bankAccountId: data.bankAccountId,
         paymentMethod: data.paymentMethod,
+        clientDocument: data.clientDocument || null,
         version: 1
       }
     });

@@ -119,7 +119,8 @@ export class DeliverOrderUseCase {
               paymentMethod: payment.paymentMethod,
               movementType: 'INCOME',
               createdBy: userId,
-              notes: data.notes || `Pago en entrega (${payment.paymentMethod}) - Pedido ${order.receiptNumber}`
+              clientDocument: order.client.identificationNumber,
+              notes: data.notes || `Pago en entrega (${payment.paymentMethod}) | Cédula: ${order.client.identificationNumber} | Pedido: ${order.receiptNumber}`
             }
           });
 

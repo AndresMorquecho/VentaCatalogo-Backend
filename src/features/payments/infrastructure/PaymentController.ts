@@ -65,74 +65,75 @@ export class PaymentController {
                 return HttpResponse.badRequest(res, 'Missing required field: payments array is required.');
             }
 
-            const results = [];
+            // Procesar todos los métodos de pago en una sola transacción atómica
+            const processResults = await prisma.$transaction(async (tx) => {
+                const innerResults = [];
 
-            // Procesar cada método de pago por separado
-            for (const payment of payments) {
-                const amount = Number(payment.amount || 0);
-                const method = payment.method;
-                const referenceNumber = payment.transactionReference || payment.transaction_reference;
-                const bankAccountId = payment.bankAccountId || payment.bank_account_id;
-                const notes = payment.notes;
+                for (const payment of payments) {
+                    const amount = Number(payment.amount || 0);
+                    const method = payment.method;
+                    const referenceNumber = payment.transactionReference || payment.transaction_reference;
+                    const bankAccountId = payment.bankAccountId || payment.bank_account_id;
+                    const notes = payment.notes;
 
-                console.log('Processing payment:', { amount, method, referenceNumber, bankAccountId, notes }); // Debug log
-
-                if (amount <= 0) {
-                    return HttpResponse.badRequest(res, 'Each payment must have an amount greater than zero.');
-                }
-
-                if (!method) {
-                    return HttpResponse.badRequest(res, 'Each payment must have a method.');
-                }
-
-                // Para billetera virtual, usar creditAmount en lugar de amount
-                if (method === 'BILLETERA_VIRTUAL') {
-                    console.log('🔵 WALLET PAYMENT DETECTED - Creating CREDITO_CLIENTE record');
-                    const dto = {
-                        orderId,
-                        amount: 0,
-                        method: 'EFECTIVO', // Método dummy, no se usa
-                        referenceNumber: undefined,
-                        bankAccountId: 'default',
-                        notes: notes || 'Pago con billetera virtual',
-                        creditAmount: amount
-                    };
-
-                    const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username);
-                    if (result.isFailure) {
-                        return HttpResponse.fail(res, result.error!);
-                    }
-                    console.log('✅ WALLET PAYMENT PROCESSED - Result:', result.getValue());
-                    results.push(result.getValue());
-                } else {
-                    console.log('🟢 NORMAL PAYMENT DETECTED - Creating payment with method:', method);
-                    // Pago manual normal
-                    if (!bankAccountId) {
-                        return HttpResponse.badRequest(res, 'bankAccountId is required for non-virtual wallet payments.');
+                    if (amount <= 0) {
+                        throw new Error('Cada pago debe tener un monto mayor a cero.');
                     }
 
-                    const dto = {
-                        orderId,
-                        amount,
-                        method,
-                        referenceNumber,
-                        bankAccountId,
-                        notes,
-                        creditAmount: 0
-                    };
-
-                    const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username);
-                    if (result.isFailure) {
-                        return HttpResponse.fail(res, result.error!);
+                    if (!method) {
+                        throw new Error('Cada pago debe tener un método definido.');
                     }
-                    console.log('✅ NORMAL PAYMENT PROCESSED - Result:', result.getValue());
-                    results.push(result.getValue());
-                }
-            }
 
-            return HttpResponse.created(res, { payments: results, message: `${results.length} payment(s) registered successfully` });
+                    if (method === 'BILLETERA_VIRTUAL') {
+                        // Pago con billetera
+                        const dto = {
+                            orderId,
+                            amount: 0,
+                            method: 'EFECTIVO',
+                            referenceNumber: undefined,
+                            bankAccountId: 'default',
+                            notes: notes || 'Pago con billetera virtual',
+                            creditAmount: amount
+                        };
+
+                        const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username, tx);
+                        if (result.isFailure) {
+                            throw new Error(result.error || 'Error procesando pago con billetera');
+                        }
+                        innerResults.push(result.getValue());
+                    } else {
+                        // Pago manual (Efectivo/Banco)
+                        if (!bankAccountId) {
+                            throw new Error('Se requiere una cuenta de destino para pagos manuales.');
+                        }
+
+                        const dto = {
+                            orderId,
+                            amount,
+                            method,
+                            referenceNumber,
+                            bankAccountId,
+                            notes,
+                            creditAmount: 0
+                        };
+
+                        const result = await this.registerOrderPaymentUseCase.execute(dto, req.user!.username, tx);
+                        if (result.isFailure) {
+                            throw new Error(result.error || 'Error procesando pago manual');
+                        }
+                        innerResults.push(result.getValue());
+                    }
+                }
+                return innerResults;
+            });
+
+            return HttpResponse.created(res, { 
+                payments: processResults, 
+                message: `${processResults.length} pago(s) registrado(s) correctamente` 
+            });
         } catch (error) {
-            return HttpResponse.fail(res, error instanceof Error ? error.message : 'An unexpected error occurred during payment registration.');
+            console.error('[PaymentController] Error:', error);
+            return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error inesperado durante el registro del pago.');
         }
     };
 

@@ -352,6 +352,7 @@ export class BatchCreateOrderUseCase {
                   paymentMethod: 'BILLETERA_VIRTUAL',
                   balanceBefore: balanceBefore,
                   balanceAfter: balanceAfter,
+                  clientDocument: clientDoc,
                   version: 1
                 });
                 
@@ -419,6 +420,7 @@ export class BatchCreateOrderUseCase {
                 paymentMethod: dto.paymentMethod,
                 balanceBefore: balanceBefore,
                 balanceAfter: balanceAfter,
+                clientDocument: clientDoc,
                 version: 1
               });
 
@@ -515,6 +517,7 @@ export class BatchCreateOrderUseCase {
                 paymentMethod: paymentItem.method,
                 balanceBefore: balanceBefore,
                 balanceAfter: balanceAfter,
+                clientDocument: clientDoc,
                 version: 1
               });
 
@@ -624,6 +627,7 @@ export class BatchCreateOrderUseCase {
                   paymentMethod: 'BILLETERA_VIRTUAL',
                   balanceBefore: balanceBefore,
                   balanceAfter: balanceAfter,
+                  clientDocument: clientDoc,
                   version: 1
                 });
                 

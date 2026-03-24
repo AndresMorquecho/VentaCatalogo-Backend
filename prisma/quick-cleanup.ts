@@ -7,7 +7,7 @@ async function main() {
 
   try {
     // El orden es importante por las claves foráneas
-    
+
     console.log('🗑️  Borrando movimientos y registros financieros...');
     await prisma.financialRecord.deleteMany();
     await prisma.orderPayment.deleteMany();
@@ -29,12 +29,12 @@ async function main() {
     await prisma.rewardApplication.deleteMany();
     await prisma.call.deleteMany();
     await prisma.loyaltyRedemption.deleteMany();
-    
+
     // Antes de borrar pedidos, desvincular relaciones circulares si existen (parentOrder)
     await prisma.order.updateMany({
       data: { parentOrderId: null, loyaltyRedemptionId: null, exchangeItemId: null }
     });
-    
+
     await prisma.order.deleteMany();
     await prisma.orderReceipt.deleteMany();
     await prisma.receptionBatch.deleteMany();

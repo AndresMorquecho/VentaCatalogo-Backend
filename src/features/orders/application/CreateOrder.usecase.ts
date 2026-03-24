@@ -225,6 +225,7 @@ export class CreateOrderUseCase {
               userReference: pReceiptNumber,
               bankAccountId: pBankId,
               paymentMethod: p.method,
+              clientDocument: clientDoc,
               version: 1
             });
 
