@@ -421,13 +421,8 @@ export class CreateReceptionBatchOptimizedUseCase {
             ? order.bankAccountId 
             : mainCashAccountId;
 
-          const currentGenBalance = accountBalancesMap.get(generationBankAccId) || 0;
-          const balanceBeforeGen = currentGenBalance;
-          const balanceAfterGen = balanceBeforeGen + creditAmount;
-          accountBalancesMap.set(generationBankAccId, balanceAfterGen);
-
-          const currentWalletBal = clientAccountBalancesMap.get(order.clientId) || 0;
-          const walletBalBeforeGen = currentWalletBal;
+          const clientAccount = clientAccounts.find(a => a.clientId === order.clientId);
+          const walletBalBeforeGen = clientAccountBalancesMap.get(order.clientId) || 0;
           const walletBalAfterGen = walletBalBeforeGen + creditAmount;
           clientAccountBalancesMap.set(order.clientId, walletBalAfterGen);
 
@@ -447,8 +442,8 @@ export class CreateReceptionBatchOptimizedUseCase {
             createdBy: userId,
             notes: `Saldo a favor generado | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type?.toUpperCase()}`,
             clientDocument: (order as any).client?.identificationNumber,
-            balanceBefore: walletBalBeforeGen, // Use wallet balance for UI
-            balanceAfter: walletBalAfterGen,   // Use wallet balance for UI
+            balanceBefore: walletBalBeforeGen,
+            balanceAfter: walletBalAfterGen,
             version: 1,
             createdAt: new Date()
           });
@@ -637,8 +632,10 @@ export class CreateReceptionBatchOptimizedUseCase {
               clientAccountCredits.set(order.clientId, currentCredit + walletDist.amount);
             }
           } else {
-            // COMPORTAMIENTO POR DEFECTO: Todo a billetera virtual
-            const currentWalletAppBalance = accountBalancesMap.get(order.bankAccountId || mainCashAccountId) || 0;
+            // Register financial records (outflow from order, inflow to wallet)
+            const walletBalBefore = clientAccountBalancesMap.get(order.clientId) || 0;
+            const walletBalAfter = walletBalBefore; // Moving from Order balance to Wallet balance doesn't change the TOTAL wallet pool for this client yet because it was just generated
+
             const distGroupId = crypto.randomUUID();
 
             clientCredits.push({
@@ -672,8 +669,8 @@ export class CreateReceptionBatchOptimizedUseCase {
               createdBy: userId,
               notes: `Distribución de salto restante | Cédula: ${(order as any).client?.identificationNumber || '—'}`,
               clientDocument: (order as any).client?.identificationNumber,
-              balanceBefore: currentWalletAppBalance,
-              balanceAfter: currentWalletAppBalance,
+              balanceBefore: walletBalBefore,
+              balanceAfter: walletBalAfter,
               version: 1,
               createdAt: new Date()
             });
@@ -698,8 +695,8 @@ export class CreateReceptionBatchOptimizedUseCase {
               createdBy: userId,
               notes: `Saldo guardado en billetera virtual | Cédula: ${(order as any).client?.identificationNumber || '—'}`,
               clientDocument: (order as any).client?.identificationNumber,
-              balanceBefore: currentWalletAppBalance,
-              balanceAfter: currentWalletAppBalance,
+              balanceBefore: walletBalBefore,
+              balanceAfter: walletBalAfter,
               version: 1,
               createdAt: new Date()
             });

@@ -355,7 +355,6 @@ export class BatchCreateOrderUseCase {
                   clientDocument: clientDoc,
                   version: 1
                 });
-                
                 console.log(`[BatchCreateOrder] Financial record for simple wallet payment added to batch`);
               }
             }
@@ -426,26 +425,26 @@ export class BatchCreateOrderUseCase {
 
               totalBankIncrement += rowDeposit;
             }
-          }
 
-          // Payment de crédito (solo primera iteración)
-          if (i === 0 && dto.creditAmount && dto.creditAmount > 0) {
-            allPayments.push({
-              id: crypto.randomUUID(),
-              orderId: orderId,
-              amount: Number(dto.creditAmount),
-              method: 'CREDITO_CLIENTE',
-              receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
-              description: 'Saldo a favor aplicado',
-              createdAt: new Date()
-            });
+            // Payment de crédito (solo primera iteración) - Solo en flujo simple
+            // En flujo SPLIT, el crédito ya está incluido en totalAmount -> rowDeposit
+            if (i === 0 && dto.creditAmount && dto.creditAmount > 0) {
+              allPayments.push({
+                id: crypto.randomUUID(),
+                orderId: orderId,
+                amount: Number(dto.creditAmount),
+                method: 'CREDITO_CLIENTE',
+                receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
+                description: 'Saldo a favor aplicado',
+                createdAt: new Date()
+              });
+            }
           }
         }
 
         // ============================================================================
         // SPLIT PAYMENT: Crear FinancialRecords por método de pago (fuera del loop)
         // Un FinancialRecord por método, independiente de la distribución por pedido
-        // ============================================================================
         const splitBankIncrements = new Map<string, number>(); // bankAccountId -> totalAmount
 
         if (dto.paymentData && dto.paymentData.payments && dto.paymentData.payments.length > 0) {

@@ -197,7 +197,7 @@ export class ReceiveOrderUseCase {
         }
         const abonoReceiptNumber = `REC-ABO-${nextNumber.toString().padStart(6, '0')}`;
 
-        await (tx.orderPayment as any).create({
+        const createdPayment = await (tx.orderPayment as any).create({
           data: {
             orderId: order.id,
             amount: data.abonoRecepcion,
@@ -209,30 +209,7 @@ export class ReceiveOrderUseCase {
         });
 
         if (bankAccountId) {
-          const referenceNumber = data.paymentMethod !== 'EFECTIVO' && data.reference
-            ? data.reference
-            : await this.financialRepository.generateReferenceNumber();
-          await tx.financialRecord.create({
-            data: {
-              type: 'PAYMENT',
-              referenceNumber,
-              amount: data.abonoRecepcion,
-              date: new Date(),
-              clientId: order.clientId,
-              clientName: order.clientName,
-              orderId: order.id,
-              bankAccountId: bankAccountId,
-              source: 'ORDER_PAYMENT',
-              paymentMethod: data.paymentMethod!,
-              movementType: 'INCOME',
-              createdBy: userId,
-              notes: `Abono en recepción | Cédula: ${order.client.identificationNumber} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brandName} | Tipo: ${order.type.toUpperCase()}`,
-              clientDocument: order.client.identificationNumber,
-              userReference: abonoReceiptNumber
-            }
-          });
-
-          // Read account with version
+          // Read account with version and current balance
           const bankAccount = await tx.bankAccount.findUnique({
             where: { id: bankAccountId },
             select: { id: true, currentBalance: true, version: true, name: true }
@@ -249,6 +226,37 @@ export class ReceiveOrderUseCase {
             bankAccountId,
             bankAccount.name
           );
+
+          const balanceBefore = Number(bankAccount.currentBalance);
+          const balanceAfter = balanceBefore + data.abonoRecepcion;
+
+          const referenceNumber = data.paymentMethod !== 'EFECTIVO' && data.reference
+            ? data.reference
+            : await this.financialRepository.generateReferenceNumber();
+
+          await tx.financialRecord.create({
+            data: {
+              type: 'PAYMENT',
+              referenceNumber,
+              amount: data.abonoRecepcion,
+              date: new Date(),
+              clientId: order.clientId,
+              clientName: order.clientName,
+              orderId: order.id,
+              orderPaymentId: createdPayment.id,
+              bankAccountId: bankAccountId,
+              source: 'ORDER_PAYMENT',
+              paymentMethod: data.paymentMethod!,
+              movementType: 'INCOME',
+              createdBy: userId,
+              notes: `Abono en recepción | Cédula: ${order.client.identificationNumber} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type.toUpperCase()}`,
+              clientDocument: order.client.identificationNumber,
+              userReference: abonoReceiptNumber,
+              balanceBefore: balanceBefore != null ? Number(balanceBefore) : null,
+              balanceAfter: balanceAfter != null ? Number(balanceAfter) : null,
+              version: 1
+            }
+          });
 
           // Update with optimistic locking
           const result = await tx.bankAccount.updateMany({

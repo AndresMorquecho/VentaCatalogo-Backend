@@ -284,6 +284,8 @@ export class RegisterOrderPaymentUseCase {
                             fromAccountType: 'WALLET',
                             toAccountType: 'ORDER',
                             clientDocument: clientDoc,
+                            balanceBefore: Number(clientAccount.totalCreditAvailable),
+                            balanceAfter: Number(clientAccount.totalCreditAvailable) - dto.creditAmount,
                             version: 1
                         }
                     });

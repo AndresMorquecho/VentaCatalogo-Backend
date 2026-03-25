@@ -66,7 +66,7 @@ export class DeliverOrderUseCase {
             throw new Error(`Debe seleccionar una cuenta bancaria para el pago de $${payment.amount} con ${payment.paymentMethod}`);
           }
 
-          // Buscar cuenta bancaria (para efectivo, buscar cuenta de tipo CASH)
+          // Find bank account ID
           let bankAccountId = payment.bankAccountId;
           if (payment.paymentMethod === 'EFECTIVO' && !bankAccountId) {
             const cashAccount = await tx.bankAccount.findFirst({
@@ -75,22 +75,31 @@ export class DeliverOrderUseCase {
             if (cashAccount) bankAccountId = cashAccount.id;
           }
 
-          // Validar referencia duplicada para métodos que no son efectivo ni crédito
-          if (payment.paymentMethod !== 'EFECTIVO' && !isCredit && payment.reference) {
-            const existingPayment = await tx.financialRecord.findFirst({
-              where: {
-                paymentMethod: payment.paymentMethod,
-                referenceNumber: payment.reference
-              }
-            });
+          let balanceBefore: number | null = null;
+          let balanceAfter: number | null = null;
 
-            if (existingPayment) {
-              throw new Error(`La referencia ${payment.reference} ya fue utilizada en otro pago con método ${payment.paymentMethod}`);
+          if (isCredit) {
+            const clientAccount = await tx.clientAccount.findUnique({
+              where: { clientId: order.clientId },
+              select: { totalCreditAvailable: true }
+            });
+            if (clientAccount) {
+              balanceBefore = Number(clientAccount.totalCreditAvailable);
+              balanceAfter = balanceBefore - payment.amount;
+            }
+          } else if (bankAccountId) {
+            const bankAccount = await tx.bankAccount.findUnique({
+              where: { id: bankAccountId },
+              select: { currentBalance: true }
+            });
+            if (bankAccount) {
+              balanceBefore = Number(bankAccount.currentBalance);
+              balanceAfter = balanceBefore + payment.amount;
             }
           }
 
           // Crear registro de pago del pedido
-          await tx.orderPayment.create({
+          const createdPayment = await tx.orderPayment.create({
             data: {
               orderId: order.id,
               amount: payment.amount,
@@ -114,13 +123,19 @@ export class DeliverOrderUseCase {
               clientId: order.clientId,
               clientName: order.clientName,
               orderId: order.id,
+              orderPaymentId: createdPayment.id,
               bankAccountId: bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
               source: 'ORDER_PAYMENT',
               paymentMethod: payment.paymentMethod,
-              movementType: 'INCOME',
+              movementType: isCredit ? 'INTERNAL' : 'INCOME',
+              fromAccountType: isCredit ? 'WALLET' : 'EXTERNAL',
+              toAccountType: isCredit ? 'ORDER' : 'CASH',
               createdBy: userId,
               clientDocument: order.client.identificationNumber,
-              notes: data.notes || `Pago en entrega (${payment.paymentMethod}) | Cédula: ${order.client.identificationNumber} | Pedido: ${order.receiptNumber}`
+              notes: (data.notes || `Pago en entrega (${payment.paymentMethod})`) + ` | Cédula: ${order.client.identificationNumber} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type.toUpperCase()}`,
+              balanceBefore: balanceBefore != null ? Number(balanceBefore) : null,
+              balanceAfter: balanceAfter != null ? Number(balanceAfter) : null,
+              version: 1
             }
           });
 
