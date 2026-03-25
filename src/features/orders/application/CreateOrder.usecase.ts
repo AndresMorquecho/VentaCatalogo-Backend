@@ -182,6 +182,50 @@ export class CreateOrderUseCase {
             const balanceBefore = Number(clientAcc?.totalCreditAvailable || 0);
             const balanceAfter = balanceBefore - pAmount;
             
+            // Buscar el crédito más antiguo (FIFO) y obtener el bankAccountId de su FinancialRecord de origen
+            const oldestCredit = await tx.clientCredit.findFirst({
+              where: {
+                clientAccount: { clientId: dto.clientId },
+                status: 'AVAILABLE',
+                remainingAmount: { gt: 0 }
+              },
+              orderBy: { createdAt: 'asc' },
+              select: {
+                id: true,
+                originTransactionId: true
+              }
+            });
+            
+            let walletBankId: string | null = null;
+            
+            if (oldestCredit?.originTransactionId) {
+              // Buscar el FinancialRecord que generó este crédito
+              const originFR = await tx.financialRecord.findUnique({
+                where: { id: oldestCredit.originTransactionId },
+                select: { bankAccountId: true }
+              });
+              
+              if (originFR?.bankAccountId) {
+                walletBankId = originFR.bankAccountId;
+              }
+            }
+            
+            // Fallback: buscar una cuenta de tipo CASH
+            if (!walletBankId) {
+              const cashAccount = await tx.bankAccount.findFirst({
+                where: { type: 'CASH', isActive: true },
+                select: { id: true }
+              });
+              
+              if (cashAccount) {
+                walletBankId = cashAccount.id;
+              }
+            }
+
+            if (!walletBankId) {
+               throw new Error('No se pudo determinar una cuenta bancaria para el movimiento de billetera virtual');
+            }
+
             financialRecordsPending.push({
               type: 'PAYMENT',
               source: 'ORDER_PAYMENT',
@@ -191,11 +235,11 @@ export class CreateOrderUseCase {
               amount: pAmount,
               date: new Date(),
               clientId: dto.clientId,
-              clientName: client.firstName, // Use database source of truth
+              clientName: dto.clientName,
               createdBy,
               notes: ((p as any).notes ? ((p as any).notes + ' | ') : `Pedido inicial | `) + `Cédula: ${clientDoc} | Orden: ${orderReceiptNumber} | Pedido: ${actualOrderNumber} | Marca: ${dto.brandName} | Tipo: ${dto.type.toUpperCase()}`,
               userReference: pReceiptNumber,
-              bankAccountId: 'default',
+              bankAccountId: walletBankId,
               paymentMethod: p.method,
               clientDocument: clientDoc,
               balanceBefore,
@@ -229,7 +273,7 @@ export class CreateOrderUseCase {
               amount: pAmount,
               date: new Date(),
               clientId: dto.clientId,
-              clientName: client.firstName, // Use database source of truth
+              clientName: dto.clientName,
               createdBy,
               notes: ((p as any).notes ? ((p as any).notes + ' | ') : `Pedido inicial | `) + `Cédula: ${clientDoc} | Orden: ${orderReceiptNumber} | Pedido: ${actualOrderNumber} | Marca: ${dto.brandName} | Tipo: ${dto.type.toUpperCase()}`,
               userReference: pReceiptNumber,
@@ -351,7 +395,7 @@ export class CreateOrderUseCase {
               data: {
                 ...fr,
                 clientId: dto.clientId,
-                clientName: client.firstName, // Use DB source of truth (full name is in firstName in this schema)
+                clientName: dto.clientName,
                 createdBy,
                 orderId: createdOrder.id,
                 orderPaymentId: match?.id || null,
