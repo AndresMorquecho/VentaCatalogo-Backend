@@ -156,6 +156,8 @@ export class CreateOrderUseCase {
         const paymentsToCreate = [];
         const financialRecordsPending: any[] = [];
         let totalCreditUsed = 0;
+        const accountBalancesMap = new Map<string, number>();
+        let clientWalletRunningBal: number | null = null;
 
         // 2. Sequential processing of financial movements
         for (const p of sources) {
@@ -175,12 +177,18 @@ export class CreateOrderUseCase {
 
           if (isWallet) {
             totalCreditUsed += pAmount;
-            const clientAcc = await tx.clientAccount.findUnique({
-              where: { clientId: dto.clientId },
-              select: { totalCreditAvailable: true }
-            });
-            const balanceBefore = Number(clientAcc?.totalCreditAvailable || 0);
-            const balanceAfter = balanceBefore - pAmount;
+            
+            if (clientWalletRunningBal === null) {
+              const clientAcc = await tx.clientAccount.findUnique({
+                where: { clientId: dto.clientId },
+                select: { totalCreditAvailable: true }
+              });
+              clientWalletRunningBal = Number(clientAcc?.totalCreditAvailable || 0);
+            }
+
+            const balanceBefore: number = clientWalletRunningBal!;
+            const balanceAfter: number = balanceBefore - pAmount;
+            clientWalletRunningBal = balanceAfter;
             
             // Buscar el crédito más antiguo (FIFO) y obtener el bankAccountId de su FinancialRecord de origen
             const oldestCredit = await tx.clientCredit.findFirst({
@@ -197,29 +205,20 @@ export class CreateOrderUseCase {
             });
             
             let walletBankId: string | null = null;
-            
             if (oldestCredit?.originTransactionId) {
-              // Buscar el FinancialRecord que generó este crédito
               const originFR = await tx.financialRecord.findUnique({
                 where: { id: oldestCredit.originTransactionId },
                 select: { bankAccountId: true }
               });
-              
-              if (originFR?.bankAccountId) {
-                walletBankId = originFR.bankAccountId;
-              }
+              if (originFR?.bankAccountId) walletBankId = originFR.bankAccountId;
             }
             
-            // Fallback: buscar una cuenta de tipo CASH
             if (!walletBankId) {
               const cashAccount = await tx.bankAccount.findFirst({
                 where: { type: 'CASH', isActive: true },
                 select: { id: true }
               });
-              
-              if (cashAccount) {
-                walletBankId = cashAccount.id;
-              }
+              if (cashAccount) walletBankId = cashAccount.id;
             }
 
             if (!walletBankId) {
@@ -252,17 +251,29 @@ export class CreateOrderUseCase {
               throw new Error(`Bank account is required for payment method ${p.method}`);
             }
 
-            const updatedAcc = await tx.bankAccount.update({
+            // Initialize bank balance in map if not present
+            if (!accountBalancesMap.has(pBankId)) {
+              const acc = await tx.bankAccount.findUnique({
+                where: { id: pBankId },
+                select: { currentBalance: true }
+              });
+              accountBalancesMap.set(pBankId, Number(acc?.currentBalance || 0));
+            }
+            const balanceBefore: number = accountBalancesMap.get(pBankId)!;
+            const balanceAfter: number = balanceBefore + pAmount;
+            
+            // Update MAP for next iteration
+            accountBalancesMap.set(pBankId, balanceAfter);
+
+            // Update DB (Sequential increment)
+            await tx.bankAccount.update({
               where: { id: pBankId },
               data: { 
                 currentBalance: { increment: pAmount },
-                version: { increment: 1 }
-              },
-              select: { currentBalance: true, name: true }
+                version: { increment: 1 },
+                updatedAt: new Date()
+              }
             });
-
-            const balanceAfter = Number(updatedAcc.currentBalance);
-            const balanceBefore = balanceAfter - pAmount;
 
             financialRecordsPending.push({
               type: 'PAYMENT',
@@ -274,20 +285,27 @@ export class CreateOrderUseCase {
               date: new Date(),
               clientId: dto.clientId,
               clientName: dto.clientName,
+              clientDocument: clientDoc,
               createdBy,
-              notes: ((p as any).notes ? ((p as any).notes + ' | ') : `Pedido inicial | `) + `Cédula: ${clientDoc} | Orden: ${orderReceiptNumber} | Pedido: ${actualOrderNumber} | Marca: ${dto.brandName} | Tipo: ${dto.type.toUpperCase()}`,
+              notes: `Pedido inicial | Cédula: ${clientDoc} | Orden: ${orderReceiptNumber} | Pedido: ${actualOrderNumber} | Marca: ${dto.brandName} | Tipo: ${dto.type.toUpperCase()}`,
               userReference: pReceiptNumber,
               bankAccountId: pBankId,
               paymentMethod: p.method,
-              clientDocument: clientDoc,
               balanceBefore,
               balanceAfter,
-              referenceNumber: p.method !== 'EFECTIVO' && p.reference ? p.reference : `REF-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              version: 1
+              version: 1,
+              createdAt: new Date()
             });
           }
         }
 
+        // ============================================================================
+        // 3. Persist everything and Commit (Batch creations inside transaction)
+        // ============================================================================
+        
+        // Final total logic for the created order
+        const totalPaid = sources.reduce((sum, p) => sum + Number(p.amount), 0);
+        
         // 3. Handle additional credit (if provided via separate field)
         const extraCredit = Number(dto.creditAmount || 0);
         if (extraCredit > totalCreditUsed) {

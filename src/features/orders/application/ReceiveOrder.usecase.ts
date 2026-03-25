@@ -249,7 +249,7 @@ export class ReceiveOrderUseCase {
               paymentMethod: data.paymentMethod!,
               movementType: 'INCOME',
               createdBy: userId,
-              notes: `Abono en recepción | Cédula: ${order.client.identificationNumber} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type.toUpperCase()}`,
+              notes: `Abono en recepción | Cédula: ${order.client.identificationNumber} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type.toUpperCase()}`,
               clientDocument: order.client.identificationNumber,
               userReference: abonoReceiptNumber,
               balanceBefore: balanceBefore != null ? Number(balanceBefore) : null,

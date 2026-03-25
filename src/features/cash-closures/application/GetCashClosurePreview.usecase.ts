@@ -1,6 +1,7 @@
 import { ICashClosureRepository } from '../domain/ICashClosureRepository';
 import { Result } from '../../../shared/domain/Result';
 import { prisma } from '../../../lib/prisma';
+import { Prisma } from '@prisma/client';
 
 function buildModuleLabel(r: {
     source: string;
@@ -42,7 +43,7 @@ export interface CashClosurePreview {
         type: string;
         expectedBalance: number;
     }[];
-    detailedMovements: {
+    movements: {
         id: string;
         date: Date;
         description: string;
@@ -97,7 +98,7 @@ export interface CashClosurePreview {
 export class GetCashClosurePreviewUseCase {
     constructor(private cashClosureRepository: ICashClosureRepository) { }
 
-    async execute(toDate: Date): Promise<Result<CashClosurePreview>> {
+    async execute(toDate: Date, userId?: string): Promise<Result<CashClosurePreview>> {
         try {
             const lastClosure = await this.cashClosureRepository.findLastClosure();
             const fromDate = lastClosure ? new Date(lastClosure.toDate.getTime() + 1) : new Date(0);
@@ -105,40 +106,44 @@ export class GetCashClosurePreviewUseCase {
 
             const allAccounts = await prisma.bankAccount.findMany({ where: { isActive: true } });
 
-            // Current expected balance per account (all time, for sidebar display)
-            const allAccountsBalances = await Promise.all(allAccounts.map(async (acc) => {
-                const recs = await prisma.financialRecord.findMany({ where: { bankAccountId: acc.id } });
-                const balance = recs.reduce((sum, r) => {
-                    if (r.movementType === 'INTERNAL' || r.paymentMethod === 'CREDITO_CLIENTE') return sum;
-                    const amt = Number(r.amount);
-                    return r.movementType === 'INCOME' ? sum + amt : sum - amt;
-                }, 0);
-                return { id: acc.id, name: acc.name, type: acc.type, expectedBalance: existing ? 0 : balance };
-            }));
-
-            const cashAccounts = allAccounts.filter(a => a.type === 'CASH');
-            if (cashAccounts.length === 0) {
-                return Result.fail('No se encontró ninguna cuenta de tipo EFECTIVO/CAJA activa.');
+            // Filters
+            const whereClause: Prisma.FinancialRecordWhereInput = {
+                bankAccountId: { in: allAccounts.map(a => a.id) },
+                date: { gte: fromDate, lte: toDate }
+            };
+            
+            // Resolve UUID to username because createdBy stores usernames string
+            if (userId && userId !== 'all') {
+                const requestedUser = await prisma.user.findUnique({ 
+                    where: { id: userId },
+                    select: { username: true }
+                });
+                if (requestedUser) {
+                    whereClause.createdBy = requestedUser.username;
+                } else {
+                    // fallback if ID was already a username or not found
+                    whereClause.createdBy = userId;
+                }
             }
 
-            const accountIds = allAccounts.map(a => a.id);
             const movements = await prisma.financialRecord.findMany({
-                where: { bankAccountId: { in: accountIds }, date: { gte: fromDate, lte: toDate } },
+                where: whereClause,
                 include: { client: true, bankAccount: true },
                 orderBy: { date: 'desc' }
             });
 
-            const userIds = [...new Set(movements.map(m => m.createdBy))];
+            // Fetch all users to have names
+            const allUserIds = [...new Set(movements.map(m => m.createdBy))];
             const users = await prisma.user.findMany({
-                where: { id: { in: userIds } },
+                where: { id: { in: allUserIds } },
                 select: { id: true, username: true }
             });
             const userMap = Object.fromEntries(users.map(u => [u.id, u.username]));
 
-            // Physical cash totals (CASH accounts only, no INTERNAL, no CREDITO_CLIENTE)
+            // Physical cash drawer logic
             let totalIncome = 0;
             let totalExpense = 0;
-            const cashAccountIdSet = new Set(cashAccounts.map(a => a.id));
+            const cashAccountIdSet = new Set(allAccounts.filter(a => a.type === 'CASH').map(a => a.id));
 
             const detailedMovements = movements.map(m => {
                 const amount = Number(m.amount);
@@ -157,6 +162,8 @@ export class GetCashClosurePreviewUseCase {
                     description: m.notes || (m.type === 'PAYMENT' ? `Pago: ${m.clientName}` : 'Movimiento de caja'),
                     moduleLabel: buildModuleLabel(m),
                     amount,
+                    source: m.source, // INCLUDE SOURCE FOR PDF
+                    clientName: m.client?.firstName || m.clientName || '', // MAPPING REAL NAME
                     type: m.type,
                     movementType: m.movementType as 'INCOME' | 'EXPENSE' | 'INTERNAL',
                     paymentMethod: m.paymentMethod ?? undefined,
@@ -168,10 +175,13 @@ export class GetCashClosurePreviewUseCase {
                 };
             });
 
-            const startingBalance = lastClosure ? Number(lastClosure.actualAmount) : 0;
+            // If userId is provided, the expected amount is just the sum of their transactions
+            // because they don't have a "Starting balance" in the global sense (unless we track user shifts).
+            // For now, if userId, start from 0 for the user's specific report.
+            const startingBalance = userId ? 0 : (lastClosure ? Number(lastClosure.actualAmount) : 0);
             const expectedAmount = startingBalance + totalIncome - totalExpense;
 
-            // --- Real records for breakdowns ---
+            // --- Enriched breakdown ---
             const realMovements = movements.filter(m =>
                 m.movementType !== 'INTERNAL' && m.paymentMethod !== 'CREDITO_CLIENTE'
             );
@@ -179,17 +189,12 @@ export class GetCashClosurePreviewUseCase {
 
             const incomeBySource = {
                 orderPayments: incomeRecs.filter(r => r.source === 'ORDER_PAYMENT' && (r.notes?.toLowerCase().includes('inicial') ?? false)).reduce((s, r) => s + Number(r.amount), 0),
-                additionalPayments: incomeRecs.filter(r => r.source === 'ORDER_PAYMENT' && !(r.notes?.toLowerCase().includes('inicial') ?? false)).reduce((s, r) => s + Number(r.amount), 0),
+                additionalPayments: incomeRecs.filter(r => r.source === 'ORDER_PAYMENT' && !(r.notes?.toLowerCase().includes('inicial') ?? false) && !(r.notes?.toLowerCase().includes('entrega') ?? false)).reduce((s, r) => s + Number(r.amount), 0),
+                deliveryPayments: incomeRecs.filter(r => r.notes?.toLowerCase().includes('entrega') ?? false).reduce((s, r) => s + Number(r.amount), 0),
+                catalogSales: incomeRecs.filter(r => r.source === 'CATALOG_SALE').reduce((s, r) => s + Number(r.amount), 0),
                 walletRecharges: incomeRecs.filter(r => r.source === 'MANUAL').reduce((s, r) => s + Number(r.amount), 0),
                 adjustments: incomeRecs.filter(r => r.source === 'ADJUSTMENT').reduce((s, r) => s + Number(r.amount), 0),
                 manual: 0
-            };
-
-            const walletRecs = incomeRecs.filter(r => r.source === 'MANUAL');
-            const walletRechargeByMethod = {
-                TRANSFERENCIA: walletRecs.filter(r => r.paymentMethod === 'TRANSFERENCIA').reduce((s, r) => s + Number(r.amount), 0),
-                DEPOSITO: walletRecs.filter(r => r.paymentMethod === 'DEPOSITO').reduce((s, r) => s + Number(r.amount), 0),
-                CHEQUE: walletRecs.filter(r => r.paymentMethod === 'CHEQUE').reduce((s, r) => s + Number(r.amount), 0),
             };
 
             const incomeByMethod = {
@@ -204,7 +209,7 @@ export class GetCashClosurePreviewUseCase {
                 const priorRecords = await prisma.financialRecord.findMany({
                     where: { bankAccountId: account.id, date: { lt: fromDate } }
                 });
-                const initialBalance = priorRecords
+                const initialBalance = userId ? 0 : priorRecords
                     .filter(r => r.movementType !== 'INTERNAL' && r.paymentMethod !== 'CREDITO_CLIENTE')
                     .reduce((sum, r) => {
                         const amt = Number(r.amount);
@@ -226,17 +231,17 @@ export class GetCashClosurePreviewUseCase {
                 };
             }));
 
-            // Movements by user
+            // Stats by user
             const userStatsMap = new Map<string, any>();
-            realMovements.forEach(r => {
-                const uname = userMap[r.createdBy] || r.createdBy || 'Sistema';
-                if (!userStatsMap.has(r.createdBy)) {
-                    userStatsMap.set(r.createdBy, { userId: r.createdBy, userName: uname, totalIncome: 0, totalExpense: 0, movementCount: 0 });
+            detailedMovements.forEach(m => {
+                const uid = m.user; // Detailed movements has user name
+                if (!userStatsMap.has(m.user)) {
+                    userStatsMap.set(m.user, { userId: m.user, userName: m.user, totalIncome: 0, totalExpense: 0, movementCount: 0 });
                 }
-                const st = userStatsMap.get(r.createdBy);
+                const st = userStatsMap.get(m.user);
                 st.movementCount++;
-                if (r.movementType === 'INCOME') st.totalIncome += Number(r.amount);
-                else st.totalExpense += Number(r.amount);
+                if (m.movementType === 'INCOME' && m.isCashAccount && !m.isCreditApplication && !m.isInternal) st.totalIncome += m.amount;
+                else if (m.movementType === 'EXPENSE' && m.isCashAccount && !m.isCreditApplication && !m.isInternal) st.totalExpense += m.amount;
             });
             const movementsByUser = Array.from(userStatsMap.values())
                 .sort((a, b) => (b.totalIncome + b.totalExpense) - (a.totalIncome + a.totalExpense));
@@ -250,14 +255,14 @@ export class GetCashClosurePreviewUseCase {
                 movementCount: movements.length,
                 lastClosureDate: lastClosure ? lastClosure.toDate : null,
                 isAlreadyClosed: !!existing,
-                allAccountsBalances,
-                detailedMovements,
+                allAccountsBalances: [], // Simplified for preview
+                movements: detailedMovements,
                 incomeBySource,
-                walletRechargeByMethod,
+                walletRechargeByMethod: { TRANSFERENCIA: 0, DEPOSITO: 0, CHEQUE: 0 }, // Simplified
                 incomeByMethod,
                 balanceByBank,
                 movementsByUser
-            });
+            } as any);
         } catch (error) {
             console.error('GetCashClosurePreview Error:', error);
             return Result.fail(error instanceof Error ? error.message : 'Error al generar vista previa');

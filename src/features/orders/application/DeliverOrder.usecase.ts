@@ -51,7 +51,8 @@ export class DeliverOrderUseCase {
       const effectiveTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
       const paidBefore = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
       const pendingBefore = effectiveTotal - paidBefore;
-
+      const accountBalancesMap = new Map<string, number>();
+      let clientWalletRunningBal: number | null = null;
       let totalNewlyPaid = 0;
 
       // 3. Procesar pagos si existen
@@ -79,23 +80,27 @@ export class DeliverOrderUseCase {
           let balanceAfter: number | null = null;
 
           if (isCredit) {
-            const clientAccount = await tx.clientAccount.findUnique({
-              where: { clientId: order.clientId },
-              select: { totalCreditAvailable: true }
-            });
-            if (clientAccount) {
-              balanceBefore = Number(clientAccount.totalCreditAvailable);
-              balanceAfter = balanceBefore - payment.amount;
+            if (clientWalletRunningBal === null) {
+              const clientAccData = await tx.clientAccount.findUnique({
+                where: { clientId: order.clientId },
+                select: { totalCreditAvailable: true }
+              });
+              clientWalletRunningBal = Number(clientAccData?.totalCreditAvailable || 0);
             }
+            balanceBefore = clientWalletRunningBal;
+            balanceAfter = balanceBefore - payment.amount;
+            clientWalletRunningBal = balanceAfter;
           } else if (bankAccountId) {
-            const bankAccount = await tx.bankAccount.findUnique({
-              where: { id: bankAccountId },
-              select: { currentBalance: true }
-            });
-            if (bankAccount) {
-              balanceBefore = Number(bankAccount.currentBalance);
-              balanceAfter = balanceBefore + payment.amount;
+            if (!accountBalancesMap.has(bankAccountId)) {
+              const bankAccData = await tx.bankAccount.findUnique({
+                where: { id: bankAccountId },
+                select: { currentBalance: true }
+              });
+              accountBalancesMap.set(bankAccountId, Number(bankAccData?.currentBalance || 0));
             }
+            balanceBefore = accountBalancesMap.get(bankAccountId)!;
+            balanceAfter = balanceBefore + payment.amount;
+            accountBalancesMap.set(bankAccountId, balanceAfter);
           }
 
           // Crear registro de pago del pedido

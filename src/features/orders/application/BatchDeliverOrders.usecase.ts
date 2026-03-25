@@ -86,6 +86,8 @@ export class BatchDeliverOrdersUseCase {
       });
 
       // 3. Procesar pagos si existen
+      const accountBalancesMap = new Map<string, number>();
+      let clientWalletRunningBal: number | null = null;
       const totalAggregatePayment = payments.reduce((sum, p) => sum + p.amount, 0);
 
       if (totalAggregatePayment > 0) {
@@ -105,9 +107,42 @@ export class BatchDeliverOrdersUseCase {
             bankAccountId = cashAccount?.id;
           }
 
+          let balanceBefore: number | null = null;
+          let balanceAfter: number | null = null;
+
+          if (isCredit) {
+            if (clientWalletRunningBal === null) {
+              const clientAccData = await tx.clientAccount.findUnique({
+                where: { clientId },
+                select: { totalCreditAvailable: true }
+              });
+              clientWalletRunningBal = Number(clientAccData?.totalCreditAvailable || 0);
+            }
+            balanceBefore = clientWalletRunningBal;
+            balanceAfter = balanceBefore - payment.amount;
+            clientWalletRunningBal = balanceAfter;
+          } else if (bankAccountId) {
+            if (!accountBalancesMap.has(bankAccountId)) {
+              const bankAccData = await tx.bankAccount.findUnique({
+                where: { id: bankAccountId },
+                select: { currentBalance: true }
+              });
+              accountBalancesMap.set(bankAccountId, Number(bankAccData?.currentBalance || 0));
+            }
+            balanceBefore = accountBalancesMap.get(bankAccountId)!;
+            balanceAfter = balanceBefore + payment.amount;
+            accountBalancesMap.set(bankAccountId, balanceAfter);
+          }
+
           // Crear registro financiero
           const referenceNumber = payment.reference || `BATCH-DEL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
           
+          const orderReceipts = orders.map(o => o.receiptNumber).join(', ');
+          const orderNumbers = orders.map(o => o.orderNumber || '—').join(', ');
+          const brands = Array.from(new Set(orders.map(o => (o as any).brand?.name || '—'))).join(', ');
+          const firstClient = (orders[0] as any).client;
+          const clientDoc = firstClient?.identificationNumber || orders[0].clientId || '—';
+
           await tx.financialRecord.create({
             data: {
               type: 'PAYMENT',
@@ -119,9 +154,14 @@ export class BatchDeliverOrdersUseCase {
               bankAccountId: bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
               source: 'ORDER_PAYMENT',
               paymentMethod: payment.paymentMethod,
-              movementType: 'INCOME',
+              movementType: isCredit ? 'INTERNAL' : 'INCOME',
+              fromAccountType: isCredit ? 'WALLET' : 'EXTERNAL',
+              toAccountType: isCredit ? 'ORDER' : 'CASH',
               createdBy: userId,
-              notes: `Pago lote entrega (${payment.paymentMethod}). Lote de ${orders.length} pedidos. ${isCredit ? '(Crédito)' : ''}`
+              notes: `Pago lote entrega (${payment.paymentMethod}) | Cédula: ${clientDoc} | Orden: ${orderReceipts} | Pedido: ${orderNumbers} | Marca: ${brands} | Tipo: ENTREGA`,
+              balanceBefore,
+              balanceAfter,
+              version: 1
             }
           });
 

@@ -181,6 +181,8 @@ export class BatchCreateOrderUseCase {
         const allFinancialRecords: any[] = [];
         const paymentIdMap = new Map<string, string>(); // orderId -> paymentId
         let totalBankIncrement = 0;
+        const accountBalancesMap = new Map<string, number>();
+        let clientWalletRunningBal: number | null = null;
         let firstSplitPaymentId: string | undefined = undefined; // track first order's split payment for FR linkage
 
         let orderCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
@@ -318,19 +320,17 @@ export class BatchCreateOrderUseCase {
                 console.error(`  - Financial record will NOT be created`);
               } else {
                 // Capture wallet balance snapshot
-                const clientAccount = await tx.clientAccount.findUnique({
-                  where: { clientId: dto.clientId },
-                  select: { totalCreditAvailable: true }
-                });
-                
-                let balanceBefore: number | null = null;
-                let balanceAfter: number | null = null;
-                
-                if (clientAccount) {
-                  balanceBefore = parseFloat(clientAccount.totalCreditAvailable.toString());
-                  balanceAfter = balanceBefore - Number(dto.creditAmount);
-                  console.log(`[BatchCreateOrder] Wallet balance: ${balanceBefore} → ${balanceAfter}`);
+                if (clientWalletRunningBal === null) {
+                  const clientAccount = await tx.clientAccount.findUnique({
+                    where: { clientId: dto.clientId },
+                    select: { totalCreditAvailable: true }
+                  });
+                  clientWalletRunningBal = Number(clientAccount?.totalCreditAvailable || 0);
                 }
+                
+                const balanceBefore: number = clientWalletRunningBal!;
+                const balanceAfter: number = balanceBefore - Number(dto.creditAmount);
+                clientWalletRunningBal = balanceAfter;
 
                 allFinancialRecords.push({
                   id: crypto.randomUUID(),
@@ -383,18 +383,17 @@ export class BatchCreateOrderUseCase {
               }
               
               // Capture bank balance snapshot BEFORE the payment
-              const bankAcc = await tx.bankAccount.findUnique({
-                where: { id: simpleBankId },
-                select: { currentBalance: true }
-              });
-              
-              let balanceBefore: number | null = null;
-              let balanceAfter: number | null = null;
-              
-              if (bankAcc) {
-                balanceBefore = parseFloat(bankAcc.currentBalance.toString());
-                balanceAfter = balanceBefore + rowDeposit;
+              if (!accountBalancesMap.has(simpleBankId)) {
+                const bankAcc = await tx.bankAccount.findUnique({
+                  where: { id: simpleBankId },
+                  select: { currentBalance: true }
+                });
+                accountBalancesMap.set(simpleBankId, Number(bankAcc?.currentBalance || 0));
               }
+              
+              const balanceBefore: number = accountBalancesMap.get(simpleBankId)!;
+              const balanceAfter: number = balanceBefore + rowDeposit;
+              accountBalancesMap.set(simpleBankId, balanceAfter);
               
               allFinancialRecords.push({
                 id: crypto.randomUUID(),
@@ -414,7 +413,7 @@ export class BatchCreateOrderUseCase {
                 orderId: orderId,
                 orderPaymentId: paymentId,
                 createdBy,
-                notes: `Pedido inicial | Orden: ${receiptNumber} | Pedido: ${orderDto.orderNumber || 'N/A'} | Marca: ${orderDto.brandName} | Tipo: ${orderDto.type.toUpperCase()}`,
+                notes: `Pedido inicial | Cédula: ${clientDoc} | Orden: ${receiptNumber} | Pedido: ${orderDto.orderNumber || 'N/A'} | Marca: ${orderDto.brandName} | Tipo: ${orderDto.type.toUpperCase()}`,
                 bankAccountId: simpleBankId,
                 paymentMethod: dto.paymentMethod,
                 balanceBefore: balanceBefore,
@@ -472,18 +471,17 @@ export class BatchCreateOrderUseCase {
               }
 
               // Capture bank balance snapshot BEFORE the payment is processed
-              const bankAcc = await tx.bankAccount.findUnique({
-                where: { id: bankId },
-                select: { currentBalance: true }
-              });
-              
-              let balanceBefore: number | null = null;
-              let balanceAfter: number | null = null;
-              
-              if (bankAcc) {
-                balanceBefore = parseFloat(bankAcc.currentBalance.toString());
-                balanceAfter = balanceBefore + paymentAmount;
+              if (!accountBalancesMap.has(bankId)) {
+                const bankAcc = await tx.bankAccount.findUnique({
+                  where: { id: bankId },
+                  select: { currentBalance: true }
+                });
+                accountBalancesMap.set(bankId, Number(bankAcc?.currentBalance || 0));
               }
+              
+              const balanceBefore: number = accountBalancesMap.get(bankId)!;
+              const balanceAfter: number = balanceBefore + paymentAmount;
+              accountBalancesMap.set(bankId, balanceAfter);
 
               // Build notes with order info
               let notesText = (paymentItem.notes ? (paymentItem.notes + ' | ') : 'Pedido inicial | ') + `Orden: ${receiptNumber} | Pedido: VARIOS | Marca: ${dto.orders.map(o => o.brandName).join(', ')} | Tipo: VARIOS`;
@@ -580,21 +578,17 @@ export class BatchCreateOrderUseCase {
                 console.log(`[BatchCreateOrder] Creating financial record for wallet payment...`);
                 
                 // Capture wallet balance snapshot BEFORE the payment is processed
-                const clientAccount = await tx.clientAccount.findUnique({
-                  where: { clientId: dto.clientId },
-                  select: { totalCreditAvailable: true }
-                });
-                
-                let balanceBefore: number | null = null;
-                let balanceAfter: number | null = null;
-                
-                if (clientAccount) {
-                  balanceBefore = parseFloat(clientAccount.totalCreditAvailable.toString());
-                  balanceAfter = balanceBefore - paymentAmount;
-                  console.log(`[BatchCreateOrder] Wallet balance: ${balanceBefore} → ${balanceAfter}`);
-                } else {
-                  console.error(`[BatchCreateOrder] ERROR: clientAccount not found for clientId: ${dto.clientId}`);
+                if (clientWalletRunningBal === null) {
+                  const clientAccount = await tx.clientAccount.findUnique({
+                    where: { clientId: dto.clientId },
+                    select: { totalCreditAvailable: true }
+                  });
+                  clientWalletRunningBal = Number(clientAccount?.totalCreditAvailable || 0);
                 }
+                
+                const balanceBefore: number = clientWalletRunningBal!;
+                const balanceAfter: number = balanceBefore - paymentAmount;
+                clientWalletRunningBal = balanceAfter;
 
                 // Build notes with order info
                 let notesText = `Pedido inicial | Cédula: ${clientDoc} | Orden: ${receiptNumber} | Pedido: VARIOS | Marca: ${dto.orders.map(o => o.brandName).join(', ')} | Tipo: VARIOS`;

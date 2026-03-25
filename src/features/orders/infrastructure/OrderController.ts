@@ -389,7 +389,7 @@ export class OrderController {
         const updated = await tx.order.update({
           where: { id },
           data: updateData,
-          include: { items: true, payments: true, brand: true }
+          include: { items: true, payments: true, brand: true, client: true }
         });
 
         // 4. Update items if provided
@@ -474,9 +474,10 @@ export class OrderController {
                     orderId: id,
                 orderPaymentId: createdPayment.id,
                     createdBy: req.user!.username,
-                    notes: `Abono inicial editado ${updated.receiptNumber}`,
+                    notes: `Abono inicial editado | Cédula: ${updated.client?.identificationNumber || updated.clientId || '—'} | Orden: ${updated.receiptNumber} | Pedido: ${updated.orderNumber || '—'} | Marca: ${(updated as any).brand?.name || '—'} | Tipo: ${updated.type.toUpperCase()}`,
                     bankAccountId: updated.bankAccountId,
                     paymentMethod: updated.paymentMethod,
+                    clientDocument: updated.client?.identificationNumber || updated.clientId || '—',
                     version: 1
                   }
                 });
@@ -633,7 +634,22 @@ export class OrderController {
           paymentMethod: item.paymentMethod || item.payment_method,
           reference: item.referenceNumber || item.reference_number || undefined,
           documentType: item.documentType || item.document_type,
-          entryDate: item.entryDate || item.entry_date
+          entryDate: item.entryDate || item.entry_date,
+          creditDistribution: (() => {
+            const cd = item.creditDistribution || item.credit_distribution;
+            if (!cd) return undefined;
+            return {
+              sourceOrderId: cd.sourceOrderId || cd.source_order_id,
+              totalCreditAmount: Number(cd.totalCreditAmount || cd.total_credit_amount || 0),
+              distributions: (cd.distributions || []).map((d: any) => ({
+                targetOrderId: d.targetOrderId || d.target_order_id,
+                amount: Number(d.amount || 0),
+                description: d.description,
+                isCashReturn: d.isCashReturn || d.is_cash_return || false,
+                bankAccountId: d.bankAccountId || d.bank_account_id
+              }))
+            };
+          })()
         }))
       };
 
@@ -678,34 +694,35 @@ export class OrderController {
         id: req.body.id,
         packingNumber: String(packingNumber),
         packingTotal: Number(packingTotal),
-        items: items.map((item: any) => ({
-          orderId: item.orderId || item.order_id,
-          finalTotal: Number(item.finalTotal || item.final_total),
-          invoiceNumber: item.finalInvoiceNumber || item.final_invoice_number || item.invoiceNumber || item.invoice_number,
-          abonoRecepcion: item.abonoRecepcion || item.abono_recepcion
-            ? Number(item.abonoRecepcion || item.abono_recepcion)
-            : undefined,
-          bankAccountId: item.bankAccountId || item.bank_account_id,
-          paymentMethod: item.paymentMethod || item.payment_method,
-          reference: item.referenceNumber || item.reference_number || undefined,
-          documentType: item.documentType || item.document_type,
-          entryDate: item.entryDate || item.entry_date,
-          fromExchangeBatch: item.fromExchangeBatch || item.from_exchange_batch || false,
-          creditDistribution: (() => {
-            const cd = item.creditDistribution || item.credit_distribution;
-            if (!cd) return undefined;
-            return {
+        items: items.map((item: any) => {
+          const cd = item.creditDistribution || item.credit_distribution;
+          
+          return {
+            orderId: item.orderId || item.order_id,
+            finalTotal: Number(item.finalTotal || item.final_total),
+            invoiceNumber: item.finalInvoiceNumber || item.final_invoice_number || item.invoiceNumber || item.invoice_number,
+            abonoRecepcion: item.abonoRecepcion || item.abono_recepcion
+              ? Number(item.abonoRecepcion || item.abono_recepcion)
+              : undefined,
+            bankAccountId: item.bankAccountId || item.bank_account_id,
+            paymentMethod: item.paymentMethod || item.payment_method,
+            reference: item.referenceNumber || item.reference_number || undefined,
+            documentType: item.documentType || item.document_type,
+            entryDate: item.entryDate || item.entry_date,
+            fromExchangeBatch: item.fromExchangeBatch || item.from_exchange_batch || false,
+            creditDistribution: cd ? {
               sourceOrderId: cd.sourceOrderId || cd.source_order_id,
               totalCreditAmount: Number(cd.totalCreditAmount || cd.total_credit_amount || 0),
               distributions: (cd.distributions || []).map((d: any) => ({
                 targetOrderId: d.targetOrderId || d.target_order_id,
                 amount: Number(d.amount || 0),
                 description: d.description,
-                isCashReturn: d.isCashReturn || d.is_cash_return
+                isCashReturn: d.isCashReturn || d.is_cash_return || false,
+                bankAccountId: d.bankAccountId || d.bank_account_id || d.bankAccountID || d.bank_acc_id
               }))
-            };
-          })()
-        }))
+            } : undefined
+          };
+        })
       };
 
       const result = await this.createReceptionBatchOptimizedUseCase.execute(dto, req.user!.username);

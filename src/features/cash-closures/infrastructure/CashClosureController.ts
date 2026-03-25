@@ -57,7 +57,8 @@ export class CashClosureController {
     async getPreview(req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const toDate = req.query.toDate ? new Date(req.query.toDate as string) : new Date();
-            const result = await this.getCashClosurePreviewUseCase.execute(toDate);
+            const userId = req.query.userId as string | undefined;
+            const result = await this.getCashClosurePreviewUseCase.execute(toDate, userId);
 
             if (result.isFailure) {
                 return res.status(400).json({ success: false, error: { message: result.error } });

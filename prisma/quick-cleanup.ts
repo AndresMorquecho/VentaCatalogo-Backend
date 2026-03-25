@@ -52,11 +52,16 @@ async function main() {
       }
     });
 
+    console.log('🗑️  Reiniciando saldos de cuentas bancarias...');
+    await prisma.bankAccount.updateMany({
+      data: { currentBalance: 0 }
+    });
+
     console.log('🗑️  Borrando logs de auditoría...');
     await prisma.auditLog.deleteMany();
 
     console.log('✨ Base de datos limpia.');
-    console.log('📦 Se mantuvieron: Clientes, Marcas, Cuentas Bancarias, Usuarios, Roles y Reglas de Fidelización.');
+    console.log('📦 Se mantuvieron: Clientes, Marcas, Cuentas Bancarias (Saldo 0), Usuarios, Roles y Reglas de Fidelización.');
 
   } catch (error) {
     console.error('❌ Error durante la limpieza:', error);

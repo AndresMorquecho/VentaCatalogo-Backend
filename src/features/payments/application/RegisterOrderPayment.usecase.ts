@@ -301,18 +301,6 @@ export class RegisterOrderPaymentUseCase {
                 const totalPaid = allPayments.reduce((acc: number, p: any) => acc + Number(p.amount), 0);
                 const orderTotal = Number(order.realInvoiceTotal || order.total);
 
-                if (totalPaid >= orderTotal - 0.01) {
-                    if (order.status !== OrderStatus.ENTREGADO && order.status !== OrderStatus.ANULADO) {
-                        await tx.order.update({
-                            where: { id: dto.orderId },
-                            data: { 
-                                status: OrderStatus.ENTREGADO,
-                                deliveryDate: new Date(),
-                                updatedAt: new Date()
-                            }
-                        });
-                    }
-                }
 
                 return mainPayment || creditPayment;
             };

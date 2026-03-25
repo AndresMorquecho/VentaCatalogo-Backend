@@ -315,6 +315,7 @@ export class CreateReceptionBatchOptimizedUseCase {
         
         // Generate orderNumber if it doesn't exist
         const orderNumber = order.orderNumber || `${datePrefix}-${String(nextOrderNumber++).padStart(3, '0')}`;
+        const clientDoc = (order as any).client?.identificationNumber || order.clientId || '—';
         
         // Prepare order update
         orderUpdates.push({
@@ -385,8 +386,8 @@ export class CreateReceptionBatchOptimizedUseCase {
             paymentMethod: item.paymentMethod || 'EFECTIVO',
             movementType: 'INCOME',
             createdBy: userId,
-            notes: `Abono en recepción | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type?.toUpperCase()}`,
-            clientDocument: (order as any).client?.identificationNumber,
+            notes: `Abono en recepción | Cédula: ${clientDoc} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type?.toUpperCase() || 'NORMAL'}`,
+            clientDocument: clientDoc,
             balanceBefore,
             balanceAfter,
             version: 1,
@@ -440,8 +441,8 @@ export class CreateReceptionBatchOptimizedUseCase {
             paymentMethod: 'SALDO_A_FAVOR',
             movementType: 'INCOME',
             createdBy: userId,
-            notes: `Saldo a favor generado | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type?.toUpperCase()}`,
-            clientDocument: (order as any).client?.identificationNumber,
+            notes: `Saldo a favor generado | Cédula: ${clientDoc} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type?.toUpperCase() || 'NORMAL'}`,
+            clientDocument: clientDoc,
             balanceBefore: walletBalBeforeGen,
             balanceAfter: walletBalAfterGen,
             version: 1,
@@ -468,169 +469,131 @@ export class CreateReceptionBatchOptimizedUseCase {
 
               const currentWalletBalDist = clientAccountBalancesMap.get(order.clientId) || 0;
               const walletBalBeforeDist = currentWalletBalDist;
-              // If it goes to another order, it decreases the pool. 
-              // If it goes to wallet, pool doesn't change here since it was already in pool by gen? 
-              // Actually, generation already added it to pool. 
-              // So every distribution outflows from that pool.
-              const walletBalAfterDist = walletBalBeforeDist - Number(dist.amount);
-              clientAccountBalancesMap.set(order.clientId, walletBalAfterDist);
+              
+              // Only subtract from the client's wallet pool if the money is actually leaving the wallet 
+              // (e.g. to pay another order or being returned as cash).
+              // Distributions to "WALLET" should NOT subtract because they were already added to the pool by CREDIT_GENERATION.
+              let walletBalAfterDist = walletBalBeforeDist;
+              if (dist.targetOrderId || dist.isCashReturn || (dist as any).is_cash_return) {
+                walletBalAfterDist = walletBalBeforeDist - Number(dist.amount);
+                clientAccountBalancesMap.set(order.clientId, walletBalAfterDist);
+              }
 
-              financialRecords.push({
-                id: crypto.randomUUID(),
-                type: 'CREDIT_APPLICATION',
-                referenceNumber: `CREDIT-APP-${dist.targetOrderId || 'WALLET'}-${order.id}-${distIdx}-${crypto.randomUUID().slice(0, 8)}`,
-                amount: dist.amount,
-                date: new Date(),
-                clientId: order.clientId,
-                clientName: order.clientName,
-                orderId: order.id, // Referencia al pedido origen
-                bankAccountId: appBankAccId,
-                source: 'CREDIT_DISTRIBUTION',
-                paymentMethod: 'SALDO_A_FAVOR',
-                movementType: 'EXPENSE',
-                fromAccountType: 'ORDER',
-                toAccountType: dist.targetOrderId ? 'ORDER' : 'WALLET',
-                transactionGroupId: distGroupId,
-                createdBy: userId,
-                notes: `${dist.description} | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: DISTRIBUCION`,
-                clientDocument: (order as any).client?.identificationNumber,
-                balanceBefore: walletBalBeforeDist,
-                balanceAfter: walletBalAfterDist,
-                version: 1,
-                createdAt: new Date()
-              });
-
-              // Si es distribución a otro pedido, crear el pago
+              // [DISTRIBUTION] Branch based on target: Order, Cash Return, or Wallet
               if (dist.targetOrderId) {
+                // CASE 1: Distribution to another order (Payment)
                 const paymentId = crypto.randomUUID();
                 const receiptNumber = `REC-SALDO-${(nextSaldoNumber++).toString().padStart(6, '0')}`;
                 
-                console.log(`      ✅ Creating orderPayment of $${dist.amount} for order ${dist.targetOrderId}`);
-                
                 orderPayments.push({
-                  id: paymentId,
-                  orderId: dist.targetOrderId,
-                  amount: dist.amount,
-                  method: 'CREDITO_CLIENTE',
-                  reference: `SALDO-DIST-${order.id}`,
-                  receiptNumber,
-                  description: `Saldo a favor aplicado desde pedido ${order.receiptNumber}`,
-                  createdAt: new Date()
+                   id: paymentId, orderId: dist.targetOrderId, amount: Number(dist.amount),
+                   method: 'CREDITO_CLIENTE', reference: `SALDO-DIST-${order.id}`,
+                   receiptNumber, description: `Saldo a favor aplicado desde pedido ${order.receiptNumber}`,
+                   createdAt: new Date()
                 });
 
-                // ENTRADA: Registrar el pago en el pedido destino (en records financieros)
+                // OUTFLOW LEG: From origin order
                 financialRecords.push({
-                  id: crypto.randomUUID(),
-                  type: 'ORDER_PAYMENT',
-                  referenceNumber: `${receiptNumber}-${crypto.randomUUID().slice(0, 8)}`,
-                  amount: dist.amount,
-                  date: new Date(),
-                  clientId: order.clientId,
-                  clientName: order.clientName,
-                  orderId: dist.targetOrderId,
-                  bankAccountId: order.bankAccountId || mainCashAccountId,
-                  source: 'CREDIT_DISTRIBUTION',
-                  paymentMethod: 'SALDO_A_FAVOR',
-                  movementType: 'INCOME', // Es un ingreso para el pedido destino
-                  fromAccountType: 'ORDER',
-                  toAccountType: 'ORDER',
-                  transactionGroupId: distGroupId,
-                  createdBy: userId,
-                  notes: `Pago con saldo a favor | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ABONO_SALDO_FAVOR`,
-                  clientDocument: (order as any).client?.identificationNumber,
-                  balanceBefore: walletBalAfterDist, // Informativo: saldo después del gasto
-                  balanceAfter: walletBalAfterDist,
-                  version: 1,
-                  createdAt: new Date()
+                   id: crypto.randomUUID(), type: 'CREDIT_APPLICATION',
+                   referenceNumber: `CREDIT-APP-ORDER-${dist.targetOrderId}-${order.id}-${distIdx}-${crypto.randomUUID().slice(0, 8)}`,
+                   amount: Number(dist.amount), date: new Date(), clientId: order.clientId, clientName: order.clientName,
+                   orderId: order.id, bankAccountId: appBankAccId, source: 'CREDIT_DISTRIBUTION',
+                   paymentMethod: 'SALDO_A_FAVOR', movementType: 'EXPENSE', fromAccountType: 'ORDER', toAccountType: 'ORDER',
+                   transactionGroupId: distGroupId, createdBy: userId,
+                   notes: `${dist.description} | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: DISTRIBUCION`,
+                   clientDocument: (order as any).client?.identificationNumber,
+                   balanceBefore: walletBalBeforeDist, balanceAfter: walletBalAfterDist, version: 1, createdAt: new Date()
                 });
-                  // Si no es a otro pedido y no es devolución, va a billetera (ENTRADA a Billetera)
-                  financialRecords.push({
-                    id: crypto.randomUUID(),
-                    type: 'PAYMENT',
-                    referenceNumber: `WALLET-REF-${order.id}-${distIdx}-${crypto.randomUUID().slice(0, 8)}`,
-                    amount: dist.amount,
-                    date: new Date(),
-                    clientId: order.clientId,
-                    clientName: order.clientName,
-                    orderId: order.id,
-                    bankAccountId: appBankAccId,
-                    source: 'CREDIT_DISTRIBUTION',
-                    paymentMethod: 'SALDO_A_FAVOR',
-                    movementType: 'INCOME', 
-                    fromAccountType: 'ORDER',
-                    toAccountType: 'WALLET',
-                    transactionGroupId: distGroupId,
-                    createdBy: userId,
-                    notes: `Saldo guardado en billetera virtual | Cédula: ${(order as any).client?.identificationNumber || '—'}`,
-                    clientDocument: (order as any).client?.identificationNumber,
-                    balanceBefore: walletBalAfterDist,     // Saldo base después de la salida del pedido
-                    balanceAfter: walletBalAfterDist + Number(dist.amount), // Saldo tras entrar a billetera
-                    version: 1,
-                    createdAt: new Date()
-                  });
+
+                // INFLOW LEG: To destination order
+                financialRecords.push({
+                   id: crypto.randomUUID(), type: 'ORDER_PAYMENT',
+                   referenceNumber: `${receiptNumber}-${crypto.randomUUID().slice(0, 8)}`,
+                   amount: Number(dist.amount), date: new Date(), clientId: order.clientId, clientName: order.clientName,
+                   orderId: dist.targetOrderId, bankAccountId: order.bankAccountId || mainCashAccountId,
+                   source: 'CREDIT_DISTRIBUTION', paymentMethod: 'SALDO_A_FAVOR', movementType: 'INCOME',
+                   fromAccountType: 'ORDER', toAccountType: 'ORDER', transactionGroupId: distGroupId, createdBy: userId,
+                   notes: `Pago con saldo a favor | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ABONO_SALDO_FAVOR`,
+                   clientDocument: (order as any).client?.identificationNumber,
+                   balanceBefore: walletBalAfterDist, balanceAfter: walletBalAfterDist, version: 1, createdAt: new Date()
+                });
+              } else if (dist.isCashReturn || (dist as any).is_cash_return) {
+                // CASE 2: Cash Return (Reduces bank/cash immediately)
+                const returnAccIdRaw = (dist as any).bankAccountId || (dist as any).bank_account_id;
+                const returnAccId = (returnAccIdRaw && typeof returnAccIdRaw === 'string' && returnAccIdRaw.length > 5) 
+                  ? returnAccIdRaw 
+                  : mainCashAccountId;
+
+                const returnAcc = allActiveAccounts.find(a => a.id === returnAccId);
+                const isBank = returnAcc && (returnAcc as any).type !== 'CASH';
+
+                const currentCashReturnBalance = accountBalancesMap.get(returnAccId) || 0;
+                const balanceBeforeReturn = currentCashReturnBalance;
+                const balanceAfterReturn = balanceBeforeReturn - Number(dist.amount);
+                accountBalancesMap.set(returnAccId, balanceAfterReturn);
+
+                financialRecords.push({
+                   id: crypto.randomUUID(), 
+                   type: 'CREDIT_APPLICATION',
+                   referenceNumber: `CASH-RETURN-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                   amount: Number(dist.amount), 
+                   date: new Date(), 
+                   clientId: order.clientId, 
+                   clientName: order.clientName,
+                   clientDocument: (order as any).client?.identificationNumber,
+                   orderId: order.id, 
+                   bankAccountId: returnAccId, 
+                   source: 'CASH_RETURN', 
+                   paymentMethod: isBank ? 'TRANSFERENCIA' : 'EFECTIVO',
+                   movementType: 'EXPENSE', 
+                   createdBy: userId,
+                   notes: `${dist.description} | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: DEVOLUCION`,
+                   balanceBefore: balanceBeforeReturn, 
+                   balanceAfter: balanceAfterReturn, 
+                   version: 1, 
+                   createdAt: new Date()
+                });
+
+                const currentTotalCount = bankAccountTotals.get(returnAccId) || 0;
+                bankAccountTotals.set(returnAccId, currentTotalCount - Number(dist.amount));
+              } else {
+                // CASE 3: Save to Virtual Wallet (Stays in digital pool)
+                // Outflow record (required by TransactionsTable to show the grouped distribution card)
+                financialRecords.push({
+                   id: crypto.randomUUID(), type: 'CREDIT_APPLICATION',
+                   referenceNumber: `CREDIT-APP-WALLET-${order.id}-${distIdx}-${crypto.randomUUID().slice(0, 8)}`,
+                   amount: Number(dist.amount), date: new Date(), clientId: order.clientId, clientName: order.clientName,
+                   orderId: order.id, bankAccountId: appBankAccId, source: 'CREDIT_DISTRIBUTION',
+                   paymentMethod: 'SALDO_A_FAVOR', movementType: 'EXPENSE', fromAccountType: 'ORDER', toAccountType: 'WALLET',
+                   transactionGroupId: distGroupId, createdBy: userId,
+                   notes: `Ahorro en billetera | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: RECARGA_BILLETERA`,
+                   clientDocument: (order as any).client?.identificationNumber,
+                   balanceBefore: walletBalBeforeDist, balanceAfter: walletBalAfterDist, version: 1, createdAt: new Date()
+                });
+
+                // Inflow record to wallet
+                financialRecords.push({
+                   id: crypto.randomUUID(), type: 'PAYMENT',
+                   referenceNumber: `WALLET-REF-${order.id}-${distIdx}-${crypto.randomUUID().slice(0, 8)}`,
+                   amount: Number(dist.amount), date: new Date(), clientId: order.clientId, clientName: order.clientName,
+                   orderId: order.id, bankAccountId: appBankAccId, source: 'CREDIT_DISTRIBUTION', paymentMethod: 'SALDO_A_FAVOR',
+                   movementType: 'INCOME', fromAccountType: 'ORDER', toAccountType: 'WALLET', transactionGroupId: distGroupId, createdBy: userId,
+                   notes: `Saldo guardado en billetera virtual | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: RECARGA`,
+                   clientDocument: (order as any).client?.identificationNumber,
+                   balanceBefore: walletBalAfterDist, balanceAfter: walletBalAfterDist, version: 1, createdAt: new Date()
+                });
+
+                clientCredits.push({
+                   id: crypto.randomUUID(), clientAccountId: '', amount: Number(dist.amount), remainingAmount: Number(dist.amount),
+                   originTransactionId: `RECEPTION-DIST-${order.id}-${distIdx}-${Date.now()}`,
+                   originOrderId: order.id, status: 'AVAILABLE', createdAt: new Date()
+                });
+                const currentCreditAcc = clientAccountCredits.get(order.clientId) || 0;
+                clientAccountCredits.set(order.clientId, currentCreditAcc + Number(dist.amount));
               }
 
             }
 
-            // Register cash returns separately (financial record only, no wallet credit)
-            const cashReturnDistributions = item.creditDistribution!.distributions.filter((d: any) => 
-              (!d.targetOrderId) && (d.isCashReturn === true || (d as any).is_cash_return === true)
-            );
-            
-            for (const cashDist of cashReturnDistributions) {
-              const rawReturnAccId = cashDist.bankAccountId || (cashDist as any).bank_account_id;
-              const returnAccId = rawReturnAccId && validBankAccountIds.has(rawReturnAccId) ? rawReturnAccId : mainCashAccountId;
-
-              const currentCashReturnBalance = accountBalancesMap.get(returnAccId) || 0;
-              const balanceBeforeReturn = currentCashReturnBalance;
-              const balanceAfterReturn = balanceBeforeReturn - Number(cashDist.amount);
-              accountBalancesMap.set(returnAccId, balanceAfterReturn);
-
-              financialRecords.push({
-                id: crypto.randomUUID(),
-                type: 'CREDIT_APPLICATION',
-                referenceNumber: `CASH-RETURN-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-                amount: cashDist.amount,
-                date: new Date(),
-                clientId: order.clientId,
-                clientName: order.clientName,
-                orderId: order.id,
-                bankAccountId: returnAccId,
-                source: 'CASH_RETURN',
-                paymentMethod: 'EFECTIVO',
-                movementType: 'EXPENSE',
-                createdBy: userId,
-                notes: `${cashDist.description} | Cédula: ${(order as any).client?.identificationNumber || '—'} | Tipo: DEVOLUCION_EFECTIVO`,
-                clientDocument: (order as any).client?.identificationNumber,
-                balanceBefore: balanceBeforeReturn,
-                balanceAfter: balanceAfterReturn,
-                version: 1,
-                createdAt: new Date()
-              });
-
-              const currentTotal = bankAccountTotals.get(returnAccId) || 0;
-              bankAccountTotals.set(returnAccId, currentTotal - Number(cashDist.amount));
-            }
-
-            // Solo crear crédito en billetera para distribuciones que van a billetera virtual
-            const walletDistributions = item.creditDistribution.distributions.filter(d => !d.targetOrderId && !d.isCashReturn);
-            let walletIdx = 0;
-            for (const walletDist of walletDistributions) {
-              walletIdx++;
-              clientCredits.push({
-                id: crypto.randomUUID(),
-                clientAccountId: '', 
-                amount: walletDist.amount,
-                remainingAmount: walletDist.amount,
-                originTransactionId: `RECEPTION-DIST-${order.id}-${walletIdx}-${Date.now()}`,
-                originOrderId: order.id,
-                status: 'AVAILABLE',
-                createdAt: new Date()
-              });
-
-              const currentCredit = clientAccountCredits.get(order.clientId) || 0;
-              clientAccountCredits.set(order.clientId, currentCredit + walletDist.amount);
-            }
           } else {
             // Register financial records (outflow from order, inflow to wallet)
             const walletBalBefore = clientAccountBalancesMap.get(order.clientId) || 0;
@@ -667,7 +630,7 @@ export class CreateReceptionBatchOptimizedUseCase {
               toAccountType: 'WALLET',
               transactionGroupId: distGroupId,
               createdBy: userId,
-              notes: `Distribución de salto restante | Cédula: ${(order as any).client?.identificationNumber || '—'}`,
+              notes: `Distribución de saldo restante | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: DISTRIBUCION`,
               clientDocument: (order as any).client?.identificationNumber,
               balanceBefore: walletBalBefore,
               balanceAfter: walletBalAfter,
@@ -693,7 +656,7 @@ export class CreateReceptionBatchOptimizedUseCase {
               toAccountType: 'WALLET',
               transactionGroupId: distGroupId,
               createdBy: userId,
-              notes: `Saldo guardado en billetera virtual | Cédula: ${(order as any).client?.identificationNumber || '—'}`,
+              notes: `Saldo guardado en billetera virtual | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: RECARGA`,
               clientDocument: (order as any).client?.identificationNumber,
               balanceBefore: walletBalBefore,
               balanceAfter: walletBalAfter,

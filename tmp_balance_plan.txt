@@ -1,0 +1,35 @@
+Sequential Balance Consistency Implementation Plan
+
+The objective is to eliminate "stale balance snapshots" and "phantom repeating balances" by ensuring every financial record accurately captures the balance resulting from its specific operation within a multi-payment or batch-order transaction.
+
+## Core Issues Identified
+1. **Snapshots on Stale Data**: Database reads for `currentBalance` within a transaction often return the same value in subsequent loop iterations until the transaction is committed.
+2. **Batch Update Looping**: `BatchUpdateOrders` was found using `const` for updateable balance counters, which would fail if triggered.
+3. **Optimized Reception**: Complex distributions in `CreateReceptionBatchOptimized` need for careful sequential mapping to reflect wallet and bank shifts.
+
+## Implementation Details
+
+### 1. Memory-Mapped State Pattern
+Every use case involving financial records will now follow this strict pattern:
+- Initialize `Map<string, number>` for bank accounts and `let` variable for client wallet before the transaction loop.
+- First use: Read from DB, store in Map.
+- Every payment iteration:
+  - `balanceBefore` = Map.get(id)
+  - `balanceAfter` = balanceBefore +/- amount
+  - Map.set(id, balanceAfter)
+  - Use `balanceBefore`/`balanceAfter` in the `FinancialRecord` object.
+
+### 2. Immediate Incremental Updates
+To avoid synchronization issues, bank accounts and wallets will be updated *inside* the loop using Prisma's atomic `increment`/`decrement`, while the Financial Record captures the in-memory projected state.
+
+### 3. Comprehensive Metadata
+Ensure all records include the standardized metadata string:
+`[Action] | Cédula: ... | Orden: ... | Pedido: ... | Marca: ... | Tipo: ...`
+
+## Updated Files Schedule
+- [x] `BatchUpdateOrders.usecase.ts`
+- [ ] `BatchCreateOrder.usecase.ts`
+- [ ] `CreateOrder.usecase.ts`
+- [ ] `DeliverOrder.usecase.ts`
+- [ ] `BatchDeliverOrders.usecase.ts`
+- [ ] `CreateReceptionBatchOptimized.usecase.ts`
