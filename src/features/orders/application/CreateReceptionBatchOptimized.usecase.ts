@@ -157,9 +157,16 @@ export class CreateReceptionBatchOptimizedUseCase {
       // STEP 2: Pre-fetch all orders and default accounts in ONE query
       // ============================================================================
       const orderIds = dto.items.map(i => i.orderId);
-      const [orders, defaultCashAccount, allActiveAccounts] = await Promise.all([
+      
+      // We need clientIds to fetch accounts in the main batch
+      const tempOrders = await tx.order.findMany({
+        where: { id: { in: orderIds } },
+        select: { clientId: true }
+      });
+      const clientIds = Array.from(new Set(tempOrders.map(o => o.clientId)));
+
+      const [orders, defaultCashAccount, allActiveAccounts, clientAccounts] = await Promise.all([
         tx.order.findMany({
-          // ... select fields ...
           where: { id: { in: orderIds } },
           select: {
             id: true,
@@ -177,16 +184,10 @@ export class CreateReceptionBatchOptimizedUseCase {
             invoiceNumber: true,
             documentType: true,
             type: true,
-            exchangeItemId: true, // Needed for exchange updates
+            exchangeItemId: true,
             payments: {
               select: {
-                id: true,
-                amount: true,
-                method: true,
-                reference: true,
-                receiptNumber: true,
-                description: true,
-                createdAt: true
+                id: true, amount: true, method: true, reference: true, receiptNumber: true, description: true, createdAt: true
               }
             }
           }
@@ -197,6 +198,10 @@ export class CreateReceptionBatchOptimizedUseCase {
         }),
         tx.bankAccount.findMany({
           select: { id: true, name: true, currentBalance: true }
+        }),
+        tx.clientAccount.findMany({
+          where: { clientId: { in: clientIds } },
+          select: { clientId: true, totalCreditAvailable: true }
         })
       ]);
 
@@ -211,6 +216,11 @@ export class CreateReceptionBatchOptimizedUseCase {
       // Track running balances in memory to save balanceBefore/After snapshots
       const accountBalancesMap = new Map(allActiveAccounts.map(a => [a.id, Number(a.currentBalance)]));
       const validBankAccountIds = new Set(allActiveAccounts.map(a => a.id));
+      
+      // Track client account balances to show credit evolution in cards
+      const clientAccountBalancesMap = new Map<string, number>(
+        clientAccounts.map(a => [a.clientId, Number(a.totalCreditAvailable)])
+      );
       
       console.timeEnd('⏱️ STEP_2_PREFETCH');
 
@@ -416,10 +426,15 @@ export class CreateReceptionBatchOptimizedUseCase {
           const balanceAfterGen = balanceBeforeGen + creditAmount;
           accountBalancesMap.set(generationBankAccId, balanceAfterGen);
 
+          const currentWalletBal = clientAccountBalancesMap.get(order.clientId) || 0;
+          const walletBalBeforeGen = currentWalletBal;
+          const walletBalAfterGen = walletBalBeforeGen + creditAmount;
+          clientAccountBalancesMap.set(order.clientId, walletBalAfterGen);
+
           financialRecords.push({
             id: crypto.randomUUID(),
             type: 'CREDIT_GENERATION',
-            referenceNumber: `CREDIT-GEN-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            referenceNumber: `CREDIT-GEN-${order.id}-${crypto.randomUUID().slice(0, 8)}`,
             amount: creditAmount,
             date: new Date(),
             clientId: order.clientId,
@@ -432,8 +447,8 @@ export class CreateReceptionBatchOptimizedUseCase {
             createdBy: userId,
             notes: `Saldo a favor generado | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type?.toUpperCase()}`,
             clientDocument: (order as any).client?.identificationNumber,
-            balanceBefore: balanceBeforeGen,
-            balanceAfter: balanceAfterGen,
+            balanceBefore: walletBalBeforeGen, // Use wallet balance for UI
+            balanceAfter: walletBalAfterGen,   // Use wallet balance for UI
             version: 1,
             createdAt: new Date()
           });
@@ -453,28 +468,39 @@ export class CreateReceptionBatchOptimizedUseCase {
                 : mainCashAccountId;
 
               const currentAppBalance = accountBalancesMap.get(appBankAccId) || 0;
-              const balanceBeforeApp = currentAppBalance;
-              const balanceAfterApp = balanceBeforeApp - dist.amount;
-              accountBalancesMap.set(appBankAccId, balanceAfterApp);
+              
+              const distGroupId = crypto.randomUUID();
+
+              const currentWalletBalDist = clientAccountBalancesMap.get(order.clientId) || 0;
+              const walletBalBeforeDist = currentWalletBalDist;
+              // If it goes to another order, it decreases the pool. 
+              // If it goes to wallet, pool doesn't change here since it was already in pool by gen? 
+              // Actually, generation already added it to pool. 
+              // So every distribution outflows from that pool.
+              const walletBalAfterDist = walletBalBeforeDist - Number(dist.amount);
+              clientAccountBalancesMap.set(order.clientId, walletBalAfterDist);
 
               financialRecords.push({
                 id: crypto.randomUUID(),
                 type: 'CREDIT_APPLICATION',
-                referenceNumber: `CREDIT-APP-${dist.targetOrderId || 'WALLET'}-${order.id}-${distIdx}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                referenceNumber: `CREDIT-APP-${dist.targetOrderId || 'WALLET'}-${order.id}-${distIdx}-${crypto.randomUUID().slice(0, 8)}`,
                 amount: dist.amount,
                 date: new Date(),
                 clientId: order.clientId,
                 clientName: order.clientName,
-                orderId: dist.targetOrderId || null,
+                orderId: order.id, // Referencia al pedido origen
                 bankAccountId: appBankAccId,
                 source: 'CREDIT_DISTRIBUTION',
                 paymentMethod: 'SALDO_A_FAVOR',
                 movementType: 'EXPENSE',
+                fromAccountType: 'ORDER',
+                toAccountType: dist.targetOrderId ? 'ORDER' : 'WALLET',
+                transactionGroupId: distGroupId,
                 createdBy: userId,
                 notes: `${dist.description} | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: DISTRIBUCION`,
                 clientDocument: (order as any).client?.identificationNumber,
-                balanceBefore: balanceBeforeApp,
-                balanceAfter: balanceAfterApp,
+                balanceBefore: walletBalBeforeDist,
+                balanceAfter: walletBalAfterDist,
                 version: 1,
                 createdAt: new Date()
               });
@@ -498,11 +524,10 @@ export class CreateReceptionBatchOptimizedUseCase {
                 });
 
                 // ENTRADA: Registrar el pago en el pedido destino (en records financieros)
-                // Usamos la misma cuenta de balance pero como ingreso virtual para el pedido destino
                 financialRecords.push({
                   id: crypto.randomUUID(),
                   type: 'ORDER_PAYMENT',
-                  referenceNumber: `${receiptNumber}-${Math.floor(Math.random() * 1000)}`,
+                  referenceNumber: `${receiptNumber}-${crypto.randomUUID().slice(0, 8)}`,
                   amount: dist.amount,
                   date: new Date(),
                   clientId: order.clientId,
@@ -512,52 +537,55 @@ export class CreateReceptionBatchOptimizedUseCase {
                   source: 'CREDIT_DISTRIBUTION',
                   paymentMethod: 'SALDO_A_FAVOR',
                   movementType: 'INCOME', // Es un ingreso para el pedido destino
+                  fromAccountType: 'ORDER',
+                  toAccountType: 'ORDER',
+                  transactionGroupId: distGroupId,
                   createdBy: userId,
                   notes: `Pago con saldo a favor | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ABONO_SALDO_FAVOR`,
                   clientDocument: (order as any).client?.identificationNumber,
+                  balanceBefore: walletBalAfterDist, // Informativo: saldo después del gasto
+                  balanceAfter: walletBalAfterDist,
                   version: 1,
                   createdAt: new Date()
                 });
+                  // Si no es a otro pedido y no es devolución, va a billetera (ENTRADA a Billetera)
+                  financialRecords.push({
+                    id: crypto.randomUUID(),
+                    type: 'PAYMENT',
+                    referenceNumber: `WALLET-REF-${order.id}-${distIdx}-${crypto.randomUUID().slice(0, 8)}`,
+                    amount: dist.amount,
+                    date: new Date(),
+                    clientId: order.clientId,
+                    clientName: order.clientName,
+                    orderId: order.id,
+                    bankAccountId: appBankAccId,
+                    source: 'CREDIT_DISTRIBUTION',
+                    paymentMethod: 'SALDO_A_FAVOR',
+                    movementType: 'INCOME', 
+                    fromAccountType: 'ORDER',
+                    toAccountType: 'WALLET',
+                    transactionGroupId: distGroupId,
+                    createdBy: userId,
+                    notes: `Saldo guardado en billetera virtual | Cédula: ${(order as any).client?.identificationNumber || '—'}`,
+                    clientDocument: (order as any).client?.identificationNumber,
+                    balanceBefore: walletBalAfterDist,     // Saldo base después de la salida del pedido
+                    balanceAfter: walletBalAfterDist + Number(dist.amount), // Saldo tras entrar a billetera
+                    version: 1,
+                    createdAt: new Date()
+                  });
               }
+
             }
 
-            // Solo crear crédito en billetera para distribuciones que van a billetera virtual (NO devolución en efectivo)
-            const walletDistributions = item.creditDistribution.distributions.filter(d => !d.targetOrderId && !d.isCashReturn);
-            console.log(`   💰 Wallet distributions detected: ${walletDistributions.length}`);
-            
-            let walletIdx = 0;
-            for (const walletDist of walletDistributions) {
-              walletIdx++;
-              console.log(`      - wallet amount: $${walletDist.amount} for client ${order.clientId}`);
-              clientCredits.push({
-                id: crypto.randomUUID(),
-                clientAccountId: '', // Will be filled after getting/creating client account
-                amount: walletDist.amount,
-                remainingAmount: walletDist.amount,
-                originTransactionId: `RECEPTION-DIST-${order.id}-${walletIdx}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-                originOrderId: order.id,
-                status: 'AVAILABLE',
-                createdAt: new Date()
-              });
-
-              // Accumulate client account credit for wallet distributions only
-              const currentCredit = clientAccountCredits.get(order.clientId) || 0;
-              clientAccountCredits.set(order.clientId, currentCredit + walletDist.amount);
-            }
-            
             // Register cash returns separately (financial record only, no wallet credit)
-            // Support both camelCase and snake_case from different frontend versions
             const cashReturnDistributions = item.creditDistribution!.distributions.filter((d: any) => 
               (!d.targetOrderId) && (d.isCashReturn === true || (d as any).is_cash_return === true)
             );
             
             for (const cashDist of cashReturnDistributions) {
               const rawReturnAccId = cashDist.bankAccountId || (cashDist as any).bank_account_id;
-              const returnAccId = rawReturnAccId && validBankAccountIds.has(rawReturnAccId) 
-                ? rawReturnAccId 
-                : mainCashAccountId;
+              const returnAccId = rawReturnAccId && validBankAccountIds.has(rawReturnAccId) ? rawReturnAccId : mainCashAccountId;
 
-              console.log(`      - cash return: $${cashDist.amount} from account ${returnAccId}`);
               const currentCashReturnBalance = accountBalancesMap.get(returnAccId) || 0;
               const balanceBeforeReturn = currentCashReturnBalance;
               const balanceAfterReturn = balanceBeforeReturn - Number(cashDist.amount);
@@ -571,13 +599,13 @@ export class CreateReceptionBatchOptimizedUseCase {
                 date: new Date(),
                 clientId: order.clientId,
                 clientName: order.clientName,
-                orderId: null,
+                orderId: order.id,
                 bankAccountId: returnAccId,
                 source: 'CASH_RETURN',
                 paymentMethod: 'EFECTIVO',
                 movementType: 'EXPENSE',
                 createdBy: userId,
-                notes: `${cashDist.description} | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: DEVOLUCION_EFECTIVO`,
+                notes: `${cashDist.description} | Cédula: ${(order as any).client?.identificationNumber || '—'} | Tipo: DEVOLUCION_EFECTIVO`,
                 clientDocument: (order as any).client?.identificationNumber,
                 balanceBefore: balanceBeforeReturn,
                 balanceAfter: balanceAfterReturn,
@@ -585,53 +613,97 @@ export class CreateReceptionBatchOptimizedUseCase {
                 createdAt: new Date()
               });
 
-              // Subtract from the SELECTED bank account total (Real money outflow)
               const currentTotal = bankAccountTotals.get(returnAccId) || 0;
               bankAccountTotals.set(returnAccId, currentTotal - Number(cashDist.amount));
             }
+
+            // Solo crear crédito en billetera para distribuciones que van a billetera virtual
+            const walletDistributions = item.creditDistribution.distributions.filter(d => !d.targetOrderId && !d.isCashReturn);
+            let walletIdx = 0;
+            for (const walletDist of walletDistributions) {
+              walletIdx++;
+              clientCredits.push({
+                id: crypto.randomUUID(),
+                clientAccountId: '', 
+                amount: walletDist.amount,
+                remainingAmount: walletDist.amount,
+                originTransactionId: `RECEPTION-DIST-${order.id}-${walletIdx}-${Date.now()}`,
+                originOrderId: order.id,
+                status: 'AVAILABLE',
+                createdAt: new Date()
+              });
+
+              const currentCredit = clientAccountCredits.get(order.clientId) || 0;
+              clientAccountCredits.set(order.clientId, currentCredit + walletDist.amount);
+            }
           } else {
-            console.log(`   ⚠️ No creditDistribution provided - sending all $${creditAmount} to wallet automatically`);
-            // Si no hay distribución, todo va a billetera virtual (comportamiento actual)
+            // COMPORTAMIENTO POR DEFECTO: Todo a billetera virtual
+            const currentWalletAppBalance = accountBalancesMap.get(order.bankAccountId || mainCashAccountId) || 0;
+            const distGroupId = crypto.randomUUID();
+
             clientCredits.push({
               id: crypto.randomUUID(),
-              clientAccountId: '', // Will be filled after getting/creating client account
+              clientAccountId: '',
               amount: creditAmount,
               remainingAmount: creditAmount,
-              originTransactionId: `RECEPTION-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              originTransactionId: `RECEPTION-${order.id}-${Date.now()}`,
               originOrderId: order.id,
               status: 'AVAILABLE',
               createdAt: new Date()
             });
 
-            // SALIDA: Registrar que todo va a billetera virtual
-            const currentWalletAppBalance = accountBalancesMap.get(order.bankAccountId || mainCashAccountId) || 0;
-            const balanceBeforeWallet = currentWalletAppBalance;
-            const balanceAfterWallet = balanceBeforeWallet - creditAmount;
-            accountBalancesMap.set(order.bankAccountId || mainCashAccountId, balanceAfterWallet);
-
+            // SALIDA del pedido
             financialRecords.push({
               id: crypto.randomUUID(),
               type: 'CREDIT_APPLICATION',
-              referenceNumber: `CREDIT-WALLET-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              referenceNumber: `CREDIT-OUT-${order.id}-${Date.now()}`,
               amount: creditAmount,
               date: new Date(),
               clientId: order.clientId,
               clientName: order.clientName,
-              orderId: null,
+              orderId: order.id,
               bankAccountId: order.bankAccountId || mainCashAccountId,
               source: 'CREDIT_DISTRIBUTION',
               paymentMethod: 'SALDO_A_FAVOR',
-              movementType: 'EXPENSE',
+              movementType: 'EXPENSE', // Sale del pedido
+              fromAccountType: 'ORDER',
+              toAccountType: 'WALLET',
+              transactionGroupId: distGroupId,
               createdBy: userId,
-              notes: `Saldo guardado en billetera virtual | Cédula: ${(order as any).client?.identificationNumber || '—'} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: BILLETERA_VIRTUAL`,
+              notes: `Distribución de salto restante | Cédula: ${(order as any).client?.identificationNumber || '—'}`,
               clientDocument: (order as any).client?.identificationNumber,
-              balanceBefore: balanceBeforeWallet,
-              balanceAfter: balanceAfterWallet,
+              balanceBefore: currentWalletAppBalance,
+              balanceAfter: currentWalletAppBalance,
               version: 1,
               createdAt: new Date()
             });
 
-            // Accumulate client account credit
+            // ENTRADA a la billetera
+            financialRecords.push({
+              id: crypto.randomUUID(),
+              type: 'PAYMENT',
+              referenceNumber: `CREDIT-IN-${order.id}-${Date.now()}`,
+              amount: creditAmount,
+              date: new Date(),
+              clientId: order.clientId,
+              clientName: order.clientName,
+              orderId: order.id,
+              bankAccountId: order.bankAccountId || mainCashAccountId,
+              source: 'CREDIT_DISTRIBUTION',
+              paymentMethod: 'SALDO_A_FAVOR',
+              movementType: 'INCOME', // Entra a billetera
+              fromAccountType: 'ORDER',
+              toAccountType: 'WALLET',
+              transactionGroupId: distGroupId,
+              createdBy: userId,
+              notes: `Saldo guardado en billetera virtual | Cédula: ${(order as any).client?.identificationNumber || '—'}`,
+              clientDocument: (order as any).client?.identificationNumber,
+              balanceBefore: currentWalletAppBalance,
+              balanceAfter: currentWalletAppBalance,
+              version: 1,
+              createdAt: new Date()
+            });
+
             const currentCredit = clientAccountCredits.get(order.clientId) || 0;
             clientAccountCredits.set(order.clientId, currentCredit + creditAmount);
           }
