@@ -436,6 +436,7 @@ export class GetCashClosurePreviewUseCase {
                 toDate,
                 totalIncome: globalIncome,
                 totalExpense: globalExpense,
+                netTotal: globalIncome - globalExpense,
                 physicalIncome,
                 physicalExpense,
                 expectedAmount,
