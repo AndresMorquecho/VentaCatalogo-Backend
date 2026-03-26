@@ -67,7 +67,7 @@ describe('Wallet Payment Duplication Bug - Exploratory Test', () => {
         testClientId = client.id;
 
         // Create client account with credit
-        await prisma.clientAccount.create({
+        const clientAccount = await prisma.clientAccount.create({
             data: {
                 clientId: testClientId,
                 totalCreditAvailable: 200, // Client has $200 credit
@@ -78,12 +78,11 @@ describe('Wallet Payment Duplication Bug - Exploratory Test', () => {
         // Create a client credit record
         await prisma.clientCredit.create({
             data: {
-                clientId: testClientId,
+                clientAccountId: clientAccount.id,
                 amount: 200,
                 remainingAmount: 200,
-                source: 'RECEPTION',
                 status: 'AVAILABLE',
-                description: 'Test credit for wallet payment bug test'
+                originTransactionId: `test-tx-${Date.now()}`
             }
         });
 
@@ -95,6 +94,9 @@ describe('Wallet Payment Duplication Bug - Exploratory Test', () => {
                 data: {
                     name: 'Caja Principal',
                     type: 'CASH',
+                    holderName: 'Test Holder',
+                    bankName: 'Test Bank',
+                    accountNumber: '123456789',
                     currentBalance: 1000,
                     version: 1
                 }
@@ -111,12 +113,15 @@ describe('Wallet Payment Duplication Bug - Exploratory Test', () => {
                 orderNumber: `ORD-${Date.now()}`,
                 type: 'NORMAL',
                 brandId: testBrandId,
-                brandName: 'Test Brand',
                 clientId: testClientId,
                 clientName: 'Test Client',
                 total: 123, // Order total is $123
                 status: 'POR_RECIBIR',
-                createdBy: 'test-user'
+                createdByName: 'test-user',
+                salesChannel: 'DIRECTO',
+                paymentMethod: 'EFECTIVO',
+                possibleDeliveryDate: new Date(),
+                transactionDate: new Date()
             }
         });
         testOrderId = order.id;

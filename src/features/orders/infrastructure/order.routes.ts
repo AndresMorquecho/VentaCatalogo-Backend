@@ -26,7 +26,7 @@ const bankAccountRepository = new PrismaBankAccountRepository();
 
 // Use Cases
 const createOrderUseCase = new CreateOrderUseCase(orderRepository, financialRepository, bankAccountRepository);
-const batchCreateOrderUseCase = new BatchCreateOrderUseCase(orderRepository);
+const batchCreateOrderUseCase = new BatchCreateOrderUseCase(orderRepository, financialRepository, bankAccountRepository);
 const getOrdersUseCase = new GetOrdersUseCase(orderRepository);
 const receiveOrderUseCase = new ReceiveOrderUseCase(orderRepository, financialRepository);
 const deliverOrderUseCase = new DeliverOrderUseCase(orderRepository, financialRepository);
