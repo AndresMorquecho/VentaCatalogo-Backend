@@ -28,6 +28,19 @@ function buildModuleLabel(r: {
     return notes || 'Movimiento';
 }
 
+export interface SummaryTableRecord {
+    date: Date;
+    label?: string; // Tipo
+    reference?: string; // Referencia (método)
+    code?: string; // Código (comprobante)
+    description: string;
+    identification?: string; // Cédula/Identificación
+    client?: string; // Nombre Cliente
+    amount: number;
+    type: 'INCOME' | 'EXPENSE' | 'INTERNAL';
+    balance: number;
+}
+
 export interface CashClosurePreview {
     fromDate: Date;
     toDate: Date;
@@ -65,6 +78,8 @@ export interface CashClosurePreview {
         walletRecharges: number;
         adjustments: number;
         manual: number;
+        deliveryPayments: number;
+        catalogSales: number;
     };
     walletRechargeByMethod: {
         TRANSFERENCIA: number;
@@ -93,6 +108,18 @@ export interface CashClosurePreview {
         totalExpense: number;
         movementCount: number;
     }[];
+    summaryTables: {
+        wallet: SummaryTableRecord[];
+        bancos: SummaryTableRecord[];
+        catalog: SummaryTableRecord[];
+        abonos: SummaryTableRecord[];
+        entregas: SummaryTableRecord[];
+    };
+    totalDetails: {
+        cash: number;
+        banks: number;
+        accounts: { name: string; type: string; balance: number }[];
+    };
 }
 
 export class GetCashClosurePreviewUseCase {
@@ -128,7 +155,7 @@ export class GetCashClosurePreviewUseCase {
 
             const movements = await prisma.financialRecord.findMany({
                 where: whereClause,
-                include: { client: true, bankAccount: true },
+                include: { client: true, bankAccount: true, order: true },
                 orderBy: { date: 'desc' }
             });
 
@@ -162,11 +189,13 @@ export class GetCashClosurePreviewUseCase {
                     description: m.notes || (m.type === 'PAYMENT' ? `Pago: ${m.clientName}` : 'Movimiento de caja'),
                     moduleLabel: buildModuleLabel(m),
                     amount,
-                    source: m.source, // INCLUDE SOURCE FOR PDF
-                    clientName: m.client?.firstName || m.clientName || '', // MAPPING REAL NAME
+                    source: m.source,
+                    clientName: m.client?.firstName || m.clientName || '',
+                    clientDocument: m.clientDocument || m.client?.identificationNumber || '',
+                    referenceNumber: m.referenceNumber,
                     type: m.type,
                     movementType: m.movementType as 'INCOME' | 'EXPENSE' | 'INTERNAL',
-                    paymentMethod: m.paymentMethod ?? undefined,
+                    paymentMethod: m.paymentMethod ?? '',
                     isCreditApplication,
                     isInternal,
                     accountName: m.bankAccount?.name || 'Desconocida',
@@ -234,17 +263,158 @@ export class GetCashClosurePreviewUseCase {
             // Stats by user
             const userStatsMap = new Map<string, any>();
             detailedMovements.forEach(m => {
-                const uid = m.user; // Detailed movements has user name
-                if (!userStatsMap.has(m.user)) {
-                    userStatsMap.set(m.user, { userId: m.user, userName: m.user, totalIncome: 0, totalExpense: 0, movementCount: 0 });
+                const userKey = m.user || 'Desconocido';
+                if (!userStatsMap.has(userKey)) {
+                    userStatsMap.set(userKey, { userId: userKey, userName: userKey, totalIncome: 0, totalExpense: 0, movementCount: 0 });
                 }
-                const st = userStatsMap.get(m.user);
+                const st = userStatsMap.get(userKey);
                 st.movementCount++;
                 if (m.movementType === 'INCOME' && m.isCashAccount && !m.isCreditApplication && !m.isInternal) st.totalIncome += m.amount;
                 else if (m.movementType === 'EXPENSE' && m.isCashAccount && !m.isCreditApplication && !m.isInternal) st.totalExpense += m.amount;
             });
             const movementsByUser = Array.from(userStatsMap.values())
                 .sort((a, b) => (b.totalIncome + b.totalExpense) - (a.totalIncome + a.totalExpense));
+
+            // --- Enrichment logic for the 4 tables ---
+            
+            // 1. Initial Balances (Global Cumulative before fromDate)
+            const priorAllRecs = await prisma.financialRecord.findMany({
+                where: { date: { lt: fromDate } },
+                select: { amount: true, movementType: true, toAccountType: true, fromAccountType: true, bankAccountId: true, source: true, notes: true }
+            });
+
+            // Initial Wallet Balance
+            const initialWalletBal = priorAllRecs.reduce((sum, r) => {
+                const amt = Number(r.amount);
+                if (r.toAccountType === 'WALLET') return sum + amt;
+                if (r.fromAccountType === 'WALLET') return sum - amt;
+                return sum;
+            }, 0);
+
+            // Initial Bank Balance (Global)
+            const bankAccountIdsSet = new Set(allAccounts.filter(a => a.type !== 'CASH').map(a => a.id));
+            const initialBankBal = priorAllRecs.reduce((sum, r) => {
+                if (bankAccountIdsSet.has(r.bankAccountId)) {
+                    const amt = Number(r.amount);
+                    return r.movementType === 'INCOME' ? sum + amt : sum - amt;
+                }
+                return sum;
+            }, 0);
+
+            // Initial Abonos Balance
+            const initialAbonosBal = priorAllRecs.reduce((sum, r) => {
+                const isAbono = r.source === 'ORDER_PAYMENT' && !(r.notes?.toLowerCase().includes('entrega') ?? false);
+                if (isAbono && r.movementType === 'INCOME') return sum + Number(r.amount);
+                return sum;
+            }, 0);
+
+            // Initial Entregas Balance
+            const initialEntregasBal = priorAllRecs.reduce((sum, r) => {
+                const isEntrega = r.notes?.toLowerCase().includes('entrega') ?? false;
+                if (isEntrega && r.movementType === 'INCOME') return sum + Number(r.amount);
+                return sum;
+            }, 0);
+
+            // 2. Build Tables
+            const summaryTables = {
+                wallet: [] as SummaryTableRecord[],
+                bancos: [] as SummaryTableRecord[],
+                abonos: [] as SummaryTableRecord[],
+                entregas: [] as SummaryTableRecord[],
+                catalog: [] as SummaryTableRecord[]
+            };
+
+            let runningWallet = initialWalletBal;
+            let runningBancos = initialBankBal;
+            let runningAbonos = initialAbonosBal;
+            let runningEntregas = initialEntregasBal;
+            let runningCatalog = 0; // Standard for new categorization unless prior balance needed
+
+            // Process movements in chronological order for correct running balance
+            const chronMovements = [...detailedMovements].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+            chronMovements.forEach(m => {
+                const raw = movements.find(r => r.id === m.id);
+                if (raw) {
+                    const base = {
+                        date: m.date,
+                        label: m.moduleLabel,
+                        reference: m.paymentMethod || m.source,
+                        code: m.referenceNumber,
+                        description: m.description,
+                        identification: m.clientDocument,
+                        client: m.clientName,
+                        amount: m.amount,
+                        type: m.movementType as 'INCOME' | 'EXPENSE' | 'INTERNAL'
+                    };
+
+                    // 1. Wallet Table (Manual Wallet or Credit Application)
+                    if (raw.toAccountType === 'WALLET' || raw.fromAccountType === 'WALLET') {
+                        const amt = raw.toAccountType === 'WALLET' ? m.amount : -m.amount;
+                        runningWallet += amt;
+                        summaryTables.wallet.push({ 
+                            ...base, 
+                            balance: runningWallet,
+                            type: raw.toAccountType === 'WALLET' ? 'INCOME' : 'EXPENSE' 
+                        });
+                    }
+
+                    // 2. Bank Table (Non-cash, Global)
+                    if (bankAccountIdsSet.has(raw.bankAccountId) && m.movementType !== 'INTERNAL') {
+                        const amt = m.movementType === 'INCOME' ? m.amount : -m.amount;
+                        runningBancos += amt;
+                        summaryTables.bancos.push({ 
+                            ...base, 
+                            balance: runningBancos 
+                        });
+                    }
+
+                    // 3. Catalog Sales Table (Direct source, type CATALOGO, or catalog name in brand/notes)
+                    const isCatalog = raw.source === 'CATALOG_SALE' || 
+                                     (raw as any).order?.type === 'CATALOGO' ||
+                                     base.description.toUpperCase().includes('CATAL') ||
+                                     (raw as any).order?.brandName?.toUpperCase().includes('CATAL') ||
+                                     (raw as any).order?.brandName?.toUpperCase() === 'AMWAY';
+
+                    if (isCatalog) {
+                        if (m.movementType === 'INCOME') {
+                            runningCatalog += m.amount;
+                            summaryTables.catalog.push({ 
+                                ...base, 
+                                balance: runningCatalog 
+                            });
+                        }
+                    } 
+                    // 4 & 5. Order Payments (Abonos or Entregas - EXCLUDING CATALOGO)
+                    else if (raw.source === 'ORDER_PAYMENT' && m.movementType === 'INCOME') {
+                        const isEntrega = raw.notes?.toLowerCase().includes('entrega') ?? false;
+                        if (isEntrega) {
+                            runningEntregas += m.amount;
+                            summaryTables.entregas.push({ 
+                                ...base, 
+                                balance: runningEntregas 
+                            });
+                        } else {
+                            runningAbonos += m.amount;
+                            summaryTables.abonos.push({ 
+                                ...base, 
+                                balance: runningAbonos 
+                            });
+                        }
+                    }
+                }
+            });
+
+            // Summary totals by type
+            const totalDetails = {
+                cash: balanceByBank.filter(b => b.bankAccountType === 'CASH').reduce((s, b) => s + b.finalBalance, 0),
+                banks: balanceByBank.filter(b => b.bankAccountType !== 'CASH').reduce((s, b) => s + b.finalBalance, 0),
+                accounts: balanceByBank.map(b => ({
+                    name: b.bankAccountName,
+                    type: b.bankAccountType,
+                    balance: b.finalBalance
+                }))
+            };
 
             return Result.ok({
                 fromDate,
@@ -261,7 +431,9 @@ export class GetCashClosurePreviewUseCase {
                 walletRechargeByMethod: { TRANSFERENCIA: 0, DEPOSITO: 0, CHEQUE: 0 }, // Simplified
                 incomeByMethod,
                 balanceByBank,
-                movementsByUser
+                movementsByUser,
+                summaryTables,
+                totalDetails
             } as any);
         } catch (error) {
             console.error('GetCashClosurePreview Error:', error);
