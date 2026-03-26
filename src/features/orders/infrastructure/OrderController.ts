@@ -118,7 +118,7 @@ export class OrderController {
     try {
       // Procesar múltiples métodos de pago si están presentes
       let totalDeposit = Number(req.body.deposit || 0);
-      let paymentMethod = req.body.payment_method;
+      let paymentMethod = req.body.payment_method || req.body.paymentMethod || 'EFECTIVO';
       let creditAmount = Number(req.body.credit_to_use ?? 0);
       let paymentData = null;
       
@@ -154,13 +154,13 @@ export class OrderController {
       }
 
       const dto = {
-        receiptNumber: req.body.receipt_number,
-        clientId: req.body.client_id,
-        salesChannel: req.body.sales_channel,
-        createdAt: req.body.created_at ? new Date(req.body.created_at) : new Date(),
+        receiptNumber: req.body.receipt_number || req.body.receiptNumber,
+        clientId: req.body.client_id || req.body.clientId,
+        salesChannel: req.body.sales_channel || req.body.salesChannel,
+        createdAt: (req.body.created_at || req.body.createdAt) ? new Date(req.body.created_at || req.body.createdAt) : new Date(),
         paymentMethod: paymentMethod,
-        bankAccountId: req.body.bank_account_id,
-        transactionDate: new Date(req.body.transaction_date),
+        bankAccountId: req.body.bank_account_id || req.body.bankAccountId,
+        transactionDate: (req.body.transaction_date || req.body.transactionDate) ? new Date(req.body.transaction_date || req.body.transactionDate) : new Date(),
         createdByName: req.user!.username,
         initialPayment: {
           amount: totalDeposit,
@@ -174,7 +174,7 @@ export class OrderController {
           brandName: o.brand_name,
           total: Number(o.total),
           type: o.type,
-          possibleDeliveryDate: new Date(o.possible_delivery_date),
+          possibleDeliveryDate: o.possible_delivery_date ? new Date(o.possible_delivery_date) : new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
           items: o.items.map((i: any) => ({
             productName: i.product_name,
             quantity: Number(i.quantity),
@@ -204,7 +204,7 @@ export class OrderController {
   create = async (req: AuthRequest, res: Response) => {
     try {
       // Ensure brandId is available for items
-      const orderBrandId = req.body.brand_id;
+      const orderBrandId = req.body.brand_id || req.body.brandId;
 
       if (!orderBrandId) {
         return HttpResponse.badRequest(res, 'Brand ID is required');
@@ -218,18 +218,18 @@ export class OrderController {
                             null);
       
       const dto = {
-        receiptNumber: req.body.receipt_number, // Use manual receipt number if provided
-        salesChannel: req.body.sales_channel,
+        receiptNumber: req.body.receipt_number || req.body.receiptNumber, // Use manual receipt number if provided
+        salesChannel: req.body.sales_channel || req.body.salesChannel,
         type: req.body.type,
         brandId: orderBrandId,
-        brandName: req.body.brand_name,
+        brandName: req.body.brand_name || req.body.brandName,
         total: Number(req.body.total),
-        paymentMethod: req.body.payment_method,
+        paymentMethod: req.body.payment_method || req.body.paymentMethod || 'EFECTIVO',
         bankAccountId: bankAccountId,
-        transactionDate: new Date(req.body.transaction_date),
-        possibleDeliveryDate: new Date(req.body.possible_delivery_date),
-        clientId: req.body.client_id,
-        clientName: req.body.client_name,
+        transactionDate: (req.body.transaction_date || req.body.transactionDate) ? new Date(req.body.transaction_date || req.body.transactionDate) : new Date(),
+        possibleDeliveryDate: (req.body.possible_delivery_date || req.body.possibleDeliveryDate) ? new Date(req.body.possible_delivery_date || req.body.possibleDeliveryDate) : new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
+        clientId: req.body.client_id || req.body.clientId,
+        clientName: req.body.client_name || req.body.clientName,
         items: req.body.items?.map((item: any) => ({
           productName: item.product_name,
           quantity: Number(item.quantity),
@@ -364,20 +364,20 @@ export class OrderController {
 
       // Map DTO but keep critical fields protected
       const updateData: any = {
-        receiptNumber: req.body.receipt_number,
-        salesChannel: req.body.sales_channel,
+        receiptNumber: req.body.receipt_number || req.body.receiptNumber,
+        salesChannel: req.body.sales_channel || req.body.salesChannel,
         type: req.body.type,
-        brandId: req.body.brand_id,
+        brandId: req.body.brand_id || req.body.brandId,
         total: req.body.total !== undefined ? Number(req.body.total) : undefined,
-        paymentMethod: req.body.payment_method,
-        bankAccountId: req.body.bank_account_id,
-        transactionDate: req.body.transaction_date ? new Date(req.body.transaction_date) : undefined,
-        possibleDeliveryDate: req.body.possible_delivery_date ? new Date(req.body.possible_delivery_date) : undefined,
+        paymentMethod: req.body.payment_method || req.body.paymentMethod,
+        bankAccountId: req.body.bank_account_id || req.body.bankAccountId,
+        transactionDate: (req.body.transaction_date || req.body.transactionDate) ? new Date(req.body.transaction_date || req.body.transactionDate) : undefined,
+        possibleDeliveryDate: (req.body.possible_delivery_date || req.body.possibleDeliveryDate) ? new Date(req.body.possible_delivery_date || req.body.possibleDeliveryDate) : undefined,
         orderNumber: req.body.orderNumber || req.body.order_number,
-        clientId: req.body.client_id,
-        clientName: req.body.client_name,
+        clientId: req.body.client_id || req.body.clientId,
+        clientName: req.body.client_name || req.body.clientName,
         notes: req.body.notes,
-        createdAt: req.body.created_at ? new Date(req.body.created_at) : undefined,
+        createdAt: (req.body.created_at || req.body.createdAt) ? new Date(req.body.created_at || req.body.createdAt) : undefined,
         updatedAt: new Date()
       };
 
@@ -416,55 +416,99 @@ export class OrderController {
           const newDeposit = Number(req.body.deposit);
           const currentDeposit = updated.payments.reduce((sum, p) => sum + Number(p.amount), 0);
           const diff = newDeposit - currentDeposit;
+          
+          const newMethod = req.body.payment_method || req.body.paymentMethod || updated.paymentMethod;
+          const newBankId = req.body.bank_account_id || req.body.bankAccountId || updated.bankAccountId;
 
-          if (Math.abs(diff) > 0.01) {
-            // Must have only one payment or no payments
-            if (updated.payments.length > 1) {
-              throw new Error('No se puede editar el abono porque ya existen múltiples abonos vinculados.');
-            }
+          if (updated.payments.length === 1) {
+            const payment = updated.payments[0];
+            const oldBankId = updated.bankAccountId;
+            const oldMethod = payment.method;
+            
+            // Check if anything changed regarding payment
+            const amountChanged = Math.abs(diff) > 0.01;
+            const accountChanged = newBankId !== oldBankId;
+            const methodChanged = newMethod !== oldMethod;
 
-            if (updated.payments.length === 1) {
-              const payment = updated.payments[0];
-              await tx.orderPayment.update({
-                where: { id: payment.id },
-                data: { amount: newDeposit }
-              });
-
-              if (updated.bankAccountId) {
+            if (amountChanged || accountChanged || methodChanged) {
+              // --- 1. HANDLE REVERSAL OF OLD PAYMENT ---
+              if (oldMethod === 'BILLETERA_VIRTUAL') {
+                // Refund wallet credit
+                await tx.clientAccount.update({
+                  where: { clientId: updated.clientId },
+                  data: { totalCreditAvailable: { increment: Number(payment.amount) } }
+                });
+              } else if (oldBankId) {
+                // Revert bank balance
                 await tx.bankAccount.update({
-                  where: { id: updated.bankAccountId },
-                  data: { currentBalance: { increment: diff } }
+                  where: { id: oldBankId },
+                  data: { currentBalance: { decrement: Number(payment.amount) } }
                 });
               }
 
-          // Update Financial Record (linked by orderPaymentId for O(1) consistency)
-          await tx.financialRecord.updateMany({
-            where: { orderPaymentId: payment.id, type: 'PAYMENT' },
-            data: { amount: newDeposit }
-          });
-            } else if (newDeposit > 0) {
-              // Create new payment if it had none
-              const paymentReceipt = `REC-ABO-${Date.now().toString().slice(-6)}`;
-          const createdPayment = await tx.orderPayment.create({
-                data: {
-                  id: crypto.randomUUID(),
-                  orderId: id,
-                  amount: newDeposit,
-                  method: updated.paymentMethod,
-                  receiptNumber: paymentReceipt,
-                  description: 'Abono inicial (Edit)'
+              // --- 2. HANDLE APPLICATION OF NEW PAYMENT ---
+              let actualBankId = newBankId;
+              if (newMethod === 'BILLETERA_VIRTUAL') {
+                // Deduct from wallet
+                await tx.clientAccount.update({
+                  where: { clientId: updated.clientId },
+                  data: { totalCreditAvailable: { decrement: newDeposit } }
+                });
+                // Look up virtual bank account for the financial record
+                const virtualBank = await tx.bankAccount.findFirst({
+                  where: { type: 'CASH', name: { contains: 'Virtual' } }
+                });
+                actualBankId = virtualBank?.id || null;
+              } else if (newBankId) {
+                // Apply to bank account
+                await tx.bankAccount.update({
+                  where: { id: newBankId },
+                  data: { currentBalance: { increment: newDeposit } }
+                });
+              }
+
+              // --- 3. UPDATE RECORDS ---
+              // Update order record (method and bank)
+              await tx.order.update({
+                where: { id: id },
+                data: { 
+                  paymentMethod: newMethod,
+                  bankAccountId: newMethod === 'BILLETERA_VIRTUAL' ? actualBankId : (newBankId || null)
                 }
               });
 
-              if (updated.bankAccountId) {
-                await tx.bankAccount.update({
-                  where: { id: updated.bankAccountId },
-                  data: { currentBalance: { increment: newDeposit } }
+              // Update payment record (amount and method)
+              await tx.orderPayment.update({
+                where: { id: payment.id },
+                data: { 
+                  amount: newDeposit,
+                  method: newMethod
+                }
+              });
+
+              // Update Financial Record
+              const finalNotes = `${newMethod === 'BILLETERA_VIRTUAL' ? 'Uso de Billetera Virtual' : 'Abono inicial'} editado | Cédula: ${updated.client?.identificationNumber || updated.clientId || '—'} | Orden: ${updated.receiptNumber} | Pedido: ${updated.orderNumber || '—'} | Marca: ${(updated as any).brand?.name || '—'} | Tipo: ${updated.type.toUpperCase()}`;
+              
+              const frMatch = await tx.financialRecord.findFirst({
+                where: { orderPaymentId: payment.id, type: 'PAYMENT' }
+              });
+
+              if (frMatch) {
+                await tx.financialRecord.update({
+                  where: { id: frMatch.id },
+                  data: { 
+                    amount: newDeposit,
+                    bankAccountId: actualBankId || null,
+                    paymentMethod: newMethod,
+                    notes: finalNotes
+                  }
                 });
+              } else if (newDeposit > 0) {
+                // Create FR if it didn't exist
                 await tx.financialRecord.create({
                   data: {
                     type: 'PAYMENT',
-                    source: 'ORDER_PAYMENT',
+                    source: newMethod === 'BILLETERA_VIRTUAL' ? 'WALLET' : 'ORDER_PAYMENT',
                     movementType: 'INCOME',
                     referenceNumber: `REF-EDIT-${Date.now()}`,
                     amount: newDeposit,
@@ -472,17 +516,82 @@ export class OrderController {
                     clientId: updated.clientId,
                     clientName: updated.clientName,
                     orderId: id,
-                orderPaymentId: createdPayment.id,
+                    orderPaymentId: payment.id,
                     createdBy: req.user!.username,
-                    notes: `Abono inicial editado | Cédula: ${updated.client?.identificationNumber || updated.clientId || '—'} | Orden: ${updated.receiptNumber} | Pedido: ${updated.orderNumber || '—'} | Marca: ${(updated as any).brand?.name || '—'} | Tipo: ${updated.type.toUpperCase()}`,
-                    bankAccountId: updated.bankAccountId,
-                    paymentMethod: updated.paymentMethod,
+                    notes: finalNotes,
+                    bankAccountId: actualBankId || null,
+                    paymentMethod: newMethod,
                     clientDocument: updated.client?.identificationNumber || updated.clientId || '—',
                     version: 1
                   }
                 });
               }
             }
+          } else if (newDeposit > 0) {
+            // Case: No existing payments, but a new deposit is provided
+            const paymentReceipt = `REC-ABO-${Date.now().toString().slice(-6)}`;
+            
+            let actualBankId = newBankId;
+            if (newMethod === 'BILLETERA_VIRTUAL') {
+               // Deduct from wallet
+               await tx.clientAccount.update({
+                where: { clientId: updated.clientId },
+                data: { totalCreditAvailable: { decrement: newDeposit } }
+              });
+              const virtualBank = await tx.bankAccount.findFirst({
+                where: { type: 'CASH', name: { contains: 'Virtual' } }
+              });
+              actualBankId = virtualBank?.id || null;
+            } else if (newBankId) {
+               // Apply to bank account
+               await tx.bankAccount.update({
+                where: { id: newBankId },
+                data: { currentBalance: { increment: newDeposit } }
+              });
+            }
+
+            // 1. Update order record with new info
+            await tx.order.update({
+              where: { id: id },
+              data: {
+                paymentMethod: newMethod,
+                bankAccountId: newMethod === 'BILLETERA_VIRTUAL' ? actualBankId : (newBankId || null)
+              }
+            });
+
+            // 2. Create payment record
+            const createdPayment = await tx.orderPayment.create({
+              data: {
+                id: crypto.randomUUID(),
+                orderId: id,
+                amount: newDeposit,
+                method: newMethod,
+                receiptNumber: paymentReceipt,
+                description: 'Abono inicial (Edit)'
+              }
+            });
+
+            // 3. Create Financial Record
+            await tx.financialRecord.create({
+              data: {
+                type: 'PAYMENT',
+                source: newMethod === 'BILLETERA_VIRTUAL' ? 'WALLET' : 'ORDER_PAYMENT',
+                movementType: 'INCOME',
+                referenceNumber: `REF-EDIT-${Date.now()}`,
+                amount: newDeposit,
+                date: new Date(),
+                clientId: updated.clientId,
+                clientName: updated.clientName,
+                orderId: id,
+                orderPaymentId: createdPayment.id,
+                createdBy: req.user!.username,
+                notes: `${newMethod === 'BILLETERA_VIRTUAL' ? 'Uso de Billetera Virtual' : 'Abono inicial'} registrado desde edición | Cédula: ${updated.client?.identificationNumber || updated.clientId || '—'} | Orden: ${updated.receiptNumber} | Pedido: ${updated.orderNumber || '—'} | Marca: ${(updated as any).brand?.name || '—'} | Tipo: ${updated.type.toUpperCase()}`,
+                bankAccountId: actualBankId || null,
+                paymentMethod: newMethod,
+                clientDocument: updated.client?.identificationNumber || updated.clientId || '—',
+                version: 1
+              }
+            });
           }
         }
 
@@ -533,16 +642,16 @@ export class OrderController {
       }
 
       const dto = {
-        receiptNumber: receiptNumber || req.body.receipt_number,
-        clientId: req.body.client_id,
-        salesChannel: req.body.sales_channel,
-        createdAt: req.body.created_at ? new Date(req.body.created_at) : new Date(),
-        paymentMethod: req.body.payment_method,
-        bankAccountId: req.body.bank_account_id,
-        transactionDate: req.body.transaction_date ? new Date(req.body.transaction_date) : new Date(),
+        receiptNumber: receiptNumber || req.body.receipt_number || req.body.receiptNumber,
+        clientId: req.body.client_id || req.body.clientId,
+        salesChannel: req.body.sales_channel || req.body.salesChannel,
+        createdAt: (req.body.created_at || req.body.createdAt) ? new Date(req.body.created_at || req.body.createdAt) : new Date(),
+        paymentMethod: req.body.payment_method || req.body.paymentMethod || 'EFECTIVO',
+        bankAccountId: req.body.bank_account_id || req.body.bankAccountId,
+        transactionDate: (req.body.transaction_date || req.body.transactionDate) ? new Date(req.body.transaction_date || req.body.transactionDate) : new Date(),
         notes: req.body.notes,
-        toDelete: req.body.to_delete || [],
-        creditAmount: Number(req.body.credit_amount || 0),
+        toDelete: req.body.to_delete || req.body.toDelete || [],
+        creditAmount: Number(req.body.credit_amount || req.body.creditAmount || 0),
         orders: req.body.orders.map((o: any) => ({
           id: o.id,
           brandId: o.brandId || o.brand_id,

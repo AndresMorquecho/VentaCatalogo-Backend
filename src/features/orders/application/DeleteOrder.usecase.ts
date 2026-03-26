@@ -102,7 +102,39 @@ export class DeleteOrderUseCase {
                     await tx.clientCredit.delete({ where: { id: credit.id } });
                 }
 
-                // 4. LIMPIEZA DE REGISTROS RELACIONADOS
+                // 4. REVERSIÓN DE PAGOS CON BILLETERA Y PUNTOS
+                // Revertir abonos hechos con billetera virtual
+                for (const payment of order.payments) {
+                    if (payment.method === 'BILLETERA_VIRTUAL') {
+                        if (order.client.clientAccount) {
+                            await tx.clientAccount.update({
+                                where: { id: order.client.clientAccount.id },
+                                data: {
+                                    totalCreditAvailable: { increment: payment.amount },
+                                    version: { increment: 1 }
+                                }
+                            });
+                        }
+                    }
+                }
+
+                // Revertir puntos ganados
+                const applications = await tx.rewardApplication.findMany({ 
+                    where: { orderId: orderId } 
+                });
+                for (const app of applications) {
+                    if (order.client.clientAccount) {
+                        await tx.clientAccount.update({
+                            where: { id: order.client.clientAccount.id },
+                            data: {
+                                totalRewardPoints: { decrement: app.pointsEarned },
+                                version: { increment: 1 }
+                            }
+                        });
+                    }
+                }
+
+                // 5. LIMPIEZA DE REGISTROS RELACIONADOS
                 await tx.financialRecord.deleteMany({ where: { orderId: orderId } });
                 await tx.inventoryMovement.deleteMany({ where: { orderId: orderId } });
                 await tx.rewardApplication.deleteMany({ where: { orderId: orderId } });

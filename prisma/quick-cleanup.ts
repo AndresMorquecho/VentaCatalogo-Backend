@@ -60,6 +60,15 @@ async function main() {
     console.log('🗑️  Borrando logs de auditoría...');
     await prisma.auditLog.deleteMany();
 
+    console.log('🧹 Reseteando fechas de última actividad en clientes...');
+    await prisma.client.updateMany({
+      data: {
+        lastOrderDate: null,
+        lastBrandName: null,
+        lastDataUpdate: new Date()
+      }
+    });
+
     console.log('✨ Base de datos limpia.');
     console.log('📦 Se mantuvieron: Clientes, Marcas, Cuentas Bancarias (Saldo 0), Usuarios, Roles y Reglas de Fidelización.');
 
