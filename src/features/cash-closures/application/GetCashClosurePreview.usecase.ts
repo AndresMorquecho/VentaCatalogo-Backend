@@ -46,6 +46,8 @@ export interface CashClosurePreview {
     toDate: Date;
     totalIncome: number;
     totalExpense: number;
+    physicalIncome: number;
+    physicalExpense: number;
     expectedAmount: number;
     movementCount: number;
     lastClosureDate: Date | null;
@@ -167,9 +169,11 @@ export class GetCashClosurePreviewUseCase {
             });
             const userMap = Object.fromEntries(users.map(u => [u.id, u.username]));
 
-            // Physical cash drawer logic
-            let totalIncome = 0;
-            let totalExpense = 0;
+            // Physical cash drawer vs Global flow logic
+            let physicalIncome = 0;
+            let physicalExpense = 0;
+            let globalIncome = 0;
+            let globalExpense = 0;
             const cashAccountIdSet = new Set(allAccounts.filter(a => a.type === 'CASH').map(a => a.id));
 
             const detailedMovements = movements.map(m => {
@@ -178,9 +182,14 @@ export class GetCashClosurePreviewUseCase {
                 const isInternal = m.movementType === 'INTERNAL';
                 const isCashAccount = cashAccountIdSet.has(m.bankAccountId);
 
-                if (isCashAccount && !isCreditApplication && !isInternal) {
-                    if (m.movementType === 'INCOME') totalIncome += amount;
-                    else if (m.movementType === 'EXPENSE') totalExpense += amount;
+                if (!isCreditApplication && !isInternal) {
+                    if (m.movementType === 'INCOME') {
+                        globalIncome += amount;
+                        if (isCashAccount) physicalIncome += amount;
+                    } else if (m.movementType === 'EXPENSE') {
+                        globalExpense += amount;
+                        if (isCashAccount) physicalExpense += amount;
+                    }
                 }
 
                 return {
@@ -209,7 +218,7 @@ export class GetCashClosurePreviewUseCase {
             // because they don't have a "Starting balance" in the global sense (unless we track user shifts).
             // For now, if userId, start from 0 for the user's specific report.
             const startingBalance = userId ? 0 : (lastClosure ? Number(lastClosure.actualAmount) : 0);
-            const expectedAmount = startingBalance + totalIncome - totalExpense;
+            const expectedAmount = startingBalance + physicalIncome - physicalExpense;
 
             // --- Enriched breakdown ---
             const realMovements = movements.filter(m =>
@@ -226,6 +235,9 @@ export class GetCashClosurePreviewUseCase {
                 adjustments: incomeRecs.filter(r => r.source === 'ADJUSTMENT').reduce((s, r) => s + Number(r.amount), 0),
                 manual: 0
             };
+
+            const classifiedIncome = Object.values(incomeBySource).reduce((a, b) => a + b, 0);
+            incomeBySource.manual = globalIncome - classifiedIncome; // Catch all for other income sources
 
             const incomeByMethod = {
                 EFECTIVO: incomeRecs.filter(r => r.paymentMethod === 'EFECTIVO').reduce((s, r) => s + Number(r.amount), 0),
@@ -422,13 +434,20 @@ export class GetCashClosurePreviewUseCase {
             return Result.ok({
                 fromDate,
                 toDate,
-                totalIncome,
-                totalExpense,
+                totalIncome: globalIncome,
+                totalExpense: globalExpense,
+                physicalIncome,
+                physicalExpense,
                 expectedAmount,
                 movementCount: movements.length,
                 lastClosureDate: lastClosure ? lastClosure.toDate : null,
                 isAlreadyClosed: !!existing,
-                allAccountsBalances: [], // Simplified for preview
+                allAccountsBalances: balanceByBank.map(b => ({
+                    id: b.bankAccountId,
+                    name: b.bankAccountName,
+                    type: b.bankAccountType,
+                    expectedBalance: b.finalBalance
+                })),
                 movements: detailedMovements,
                 incomeBySource,
                 walletRechargeByMethod: { TRANSFERENCIA: 0, DEPOSITO: 0, CHEQUE: 0 }, // Simplified
