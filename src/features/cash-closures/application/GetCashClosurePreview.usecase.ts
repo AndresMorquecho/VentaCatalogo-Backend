@@ -200,7 +200,8 @@ export class GetCashClosurePreviewUseCase {
                     isInternal,
                     accountName: m.bankAccount?.name || 'Desconocida',
                     isCashAccount,
-                    user: userMap[m.createdBy] || m.createdBy || 'Sistema'
+                    user: userMap[m.createdBy] || m.createdBy || 'Sistema',
+                    userReference: m.userReference
                 };
             });
 
@@ -336,11 +337,13 @@ export class GetCashClosurePreviewUseCase {
             chronMovements.forEach(m => {
                 const raw = movements.find(r => r.id === m.id);
                 if (raw) {
+                    const code = raw.order?.orderNumber || raw.order?.receiptNumber || (raw as any).userReference || m.referenceNumber;
+
                     const base = {
                         date: m.date,
                         label: m.moduleLabel,
                         reference: m.paymentMethod || m.source,
-                        code: m.referenceNumber,
+                        code: code,
                         description: m.description,
                         identification: m.clientDocument,
                         client: m.clientName,
