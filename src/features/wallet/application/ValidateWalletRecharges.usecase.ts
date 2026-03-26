@@ -116,7 +116,7 @@ export class ValidateWalletRechargesUseCase {
                         data: {
                             type: 'PAYMENT',
                             referenceNumber: internalRef,
-                            userReference: null,
+                            userReference: recharge.reference || null,
                             amount: recharge.amount,
                             date: new Date(),
                             clientId: recharge.clientId,

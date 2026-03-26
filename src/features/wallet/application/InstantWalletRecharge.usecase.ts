@@ -145,7 +145,7 @@ export class InstantWalletRechargeUseCase {
                     data: {
                         type: 'PAYMENT',
                         referenceNumber: internalRef,
-                        userReference: null,
+                        userReference: dto.reference || null,
                         amount: dto.amount,
                         date: new Date(),
                         clientId: dto.clientId,

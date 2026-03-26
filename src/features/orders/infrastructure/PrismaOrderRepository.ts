@@ -31,6 +31,7 @@ export class PrismaOrderRepository implements IOrderRepository {
         { clientName: { contains: filters.search, mode: 'insensitive' } },
         { invoiceNumber: { contains: filters.search, mode: 'insensitive' } },
         { orderNumber: { contains: filters.search, mode: 'insensitive' } },
+        { brand: { name: { contains: filters.search, mode: 'insensitive' } } },
         {
           childOrders: {
             some: {
