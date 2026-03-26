@@ -185,6 +185,7 @@ export class CreateReceptionBatchOptimizedUseCase {
             documentType: true,
             type: true,
             exchangeItemId: true,
+            parentOrderId: true,
             payments: {
               select: {
                 id: true, amount: true, method: true, reference: true, receiptNumber: true, description: true, createdAt: true
@@ -691,7 +692,11 @@ export class CreateReceptionBatchOptimizedUseCase {
           data: update
         });
 
-        // If it's an exchange order, update the source exchange item status
+        // ============================================================================
+        // EXCHANGE LOGISTICS SYNC
+        // ============================================================================
+        
+        // A. If it's an exchange order, update the source exchange item status
         const order = ordersMap.get(update.id);
         const exchangeItemId = (order as any).exchangeItemId;
         if (order && exchangeItemId) {
@@ -704,6 +709,25 @@ export class CreateReceptionBatchOptimizedUseCase {
               differenceValue: Number(update.realInvoiceTotal) - Number(exchangeCredit)
             }
           });
+        }
+
+        // B. If it's a shadow order (-REV), update the parent ExchangeBatch status to EN_BODEGA
+        if (order && order.parentOrderId) {
+          const batchItem = await tx.exchangeBatchItem.findFirst({
+            where: { orderId: order.parentOrderId },
+            select: { batchId: true, batch: { select: { status: true } } }
+          });
+          
+          if (batchItem && batchItem.batch.status === 'ENVIADO') {
+            await tx.exchangeBatch.update({
+              where: { id: batchItem.batchId },
+              data: { 
+                status: 'EN_BODEGA',
+                receivedAt: new Date()
+              }
+            });
+            console.log(`[Sync] Exchange Batch ${batchItem.batchId} updated to EN_BODEGA because shadow order ${order.receiptNumber} was received`);
+          }
         }
       }
 

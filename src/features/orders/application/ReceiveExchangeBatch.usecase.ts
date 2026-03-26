@@ -24,7 +24,7 @@ export class ReceiveExchangeBatchUseCase {
       include: { items: true },
     });
     if (!batch) throw new Error('Lote no encontrado');
-    if (batch.status !== 'SENT') throw new Error('Solo se pueden receptar lotes en estado Enviado');
+    if (batch.status !== 'ENVIADO') throw new Error('Solo se pueden receptar lotes en estado Enviado');
 
     // Validate all batchItemIds belong to this batch
     const batchItemIds = new Set(batch.items.map((i) => i.id));
@@ -219,14 +219,14 @@ export class ReceiveExchangeBatchUseCase {
         results.push({ batchItemId: itemDTO.batchItemId, differenceValue: diff, action, movementType });
       }
 
-      // Mark batch as RECEIVED
+      // Mark batch as EN_BODEGA
       const updatedBatch = await tx.exchangeBatch.update({
         where: { id: batchId },
-        data: { status: 'RECEIVED', receivedAt: new Date() },
+        data: { status: 'EN_BODEGA', receivedAt: new Date() },
         include: { items: true },
       });
 
-      return { batchId, status: 'RECEIVED', items: results, batch: updatedBatch };
+      return { batchId, status: 'EN_BODEGA', items: results, batch: updatedBatch };
     });
   }
 }

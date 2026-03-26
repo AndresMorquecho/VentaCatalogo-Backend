@@ -69,6 +69,14 @@ export class CreateExchangeBatchUseCase {
     const batchNumber = generateBatchNumber();
     console.log(`[CreateExchangeBatch] Creating batch ${batchNumber} with ${orders.length} orders`);
 
+    // Get default bank account for fallback
+    const defaultAccount = await prisma.bankAccount.findFirst({
+      where: { type: 'CASH', isActive: true }
+    });
+    if (!defaultAccount) {
+      throw new Error('No se encontró una cuenta de caja activa para procesar la transacción');
+    }
+
     return await prisma.$transaction(async (tx) => {
       // Task 4.2: Create batch with status ENVIADO and sentAt timestamp
       const batch = await tx.exchangeBatch.create({
@@ -134,6 +142,7 @@ export class CreateExchangeBatchUseCase {
             total: order.total, // Initially the same, can be updated at reception
             salesChannel: order.salesChannel,
             paymentMethod: 'CAMBIO',
+            bankAccountId: order.bankAccountId || defaultAccount.id,
             transactionDate: new Date(),
             possibleDeliveryDate: new Date(),
             parentOrderId: order.id,
@@ -172,7 +181,7 @@ export class CreateExchangeBatchUseCase {
               clientName: order.clientName,
               clientDocument: client?.identificationNumber || '—',
               orderId: order.id,
-              bankAccountId: order.bankAccountId || '00000000-0000-0000-0000-000000000000', // Use dummy/internal if not set
+              bankAccountId: order.bankAccountId || defaultAccount.id,
               source: 'EXCHANGE',
               paymentMethod: 'SALDO_A_FAVOR',
               movementType: 'INTERNAL',

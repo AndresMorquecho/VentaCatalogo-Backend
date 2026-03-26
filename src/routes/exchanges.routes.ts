@@ -10,8 +10,13 @@ import { GetExchangeDetailUseCase } from '../features/orders/application/GetExch
 import { CreateExchangeBatchUseCase } from '../features/orders/application/CreateExchangeBatch.usecase';
 import { GetExchangeBatchesUseCase } from '../features/orders/application/GetExchangeBatches.usecase';
 import { ReceiveExchangeBatchUseCase } from '../features/orders/application/ReceiveExchangeBatch.usecase';
+import { UpdateExchangeBatchStatusUseCase } from '../features/orders/application/UpdateExchangeBatchStatus.usecase';
+import { StatusTransitionService } from '../features/orders/application/StatusTransitionService';
 
 const router = Router();
+
+const statusTransitionService = new StatusTransitionService();
+const updateExchangeBatchStatus = new UpdateExchangeBatchStatusUseCase(statusTransitionService);
 
 const createExchange = new CreateExchangeUseCase();
 const addExchangeItem = new AddExchangeItemUseCase();
@@ -74,44 +79,13 @@ router.patch('/batches/:id/status', authenticate, requirePermission('exchanges.m
   try {
     const { id } = req.params;
     const { newStatus } = req.body;
-    const validStatuses = ['PENDING', 'SENT', 'RECEIVED'];
-    if (!validStatuses.includes(newStatus)) {
-      res.status(400).json({ success: false, error: { message: 'Estado no válido. Use: PENDING, SENT o RECEIVED' } });
-      return;
-    }
-
-    const { prisma } = await import('../lib/prisma');
-
-    // Cargar el batch actual para validar la transición
-    const current = await prisma.exchangeBatch.findUnique({ where: { id } });
-    if (!current) {
-      res.status(404).json({ success: false, error: { message: 'Lote no encontrado' } });
-      return;
-    }
-
-    // Transiciones válidas: PENDING→SENT, SENT→RECEIVED
-    const validTransitions: Record<string, string> = {
-      PENDING: 'SENT',
-      SENT: 'RECEIVED',
-    };
-    if (validTransitions[current.status] !== newStatus) {
-      res.status(400).json({ success: false, error: { message: 'Transición de estado no válida para el lote' } });
-      return;
-    }
-
-    const updateData: any = { status: newStatus, updatedAt: new Date() };
-    if (newStatus === 'SENT') updateData.sentAt = new Date();
-    if (newStatus === 'RECEIVED') updateData.receivedAt = new Date();
-
-    const batch = await prisma.exchangeBatch.update({
-      where: { id },
-      data: updateData,
-      include: { items: true },
-    });
-    res.json({ success: true, data: batch });
+    
+    const data = await updateExchangeBatchStatus.execute(id, newStatus);
+    res.json({ success: true, data });
   } catch (error: any) {
-    if (error.code === 'P2025') {
-      res.status(404).json({ success: false, error: { message: 'Lote no encontrado' } });
+    if (error.name === 'StateTransitionError' || error.message?.includes('found')) {
+      const status = error.message?.includes('found') ? 404 : 409;
+      res.status(status).json({ success: false, error: { message: error.message } });
       return;
     }
     next(error);

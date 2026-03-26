@@ -337,6 +337,26 @@ export class BatchDeliverOrdersUseCase {
             notes: `Entrega en lote (Pedido ${order.receiptNumber})`
           }
         });
+
+        // Logística de Cambios - Sincronizar estado a ENTREGADO
+        if (order.parentOrderId) {
+          const batchItem = await tx.exchangeBatchItem.findFirst({
+            where: { orderId: order.parentOrderId },
+            include: { batch: true }
+          });
+          
+          if (batchItem && batchItem.batch.status === 'EN_BODEGA') {
+            await tx.exchangeBatch.update({
+              where: { id: batchItem.batchId },
+              data: { 
+                status: 'ENTREGADO', 
+                deliveredAt: new Date(),
+                updatedAt: new Date()
+              }
+            });
+            console.log(`[Sync-Batch-Delivery] Exchange Batch ${batchItem.batchId} updated to ENTREGADO because shadow order ${order.receiptNumber} was delivered in batch`);
+          }
+        }
       }
 
       // 5. Finalizar cuenta del cliente con optimistic locking
