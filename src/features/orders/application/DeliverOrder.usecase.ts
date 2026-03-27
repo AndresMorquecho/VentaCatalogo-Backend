@@ -4,6 +4,14 @@ import { prisma } from '../../../lib/prisma';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 
+export interface CreditDistributionItemDTO {
+  targetOrderId?: string;
+  amount: number;
+  description: string;
+  isCashReturn?: boolean;
+  bankAccountId?: string;
+}
+
 export interface DeliverOrderDTO {
   payments?: {
     amount: number;
@@ -12,7 +20,15 @@ export interface DeliverOrderDTO {
     reference?: string;
   }[];
   notes?: string;
-  deliveredByName?: string; // Username del que procesa la entrega
+  deliveredByName?: string;
+  invoiceNumber?: string;
+  creditNoteNumber?: string;
+  creditNoteTotal?: number;
+  creditDistribution?: {
+    sourceOrderId: string;
+    totalCreditAmount: number;
+    distributions: CreditDistributionItemDTO[];
+  };
 }
 
 export class DeliverOrderUseCase {
@@ -48,9 +64,13 @@ export class DeliverOrderUseCase {
       }
 
       // 2. Calcular saldo pendiente
-      const effectiveTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
+      const effectiveTotal = data.invoiceNumber || order.realInvoiceTotal ? Number(data.invoiceNumber ? (order.total) : (order.realInvoiceTotal || order.total)) : Number(order.total);
+      // Wait, let's keep it simpler: use the final state
+      const finalInvoiceTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
+      const finalCreditNoteTotal = data.creditNoteTotal !== undefined ? Number(data.creditNoteTotal) : Number(order.creditNoteTotal || 0);
+      
       const paidBefore = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-      const pendingBefore = effectiveTotal - paidBefore;
+      const pendingBefore = finalInvoiceTotal - paidBefore - finalCreditNoteTotal;
       const accountBalancesMap = new Map<string, number>();
       let clientWalletRunningBal: number | null = null;
       let totalNewlyPaid = 0;
@@ -290,6 +310,9 @@ export class DeliverOrderUseCase {
           status: 'ENTREGADO',
           deliveryDate: new Date(),
           deliveredByName: data.deliveredByName || null,
+          invoiceNumber: data.invoiceNumber || order.invoiceNumber,
+          creditNoteNumber: data.creditNoteNumber || order.creditNoteNumber,
+          creditNoteTotal: data.creditNoteTotal !== undefined ? data.creditNoteTotal : order.creditNoteTotal,
           updatedAt: new Date(),
           version: { increment: 1 }
         },
@@ -406,7 +429,155 @@ export class DeliverOrderUseCase {
         }
       });
 
-      // 7. Calcular nuevo saldo pendiente
+      // 7. Process credit distribution if provided (surplus from NC)
+      if (data.creditDistribution && data.creditDistribution.distributions.length > 0) {
+        const { sourceOrderId, totalCreditAmount, distributions } = data.creditDistribution;
+
+        for (const dist of distributions) {
+          if (dist.amount <= 0.005) continue;
+
+          if (dist.isCashReturn) {
+            // Cash refund to client → EXPENSE financial record
+            const refundAccountId = dist.bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '';
+            const refundAccount = await tx.bankAccount.findUnique({ where: { id: refundAccountId }, select: { currentBalance: true, version: true, name: true } });
+
+            await tx.financialRecord.create({
+              data: {
+                type: 'EXPENSE',
+                referenceNumber: `REFUND-DEL-${Date.now()}`,
+                amount: dist.amount,
+                date: new Date(),
+                clientId: order.clientId,
+                clientName: order.clientName,
+                orderId: sourceOrderId,
+                bankAccountId: refundAccountId,
+                source: 'CREDIT_DISTRIBUTION',
+                paymentMethod: 'EFECTIVO',
+                movementType: 'EXPENSE',
+                fromAccountType: 'CASH',
+                toAccountType: 'EXTERNAL',
+                createdBy: userId,
+                notes: `${dist.description} | Orden: ${order.receiptNumber} | Tipo: REEMBOLSO_ENTREGA`,
+                version: 1
+              }
+            });
+
+            if (refundAccount) {
+              await tx.bankAccount.updateMany({
+                where: { id: refundAccountId, version: refundAccount.version },
+                data: { currentBalance: { decrement: dist.amount }, updatedAt: new Date(), version: { increment: 1 } }
+              });
+            }
+          } else if (dist.targetOrderId) {
+            // Apply credit to another order → create a payment for that order
+            await tx.orderPayment.create({
+              data: {
+                orderId: dist.targetOrderId,
+                amount: dist.amount,
+                method: 'CREDITO_CLIENTE',
+                description: dist.description
+              }
+            });
+
+            // Create expense leg (source order losing credit)
+            await tx.financialRecord.create({
+              data: {
+                type: 'EXPENSE',
+                referenceNumber: `DIST-DEL-FROM-${Date.now()}`,
+                amount: dist.amount,
+                date: new Date(),
+                clientId: order.clientId,
+                clientName: order.clientName,
+                orderId: sourceOrderId,
+                bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                source: 'CREDIT_DISTRIBUTION',
+                paymentMethod: 'CREDITO_CLIENTE',
+                movementType: 'EXPENSE',
+                fromAccountType: 'ORDER',
+                toAccountType: 'ORDER',
+                createdBy: userId,
+                notes: `${dist.description} | Orden: ${order.receiptNumber} | Tipo: DISTRIBUCION_ENTREGA`,
+                version: 1
+              }
+            });
+
+            // Create income leg (target order receiving credit)
+            await tx.financialRecord.create({
+              data: {
+                type: 'PAYMENT',
+                referenceNumber: `DIST-DEL-TO-${Date.now()}`,
+                amount: dist.amount,
+                date: new Date(),
+                clientId: order.clientId,
+                clientName: order.clientName,
+                orderId: dist.targetOrderId,
+                bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                source: 'CREDIT_DISTRIBUTION',
+                paymentMethod: 'CREDITO_CLIENTE',
+                movementType: 'INCOME',
+                fromAccountType: 'ORDER',
+                toAccountType: 'ORDER',
+                createdBy: userId,
+                notes: `${dist.description} | Orden: ${order.receiptNumber} | Tipo: ABONO_DISTRIBUCION_ENTREGA`,
+                version: 1
+              }
+            });
+          } else {
+            // Move to wallet → create ClientCredit
+            const clientAccountForCredit = await tx.clientAccount.findUnique({
+              where: { clientId: order.clientId },
+              select: { id: true, totalCreditAvailable: true, version: true }
+            });
+
+            let creditClientAccountId = clientAccountForCredit?.id;
+            if (!clientAccountForCredit) {
+              const created = await tx.clientAccount.create({
+                data: { clientId: order.clientId, totalRewardPoints: 0, totalOrders: 0, totalSpent: 0, rewardLevel: 'BRONCE' }
+              });
+              creditClientAccountId = created.id;
+            }
+
+            await tx.clientCredit.create({
+              data: {
+                clientAccountId: creditClientAccountId!,
+                amount: dist.amount,
+                remainingAmount: dist.amount,
+                status: 'AVAILABLE',
+                originTransactionId: `DEL-CREDIT-${sourceOrderId}-${Date.now()}`,
+                originOrderId: sourceOrderId
+              }
+            });
+
+            await tx.clientAccount.updateMany({
+              where: { id: creditClientAccountId!, version: clientAccountForCredit?.version ?? 0 },
+              data: { totalCreditAvailable: { increment: dist.amount }, version: { increment: 1 } }
+            });
+
+            await tx.financialRecord.create({
+              data: {
+                type: 'CREDIT',
+                referenceNumber: `WALLET-DEL-${Date.now()}`,
+                amount: dist.amount,
+                date: new Date(),
+                clientId: order.clientId,
+                clientName: order.clientName,
+                orderId: sourceOrderId,
+                bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                source: 'CREDIT_DISTRIBUTION',
+                paymentMethod: 'CREDITO_CLIENTE',
+                movementType: 'INTERNAL',
+                fromAccountType: 'ORDER',
+                toAccountType: 'WALLET',
+                createdBy: userId,
+                notes: `${dist.description} | Orden: ${order.receiptNumber} | Tipo: SALDO_BILLETERA_ENTREGA`,
+                version: 1
+              }
+            });
+          }
+        }
+      }
+
+      // 8. Calcular nuevo saldo pendiente
       const newPendingAmount = effectiveTotal - newPaidAmount;
 
       // Retornar pedido actualizado con cálculos

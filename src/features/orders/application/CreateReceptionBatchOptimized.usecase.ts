@@ -6,6 +6,8 @@ export interface BatchReceptionItemDTO {
   orderId: string;
   finalTotal: number;
   invoiceNumber?: string;
+  creditNoteNumber?: string;
+  creditNoteTotal?: number;
   abonoRecepcion?: number;
   bankAccountId?: string;
   paymentMethod?: string;
@@ -324,6 +326,8 @@ export class CreateReceptionBatchOptimizedUseCase {
           status: 'RECIBIDO_EN_BODEGA',
           realInvoiceTotal: item.finalTotal,
           invoiceNumber: item.invoiceNumber || null,
+          creditNoteNumber: item.creditNoteNumber || null,
+          creditNoteTotal: item.creditNoteTotal || null,
           documentType: item.documentType || 'FACTURA',
           packingNumber: dto.packingNumber,
           packingTotal: dto.packingTotal,

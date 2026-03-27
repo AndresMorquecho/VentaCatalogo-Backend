@@ -2,6 +2,20 @@ import { prisma } from '../../../lib/prisma';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 
+export interface CreditDistributionItemDTO {
+  targetOrderId?: string;
+  amount: number;
+  description: string;
+  isCashReturn?: boolean;
+  bankAccountId?: string;
+}
+
+export interface CreditDistributionDTO {
+  sourceOrderId: string;
+  totalCreditAmount: number;
+  distributions: CreditDistributionItemDTO[];
+}
+
 export interface BatchDeliverOrdersDTO {
   orderIds: string[];
   payments?: {
@@ -11,6 +25,7 @@ export interface BatchDeliverOrdersDTO {
     reference?: string;
   }[];
   deliveredByName?: string;
+  creditDistributions?: CreditDistributionDTO[];
 }
 
 export class BatchDeliverOrdersUseCase {
@@ -355,6 +370,151 @@ export class BatchDeliverOrdersUseCase {
               }
             });
             console.log(`[Sync-Batch-Delivery] Exchange Batch ${batchItem.batchId} updated to ENTREGADO because shadow order ${order.receiptNumber} was delivered in batch`);
+          }
+        }
+      }
+
+      // 6. Process all credit distributions (one for each source order in the batch that has surplus)
+      if (data.creditDistributions && data.creditDistributions.length > 0) {
+        for (const distSource of data.creditDistributions) {
+          const sourceOrderId = distSource.sourceOrderId;
+          const sourceOrder = orders.find(o => o.id === sourceOrderId);
+          if (!sourceOrder) continue;
+
+          for (const dist of distSource.distributions) {
+             if (dist.amount <= 0.005) continue;
+
+             if (dist.isCashReturn) {
+              // Cash refund to client → EXPENSE financial record
+              const refundAccountId = dist.bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '';
+              const refundAccount = await tx.bankAccount.findUnique({ where: { id: refundAccountId }, select: { currentBalance: true, version: true, name: true } });
+
+              await tx.financialRecord.create({
+                data: {
+                  type: 'EXPENSE',
+                  referenceNumber: `REFUND-BATCH-${Date.now()}`,
+                  amount: dist.amount,
+                  date: new Date(),
+                  clientId: clientId,
+                  clientName: clientName,
+                  orderId: sourceOrderId,
+                  bankAccountId: refundAccountId,
+                  source: 'CREDIT_DISTRIBUTION',
+                  paymentMethod: 'EFECTIVO',
+                  movementType: 'EXPENSE',
+                  fromAccountType: 'CASH',
+                  toAccountType: 'EXTERNAL',
+                  createdBy: userId,
+                  notes: `${dist.description} | Orden: ${sourceOrder.receiptNumber} | Tipo: REEMBOLSO_ENTREGA_LOTE`,
+                  version: 1
+                }
+              });
+
+              if (refundAccount) {
+                await tx.bankAccount.updateMany({
+                  where: { id: refundAccountId, version: refundAccount.version },
+                  data: { currentBalance: { decrement: dist.amount }, updatedAt: new Date(), version: { increment: 1 } }
+                });
+              }
+            } else if (dist.targetOrderId) {
+              // Apply credit to another order → create a payment for that order
+              await tx.orderPayment.create({
+                data: {
+                  orderId: dist.targetOrderId,
+                  amount: dist.amount,
+                  method: 'CREDITO_CLIENTE',
+                  description: dist.description
+                }
+              });
+
+              // Create expense leg (source order losing credit)
+              await tx.financialRecord.create({
+                data: {
+                  type: 'EXPENSE',
+                  referenceNumber: `DIST-B-FROM-${Date.now()}`,
+                  amount: dist.amount,
+                  date: new Date(),
+                  clientId: clientId,
+                  clientName: clientName,
+                  orderId: sourceOrderId,
+                  bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                  source: 'CREDIT_DISTRIBUTION',
+                  paymentMethod: 'CREDITO_CLIENTE',
+                  movementType: 'EXPENSE',
+                  fromAccountType: 'ORDER',
+                  toAccountType: 'ORDER',
+                  createdBy: userId,
+                  notes: `${dist.description} | Orden: ${sourceOrder.receiptNumber} | Tipo: DISTRIBUCION_ENTREGA_LOTE`,
+                  version: 1
+                }
+              });
+
+              // Create income leg (target order receiving credit)
+              await tx.financialRecord.create({
+                data: {
+                  type: 'PAYMENT',
+                  referenceNumber: `DIST-B-TO-${Date.now()}`,
+                  amount: dist.amount,
+                  date: new Date(),
+                  clientId: clientId,
+                  clientName: clientName,
+                  orderId: dist.targetOrderId,
+                  bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                  source: 'CREDIT_DISTRIBUTION',
+                  paymentMethod: 'CREDITO_CLIENTE',
+                  movementType: 'INCOME',
+                  fromAccountType: 'ORDER',
+                  toAccountType: 'ORDER',
+                  createdBy: userId,
+                  // We also reference the SOURCE order in notes for traceability
+                  notes: `${dist.description} | Recibido de: ${sourceOrder.receiptNumber} | Tipo: ABONO_DISTRIBUCION_ENTREGA_LOTE`,
+                  version: 1
+                }
+              });
+            } else {
+              // Move to wallet → create ClientCredit
+              const clientAccountData = await tx.clientAccount.findUnique({
+                where: { id: clientAccount.id }, // reuse our clientAccount
+                select: { id: true, totalCreditAvailable: true, version: true }
+              });
+
+              await tx.clientCredit.create({
+                data: {
+                  clientAccountId: clientAccount.id,
+                  amount: dist.amount,
+                  remainingAmount: dist.amount,
+                  status: 'AVAILABLE',
+                  originTransactionId: `BATCH-CREDIT-${sourceOrderId}-${Date.now()}`,
+                  originOrderId: sourceOrderId
+                }
+              });
+
+              await tx.clientAccount.updateMany({
+                where: { id: clientAccount.id, version: clientAccountData!.version },
+                data: { totalCreditAvailable: { increment: dist.amount }, version: { increment: 1 } }
+              });
+
+              await tx.financialRecord.create({
+                data: {
+                  type: 'CREDIT',
+                  referenceNumber: `WALLET-B-${Date.now()}`,
+                  amount: dist.amount,
+                  date: new Date(),
+                  clientId: clientId,
+                  clientName: clientName,
+                  orderId: sourceOrderId,
+                  bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                  source: 'CREDIT_DISTRIBUTION',
+                  paymentMethod: 'CREDITO_CLIENTE',
+                  movementType: 'INTERNAL',
+                  fromAccountType: 'ORDER',
+                  toAccountType: 'WALLET',
+                  createdBy: userId,
+                  notes: `${dist.description} | Orden: ${sourceOrder.receiptNumber} | Tipo: SALDO_BILLETERA_ENTREGA_LOTE`,
+                  version: 1
+                }
+              });
+            }
           }
         }
       }

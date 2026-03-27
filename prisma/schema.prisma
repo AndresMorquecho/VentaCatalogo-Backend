@@ -91,6 +91,7 @@ model BankAccount {
   @@index([type])
   @@index([isActive])
   @@index([id, version])
+  @@index([id, version], map: "idx_bank_accounts_version")
   @@map("bank_accounts")
 }
 
@@ -147,6 +148,8 @@ model Order {
   receptionDate        DateTime?           @map("reception_date")
   deliveryDate         DateTime?           @map("delivery_date")
   invoiceNumber        String?             @map("invoice_number")
+  creditNoteNumber     String?             @map("credit_note_number")
+  creditNoteTotal      Decimal?            @map("credit_note_total") @db.Decimal(10, 2)
   status               String              @default("POR_RECIBIR")
   clientId             String              @map("client_id")
   clientName           String              @map("client_name")
@@ -174,12 +177,12 @@ model Order {
   financialRecords     FinancialRecord[]
   inventoryMovements   InventoryMovement[]
   exchangeItems        OrderExchangeItem[] @relation("OriginalOrderExchanges")
-  exchangeItem         OrderExchangeItem?  @relation("NewOrderExchange", fields: [exchangeItemId], references: [id])
   items                OrderItem[]
   payments             OrderPayment[]
   bankAccount          BankAccount?        @relation(fields: [bankAccountId], references: [id])
   brand                Brand               @relation(fields: [brandId], references: [id])
   client               Client              @relation(fields: [clientId], references: [id])
+  exchangeItem         OrderExchangeItem?  @relation("NewOrderExchange", fields: [exchangeItemId], references: [id])
   loyaltyRedemption    LoyaltyRedemption?  @relation(fields: [loyaltyRedemptionId], references: [id])
   parentOrder          Order?              @relation("OrderHeirs", fields: [parentOrderId], references: [id])
   childOrders          Order[]             @relation("OrderHeirs")
@@ -215,17 +218,17 @@ model OrderItem {
 }
 
 model OrderPayment {
-  id                  String            @id @default(uuid())
-  orderId             String            @map("order_id")
-  amount              Decimal           @db.Decimal(10, 2)
+  id                  String             @id @default(uuid())
+  orderId             String             @map("order_id")
+  amount              Decimal            @db.Decimal(10, 2)
   method              String
   reference           String?
   description         String?
-  createdAt           DateTime          @default(now()) @map("created_at")
-  receiptNumber       String?           @map("receipt_number")
-  processingRequestId String?           @map("processing_request_id")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  receiptNumber       String?            @map("receipt_number")
+  processingRequestId String?            @map("processing_request_id")
   financialRecords    FinancialRecord[]
-  order               Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order               Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
   processingRequest   ProcessingRequest? @relation(fields: [processingRequestId], references: [id])
 
   @@index([orderId])
@@ -290,6 +293,7 @@ model ClientAccount {
   rewardApplications   RewardApplication[]
 
   @@index([id, version])
+  @@index([id, version], map: "idx_client_accounts_version")
   @@map("client_accounts")
 }
 
@@ -310,6 +314,8 @@ model ClientCredit {
   @@index([status])
   @@index([clientAccountId, status])
   @@index([id, version])
+  @@index([clientAccountId, status], map: "idx_client_credits_status")
+  @@index([id, version], map: "idx_client_credits_version")
   @@map("client_credits")
 }
 
@@ -445,8 +451,8 @@ model LoyaltyRule {
   prizeId     String?             @map("prize_id")
   resetDays   Int?                @map("reset_days")
   targetValue Decimal             @map("target_value") @db.Decimal(10, 2)
-  pointsValue Int?                @map("points_value")
   condition   String?
+  pointsValue Int?                @map("points_value")
   redemptions LoyaltyRedemption[]
   brands      LoyaltyRuleBrand[]
   prize       LoyaltyPrize?       @relation(fields: [prizeId], references: [id])
@@ -582,9 +588,9 @@ model ExchangeBatch {
   createdByName String?             @map("created_by_name")
   sentAt        DateTime?           @map("sent_at")
   receivedAt    DateTime?           @map("received_at")
-  deliveredAt   DateTime?           @map("delivered_at")
   createdAt     DateTime            @default(now()) @map("created_at")
   updatedAt     DateTime            @updatedAt @map("updated_at")
+  deliveredAt   DateTime?           @map("delivered_at")
   items         ExchangeBatchItem[]
 
   @@index([status])

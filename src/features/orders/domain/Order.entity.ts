@@ -15,6 +15,8 @@ export interface OrderProps {
   receptionDate?: Date;
   deliveryDate?: Date;
   invoiceNumber?: string;
+  creditNoteNumber?: string;
+  creditNoteTotal?: number;
   status: OrderStatus;
   clientId: string;
   clientName: string;
@@ -123,6 +125,14 @@ export class Order extends Entity<OrderProps> {
     return this.props.realInvoiceTotal;
   }
 
+  get creditNoteNumber(): string | undefined {
+    return this.props.creditNoteNumber;
+  }
+
+  get creditNoteTotal(): number | undefined {
+    return this.props.creditNoteTotal;
+  }
+
   getPaidAmount(): number {
     return this.props.payments
       .reduce((sum, p) => sum + Number(p.amount), 0);
@@ -130,7 +140,8 @@ export class Order extends Entity<OrderProps> {
 
   getPendingAmount(): number {
     const effectiveTotal = this.props.realInvoiceTotal || this.props.total;
-    return effectiveTotal - this.getPaidAmount();
+    const creditTotal = this.props.creditNoteTotal || 0;
+    return effectiveTotal - this.getPaidAmount() - creditTotal;
   }
 
   canBeReceived(): boolean {

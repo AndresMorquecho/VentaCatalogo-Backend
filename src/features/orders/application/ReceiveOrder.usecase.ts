@@ -7,6 +7,8 @@ import { validateBankAccountBalance } from '../../../shared/utils/financialValid
 export interface ReceiveOrderDTO {
   finalTotal: number;
   invoiceNumber?: string;
+  creditNoteNumber?: string;
+  creditNoteTotal?: number;
   abonoRecepcion?: number;
   bankAccountId?: string;
   paymentMethod?: string;
@@ -72,6 +74,8 @@ export class ReceiveOrderUseCase {
           status: 'RECIBIDO_EN_BODEGA',
           realInvoiceTotal: data.finalTotal,
           invoiceNumber: data.invoiceNumber || null,
+          creditNoteNumber: data.creditNoteNumber || null,
+          creditNoteTotal: data.creditNoteTotal || null,
           documentType: data.documentType || 'FACTURA',
           packingNumber: data.packingNumber || null,
           packingTotal: data.packingTotal || null,

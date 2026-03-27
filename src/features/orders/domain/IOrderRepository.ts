@@ -11,6 +11,8 @@ export interface OrderFilters {
   page?: number;
   limit?: number;
   onlyParents?: boolean;
+  invoiceNumber?: string;
+  creditNoteNumber?: string;
   hasPendingPayment?: boolean; // Filter orders where total > sum(payments)
 }
 

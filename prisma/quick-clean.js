@@ -16,45 +16,43 @@ async function quickClean() {
   console.log('🔄 Limpieza rápida iniciada...\n');
 
   try {
-    // --- Tablas sin dependencias o de auditoría ---
-    await prisma.auditLog.deleteMany({});
+    // --- 1. Tables that depend on Order (FKs to Order) ---
+    await prisma.orderItem.deleteMany({});
+    await prisma.orderPayment.deleteMany({});
+    await prisma.financialRecord.deleteMany({});
+    await prisma.inventoryMovement.deleteMany({});
+    await prisma.rewardApplication.deleteMany({});
+    await prisma.catalogDelivery.deleteMany({});
+    await prisma.exchangeBatchItem.deleteMany({});
+    await prisma.orderExchangeItem.deleteMany({});
+    await prisma.call.deleteMany({});
+
+    // --- 2. Order itself (depends on Receipts, Batches, Redemptions) ---
+    // Note: self-relation parentOrderId might be an issue if there are deep nests
+    await prisma.order.deleteMany({});
+
+    // --- 3. Tables that Order depends on ---
+    await prisma.orderReceipt.deleteMany({});
+    await prisma.receptionBatch.deleteMany({});
     await prisma.loyaltyRedemption.deleteMany({});
+    await prisma.exchangeBatch.deleteMany({});
+    await prisma.orderExchange.deleteMany({});
+
+    // --- 4. Client Account & Wallet (depend on Client) ---
+    await prisma.clientCredit.deleteMany({});
+    await prisma.clientAccount.deleteMany({});
+    await prisma.walletRecharge.deleteMany({});
+
+    // --- 5. Loyalty & Catalogs (depend on Brands/Prizes) ---
     await prisma.loyaltyRuleBrand.deleteMany({});
     await prisma.loyaltyRule.deleteMany({});
     await prisma.loyaltyPrize.deleteMany({});
-    await prisma.cashClosure.deleteMany({});
-    await prisma.call.deleteMany({});
-
-    // --- Catálogos ---
-    await prisma.catalogDelivery.deleteMany({});
     await prisma.catalogInventory.deleteMany({});
 
-    // --- Movimientos de inventario ---
-    await prisma.inventoryMovement.deleteMany({});
-
-    // --- Recompensas ---
-    await prisma.rewardApplication.deleteMany({});
-
-    // --- Créditos y cuentas de clientes ---
-    await prisma.clientCredit.deleteMany({});
-    await prisma.clientAccount.deleteMany({});
-
-    // --- Recargas de billetera ---
-    await prisma.walletRecharge.deleteMany({});
-
-    // --- Registros financieros ---
-    await prisma.financialRecord.deleteMany({});
-
-    // --- Pagos e items de órdenes ---
-    await prisma.orderPayment.deleteMany({});
-    await prisma.orderItem.deleteMany({});
-
-    // --- Órdenes y recibos ---
-    await prisma.order.deleteMany({});
-    await prisma.orderReceipt.deleteMany({});
-
-    // --- Lotes de recepción ---
-    await prisma.receptionBatch.deleteMany({});
+    // --- 6. Standalone / Audit / System ---
+    await prisma.auditLog.deleteMany({});
+    await prisma.cashClosure.deleteMany({});
+    await prisma.processingRequest.deleteMany({});
 
     // --- Resetear saldos bancarios a 0 ---
     await prisma.bankAccount.updateMany({ data: { currentBalance: 0 } });

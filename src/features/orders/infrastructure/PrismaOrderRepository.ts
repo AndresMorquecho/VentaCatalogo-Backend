@@ -25,11 +25,18 @@ export class PrismaOrderRepository implements IOrderRepository {
     if (filters.type) {
       where.type = filters.type;
     }
+    if (filters.invoiceNumber) {
+      where.invoiceNumber = { contains: filters.invoiceNumber, mode: 'insensitive' };
+    }
+    if (filters.creditNoteNumber) {
+      where.creditNoteNumber = { contains: filters.creditNoteNumber, mode: 'insensitive' };
+    }
     if (filters.search) {
       where.OR = [
         { receiptNumber: { contains: filters.search, mode: 'insensitive' } },
         { clientName: { contains: filters.search, mode: 'insensitive' } },
         { invoiceNumber: { contains: filters.search, mode: 'insensitive' } },
+        { creditNoteNumber: { contains: filters.search, mode: 'insensitive' } },
         { orderNumber: { contains: filters.search, mode: 'insensitive' } },
         { brand: { name: { contains: filters.search, mode: 'insensitive' } } },
         {
@@ -37,7 +44,8 @@ export class PrismaOrderRepository implements IOrderRepository {
             some: {
               OR: [
                 { orderNumber: { contains: filters.search, mode: 'insensitive' } },
-                { invoiceNumber: { contains: filters.search, mode: 'insensitive' } }
+                { invoiceNumber: { contains: filters.search, mode: 'insensitive' } },
+                { creditNoteNumber: { contains: filters.search, mode: 'insensitive' } }
               ]
             }
           }
@@ -323,6 +331,8 @@ export class PrismaOrderRepository implements IOrderRepository {
         receptionDate: raw.receptionDate,
         deliveryDate: raw.deliveryDate,
         invoiceNumber: raw.invoiceNumber,
+        creditNoteNumber: raw.creditNoteNumber,
+        creditNoteTotal: raw.creditNoteTotal ? Number(raw.creditNoteTotal) : undefined,
         status: raw.status as OrderStatus,
         clientId: raw.clientId,
         clientName: raw.clientName,
@@ -409,6 +419,8 @@ export class PrismaOrderRepository implements IOrderRepository {
       receptionDate: json.receptionDate,
       deliveryDate: json.deliveryDate,
       invoiceNumber: json.invoiceNumber,
+      creditNoteNumber: json.creditNoteNumber,
+      creditNoteTotal: json.creditNoteTotal,
       status: json.status,
       clientId: json.clientId,
       clientName: json.clientName,
