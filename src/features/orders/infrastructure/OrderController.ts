@@ -1089,7 +1089,8 @@ export class OrderController {
           reference: p.reference
         })) : [],
         notes: req.body.notes,
-        deliveredByName: req.user!.username
+        deliveredByName: req.user!.username,
+        creditDistribution: req.body.creditDistribution || req.body.credit_distribution
       };
 
       const result = await this.deliverOrderUseCase.execute(id, dto, req.user!.username);
@@ -1226,7 +1227,8 @@ export class OrderController {
           paymentMethod: p.paymentMethod || p.payment_method,
           reference: p.reference
         })) : [],
-        deliveredByName: req.user!.username
+        deliveredByName: req.user!.username,
+        creditDistributions: req.body.creditDistributions || req.body.credit_distributions
       };
 
       const result = await this.batchDeliverOrdersUseCase.execute(dto, req.user!.username);
