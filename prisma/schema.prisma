@@ -148,8 +148,6 @@ model Order {
   receptionDate        DateTime?           @map("reception_date")
   deliveryDate         DateTime?           @map("delivery_date")
   invoiceNumber        String?             @map("invoice_number")
-  creditNoteNumber     String?             @map("credit_note_number")
-  creditNoteTotal      Decimal?            @map("credit_note_total") @db.Decimal(10, 2)
   status               String              @default("POR_RECIBIR")
   clientId             String              @map("client_id")
   clientName           String              @map("client_name")
@@ -171,6 +169,8 @@ model Order {
   receptionBatchId     String?             @map("reception_batch_id")
   loyaltyRedemptionId  String?             @map("loyalty_redemption_id")
   exchangeItemId       String?             @unique @map("exchange_item_id")
+  creditNoteNumber     String?             @map("credit_note_number")
+  creditNoteTotal      Decimal?            @map("credit_note_total") @db.Decimal(10, 2)
   calls                Call[]
   catalogDelivery      CatalogDelivery?    @relation("CatalogOrder")
   exchangeBatchItems   ExchangeBatchItem[]
