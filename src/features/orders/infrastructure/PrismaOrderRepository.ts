@@ -112,7 +112,6 @@ export class PrismaOrderRepository implements IOrderRepository {
             }
           },
           financialRecords: {
-            where: { type: 'PAYMENT', movementType: 'INCOME' },
             select: {
               id: true,
               paymentMethod: true,
@@ -121,6 +120,8 @@ export class PrismaOrderRepository implements IOrderRepository {
               notes: true,
               createdBy: true,
               referenceNumber: true,
+              movementType: true,
+              type: true,
               bankAccount: { select: { name: true } }
             }
           },
@@ -186,7 +187,6 @@ export class PrismaOrderRepository implements IOrderRepository {
           }
         },
         financialRecords: {
-          where: { type: 'PAYMENT', movementType: 'INCOME' },
           select: {
             id: true,
             paymentMethod: true,
@@ -195,6 +195,8 @@ export class PrismaOrderRepository implements IOrderRepository {
             notes: true,
             createdBy: true,
             referenceNumber: true,
+            movementType: true,
+            type: true,
             bankAccount: { select: { name: true } }
           }
         },
@@ -352,46 +354,77 @@ export class PrismaOrderRepository implements IOrderRepository {
           brandName: item.brandName,
           link: item.link
         })),
-        payments: raw.payments.map((payment: any) => {
-          // For SPLIT_PAYMENT: use FRs linked to this payment, or fall back to order-level FRs
-          let financialRecords = payment.financialRecords
-            ? payment.financialRecords.map((fr: any) => ({
-                id: fr.id,
-                paymentMethod: fr.paymentMethod,
-                amount: Number(fr.amount),
-                bankAccountId: fr.bankAccountId,
-                bankAccountName: fr.bankAccount?.name,
-                notes: fr.notes,
-                createdBy: fr.createdBy,
-                referenceNumber: fr.referenceNumber
-              }))
-            : [];
+        payments: (() => {
+          const mappedPayments = raw.payments.map((payment: any) => {
+            // For SPLIT_PAYMENT: use FRs linked to this payment, or fall back to order-level FRs
+            let financialRecords = payment.financialRecords
+              ? payment.financialRecords.map((fr: any) => ({
+                  id: fr.id,
+                  paymentMethod: fr.paymentMethod,
+                  amount: Number(fr.amount),
+                  bankAccountId: fr.bankAccountId,
+                  bankAccountName: fr.bankAccount?.name,
+                  notes: fr.notes,
+                  createdBy: fr.createdBy,
+                  referenceNumber: fr.referenceNumber
+                }))
+              : [];
 
-          // Fallback: if SPLIT_PAYMENT has no linked FRs, use order-level financialRecords
-          if (payment.method === 'SPLIT_PAYMENT' && financialRecords.length === 0 && raw.financialRecords?.length > 0) {
-            financialRecords = raw.financialRecords.map((fr: any) => ({
-              id: fr.id,
-              paymentMethod: fr.paymentMethod,
-              amount: Number(fr.amount),
-              bankAccountId: fr.bankAccountId,
-              bankAccountName: fr.bankAccount?.name,
-              notes: fr.notes,
-              createdBy: fr.createdBy,
-              referenceNumber: fr.referenceNumber
-            }));
+            // Fallback: if SPLIT_PAYMENT has no linked FRs, use order-level financialRecords
+            if (payment.method === 'SPLIT_PAYMENT' && financialRecords.length === 0 && raw.financialRecords?.length > 0) {
+              financialRecords = raw.financialRecords
+                .filter((fr: any) => fr.movementType === 'INCOME')
+                .map((fr: any) => ({
+                  id: fr.id,
+                  paymentMethod: fr.paymentMethod,
+                  amount: Number(fr.amount),
+                  bankAccountId: fr.bankAccountId,
+                  bankAccountName: fr.bankAccount?.name,
+                  notes: fr.notes,
+                  createdBy: fr.createdBy,
+                  referenceNumber: fr.referenceNumber
+                }));
+            }
+
+            return {
+              id: payment.id,
+              amount: payment.amount ? Number(payment.amount) : 0,
+              method: payment.method,
+              reference: payment.reference,
+              receiptNumber: payment.receiptNumber,
+              description: payment.description,
+              createdAt: payment.createdAt,
+              financialRecords
+            };
+          });
+
+          // Add dummy payments for Expenses/Refunds not linked to a specific payment object
+          if (raw.financialRecords) {
+            raw.financialRecords.forEach((fr: any) => {
+              if (fr.movementType === 'EXPENSE') {
+                mappedPayments.push({
+                  id: fr.id,
+                  amount: -Number(fr.amount),
+                  method: fr.paymentMethod || 'EFECTIVO',
+                  description: `Devolución/Gasto: ${fr.notes || ''}`,
+                  createdAt: raw.createdAt,
+                  financialRecords: [fr]
+                });
+              } else if (fr.movementType === 'INCOME' && !raw.payments.some((p: any) => p.id === fr.orderPaymentId)) {
+                // Income not linked to a payment (e.g. legacy or direct FR)
+                mappedPayments.push({
+                  id: fr.id,
+                  amount: Number(fr.amount),
+                  method: fr.paymentMethod || 'EFECTIVO',
+                  description: `Abono directo: ${fr.notes || ''}`,
+                  createdAt: raw.createdAt,
+                  financialRecords: [fr]
+                });
+              }
+            });
           }
-
-          return {
-            id: payment.id,
-            amount: payment.amount ? Number(payment.amount) : 0,
-            method: payment.method,
-            reference: payment.reference,
-            receiptNumber: payment.receiptNumber,
-            description: payment.description,
-            createdAt: payment.createdAt,
-            financialRecords
-          };
-        }),
+          return mappedPayments;
+        })(),
         childOrders: raw.childOrders ? raw.childOrders.map((child: any) => this.toDomain(child)) : undefined,
         childOrdersCount: raw._count?.childOrders,
         createdAt: raw.createdAt,
@@ -435,5 +468,35 @@ export class PrismaOrderRepository implements IOrderRepository {
       updatedAt: json.updatedAt,
       version: json.version
     };
+  }
+  async dismantle(orderId: string, mode: 'BLOCK' | 'NORMAL', reason: string): Promise<void> {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId }
+    });
+
+    if (!order) throw new Error('Order not found');
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Update Order Status
+      await tx.order.update({
+        where: { id: orderId },
+        data: { 
+          status: 'DESMANTELADO',
+          notes: order.notes ? `${order.notes}\n[DESMANTELADO - ${mode}: ${reason}]` : `[DESMANTELADO - ${mode}: ${reason}]`,
+          version: { increment: 1 }
+        }
+      });
+
+      // 2. If mode is BLOCK, block the client
+      if (mode === 'BLOCK') {
+        await tx.client.update({
+          where: { id: order.clientId },
+          data: { 
+            isBlocked: true,
+            blockedReason: reason
+          }
+        });
+      }
+    });
   }
 }

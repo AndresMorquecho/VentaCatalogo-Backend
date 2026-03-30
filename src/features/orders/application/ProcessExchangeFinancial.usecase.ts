@@ -217,7 +217,7 @@ export class ProcessExchangeFinancialUseCase {
               orderId: item.originalOrderId,
               createdBy,
               notes: buildNotesJSON({
-                title: 'TRASPASO_SALDO',
+                title: 'USO_BILLETERA',
                 module: 'EXCHANGE',
                 clientDoc: (exchange as any).client?.identificationNumber ?? 'S/N',
                 orders: [{ receiptNumber: exchange.exchangeNumber, orderNumber: item.originalOrderId }],

@@ -30,9 +30,9 @@ async function main() {
     await prisma.call.deleteMany();
     await prisma.loyaltyRedemption.deleteMany();
 
-    // Antes de borrar pedidos, desvincular relaciones circulares si existen (parentOrder)
+    // Antes de borrar pedidos, desvincular relaciones circulares si existen (parentOrder, sourceOrderId)
     await prisma.order.updateMany({
-      data: { parentOrderId: null, loyaltyRedemptionId: null, exchangeItemId: null }
+      data: { parentOrderId: null, sourceOrderId: null, loyaltyRedemptionId: null, exchangeItemId: null }
     });
 
     await prisma.order.deleteMany();

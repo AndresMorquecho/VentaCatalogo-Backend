@@ -27,6 +27,7 @@ export type CardTitle =
   | 'USO_BILLETERA'
   | 'RECARGA_BILLETERA'
   | 'TRASPASO_SALDO'
+  | 'DEVOLUCION'
   | 'REEMBOLSO_CASH'
   | 'REEMBOLSO_BANCARIO'
   | 'PAGO_COMISION'
@@ -59,6 +60,7 @@ export const CARD_TITLE_LABELS: Record<CardTitle, string> = {
   USO_BILLETERA: 'Uso de Billetera Virtual',
   RECARGA_BILLETERA: 'Recarga Billetera Virtual',
   TRASPASO_SALDO: 'Traspaso de Saldo',
+  DEVOLUCION: 'Devolución',
   REEMBOLSO_CASH: 'Devolución en Efectivo',
   REEMBOLSO_BANCARIO: 'Devolución Bancaria',
   PAGO_COMISION: 'Pago de Comisión',

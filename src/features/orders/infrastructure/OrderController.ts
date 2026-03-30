@@ -181,7 +181,9 @@ export class OrderController {
             unitPrice: Number(i.unit_price)
           })),
           deposit: Number(o.deposit || 0),
-          orderNumber: o.orderNumber || o.order_number
+          orderNumber: o.orderNumber || o.order_number,
+          sourceOrderId: o.sourceOrderId || o.source_order_id,
+          notes: o.notes
         }))
       };
 
@@ -1081,6 +1083,18 @@ export class OrderController {
 
       const { id } = req.params;
 
+      const distributionsRaw = req.body.creditDistribution || req.body.credit_distribution || 
+                               (Array.isArray(req.body.creditDistributions) ? req.body.creditDistributions[0] : req.body.creditDistributions) ||
+                               (Array.isArray(req.body.credit_distributions) ? req.body.credit_distributions[0] : req.body.credit_distributions);
+
+      const mappingDist = (d: any) => ({
+        targetOrderId: d.targetOrderId || d.target_order_id,
+        amount: Number(d.amount),
+        description: d.description,
+        isCashReturn: d.isCashReturn || d.is_cash_return || false,
+        bankAccountId: d.bankAccountId || d.bank_account_id
+      });
+
       const dto = {
         payments: req.body.payments ? req.body.payments.map((p: any) => ({
           amount: Number(p.amount),
@@ -1090,9 +1104,14 @@ export class OrderController {
         })) : [],
         notes: req.body.notes,
         deliveredByName: req.user!.username,
-        creditDistribution: req.body.creditDistribution || req.body.credit_distribution
+        creditDistribution: distributionsRaw ? {
+          sourceOrderId: distributionsRaw.sourceOrderId || distributionsRaw.source_order_id,
+          totalCreditAmount: Number(distributionsRaw.totalCreditAmount || distributionsRaw.total_credit_amount),
+          distributions: (distributionsRaw.distributions || []).map(mappingDist)
+        } : undefined
       };
 
+      console.log('[DeliverOrderController] Final DTO:', JSON.stringify(dto, null, 2));
       const result = await this.deliverOrderUseCase.execute(id, dto, req.user!.username);
 
       return HttpResponse.ok(res, result);
@@ -1219,6 +1238,18 @@ export class OrderController {
         return HttpResponse.fail(res, 'BatchDeliverOrdersUseCase not initialized');
       }
 
+      const distributionsRaw = req.body.creditDistributions || req.body.credit_distributions || 
+                               (req.body.creditDistribution ? [req.body.creditDistribution] : []) ||
+                               (req.body.credit_distribution ? [req.body.credit_distribution] : []);
+
+      const mappingDist = (d: any) => ({
+        targetOrderId: d.targetOrderId || d.target_order_id,
+        amount: Number(d.amount),
+        description: d.description,
+        isCashReturn: d.isCashReturn || d.is_cash_return || false,
+        bankAccountId: d.bankAccountId || d.bank_account_id
+      });
+
       const dto = {
         orderIds: req.body.orderIds || req.body.order_ids,
         payments: req.body.payments ? req.body.payments.map((p: any) => ({
@@ -1228,13 +1259,35 @@ export class OrderController {
           reference: p.reference
         })) : [],
         deliveredByName: req.user!.username,
-        creditDistributions: req.body.creditDistributions || req.body.credit_distributions
+        creditDistributions: Array.isArray(distributionsRaw) ? distributionsRaw.map((ds: any) => ({
+          sourceOrderId: ds.sourceOrderId || ds.source_order_id,
+          totalCreditAmount: Number(ds.totalCreditAmount || ds.total_credit_amount),
+          distributions: (ds.distributions || []).map(mappingDist)
+        })) : []
       };
 
+      console.log('[BatchDeliverOrderController] Final DTO:', JSON.stringify(dto, null, 2));
       const result = await this.batchDeliverOrdersUseCase.execute(dto, req.user!.username);
       return HttpResponse.ok(res, result);
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to batch deliver orders');
+    }
+  };
+
+  dismantleOrder = async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { mode, reason } = req.body;
+
+      if (!mode || !['BLOCK', 'NORMAL'].includes(mode)) {
+        return HttpResponse.badRequest(res, 'Invalid dismantle mode');
+      }
+
+      await this.orderRepository.dismantle(id, mode as any, reason || 'No especificado');
+
+      return HttpResponse.ok(res, { success: true, message: 'Pedido desmantelado correctamente' });
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to dismantle order');
     }
   };
 }

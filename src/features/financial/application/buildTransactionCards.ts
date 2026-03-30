@@ -153,6 +153,7 @@ function resolveTitle(records: RawRecord[]): CardTitle {
   if (type === 'EXCHANGE_ADDITIONAL_CHARGE') return 'CAMBIO_CARGO_ADICIONAL';
   if (type === 'EXCHANGE_CREDIT') return 'CAMBIO_CREDITO';
   if (type === 'CASH_RETURN') return 'REEMBOLSO_CASH';
+  if (type === 'CREDIT_APPLICATION' && source === 'CASH_RETURN') return 'DEVOLUCION';
   if (source === 'CREDIT_DISTRIBUTION') {
     if (primary.toAccountType === 'WALLET') return 'RECARGA_BILLETERA';
     return 'TRASPASO_SALDO';
@@ -178,13 +179,16 @@ function resolveOperationType(records: RawRecord[], title: CardTitle): Operation
   if (parsed?.v === 2) {
     const mod = parsed.module;
     if (mod === 'WALLET') return 'RECARGA';
-    if (mod === 'DELIVERY' || mod === 'BATCH_DELIVERY') return 'ENTREGA';
-    if (mod === 'RECEPTION') return 'ABONO';
-    if (mod === 'EXCHANGE') return 'CAMBIO';
-    if (mod === 'ORDERS') {
-      if (title === 'USO_BILLETERA') return 'ABONO';
-      return 'ABONO';
+    if (mod === 'DELIVERY' || mod === 'BATCH_DELIVERY') {
+      if (title === 'USO_BILLETERA' || title === 'TRASPASO_SALDO') return 'ABONO';
+      return 'ENTREGA';
     }
+    if (mod === 'RECEPTION') return 'ABONO';
+    if (mod === 'EXCHANGE') {
+      if (title === 'USO_BILLETERA' || title === 'TRASPASO_SALDO' || title === 'CAMBIO_CREDITO') return 'ABONO';
+      return 'CAMBIO';
+    }
+    if (mod === 'ORDERS') return 'ABONO';
   }
 
   // Derive from title
@@ -238,11 +242,12 @@ function buildMovements(records: RawRecord[], title: CardTitle): CardMovement[] 
     // WALLET movements are always informative (except wallet-use which deducts real credit)
     const isWalletInformative = accountType === 'WALLET' && r.movementType === 'INTERNAL';
 
-    // DISTRIBUTION legs are informative (internal transfers, not real cash)
-    const isDistributionInternal = r.source === 'CREDIT_DISTRIBUTION' &&
-      (r.toAccountType === 'ORDER' || r.fromAccountType === 'ORDER');
+    // DISTRIBUTION legs: 
+    // - EXPENSE (debt reduction) is REAL for the card amount
+    // - INCOME (payment added) is INFORMATIVE to avoid double counting
+    const isDistributionIncome = r.source === 'CREDIT_DISTRIBUTION' && r.movementType === 'INCOME';
 
-    const informative = isWalletInformative || isDistributionInternal;
+    const informative = isWalletInformative || isDistributionIncome;
 
     // Direction: INCOME → IN, EXPENSE → OUT, INTERNAL → interpret from account types
     let direction: MovementDirection;
@@ -267,7 +272,17 @@ function extractOrders(records: RawRecord[]): CardOrderContext[] {
   const seen = new Set<string>();
   const orders: CardOrderContext[] = [];
 
-  for (const r of records) {
+  // For Wallet/Distribution cards, prefer the Target order context (INCOME)
+  const primary = selectPrimary(records);
+  const title = resolveTitle(records);
+  
+  // If we have both legs of a distribution, or multiple records for an Abono,
+  // ensure we highlight the order that received the money (the INCOME side)
+  const targetRecords = (title === 'USO_BILLETERA' && records.length > 1)
+    ? records.filter(r => r.movementType === 'INCOME')
+    : records;
+
+  for (const r of targetRecords) {
     // Try v2 JSON first
     const parsed = parseNotesJSON(r.notes);
     if (parsed?.v === 2 && parsed.orders.length > 0) {
@@ -280,11 +295,11 @@ function extractOrders(records: RawRecord[]): CardOrderContext[] {
             receiptNumber: o.receiptNumber,
             orderNumber: o.orderNumber ?? null,
             brandName: o.brandName ?? null,
-            type: null, // v2 notes JSON doesn't store type yet, fallback to null
+            type: null,
           });
         }
       }
-      continue; // Don't fallback if we got v2 data
+      continue;
     }
 
     // Fallback: use relation data from includes

@@ -3,6 +3,7 @@ import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRec
 import { prisma } from '../../../lib/prisma';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
+import { buildNotesJSON, generateGroupId } from '../../../shared/utils/transactionNotes';
 
 export interface CreditDistributionItemDTO {
   targetOrderId?: string;
@@ -431,23 +432,44 @@ export class DeliverOrderUseCase {
 
       // 7. Process credit distribution if provided (surplus from NC)
       if (data.creditDistribution && data.creditDistribution.distributions.length > 0) {
+        console.log('[DeliverOrder] Processing credit distribution:', JSON.stringify(data.creditDistribution, null, 2));
         const { sourceOrderId, totalCreditAmount, distributions } = data.creditDistribution;
 
         for (const dist of distributions) {
+          console.log('[DeliverOrder] Checking distribution item:', { amount: dist.amount, isCashReturn: dist.isCashReturn });
           if (dist.amount <= 0.005) continue;
 
           const distGroupId = `TNC-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
           if (dist.isCashReturn) {
-            // Cash refund to client → EXPENSE financial record
+            console.log('[DeliverOrder] Processing cash return refund leg:', { amount: dist.amount, bankAccountId: dist.bankAccountId });
+            // Cash refund to client → CREDIT_APPLICATION financial record with CASH_RETURN source
             const refundAccountId = dist.bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '';
             const refundAccount = await tx.bankAccount.findUnique({ where: { id: refundAccountId }, select: { currentBalance: true, version: true, name: true, type: true } });
 
             const isBank = refundAccount?.type !== 'CASH';
+            const balanceBefore = refundAccount ? Number(refundAccount.currentBalance) : 0;
+            const balanceAfter = balanceBefore - dist.amount;
+
+            // Validate that we are not refunding more than what is in the account
+            validateBankAccountBalance(
+              balanceBefore,
+              -dist.amount,
+              refundAccountId,
+              refundAccount?.name || 'Cuenta'
+            );
+
+            const refundNotesJson = buildNotesJSON({
+              title: 'DEVOLUCION',
+              module: 'DELIVERY',
+              clientDoc: order.client.identificationNumber,
+              orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null }],
+              extra: dist.description || 'Devolución de saldo a favor al cliente',
+            });
 
             await tx.financialRecord.create({
               data: {
-                type: 'EXPENSE',
+                type: 'CREDIT_APPLICATION',
                 referenceNumber: `REFUND-DEL-${Date.now()}`,
                 amount: dist.amount,
                 date: new Date(),
@@ -455,20 +477,17 @@ export class DeliverOrderUseCase {
                 clientName: order.clientName,
                 orderId: sourceOrderId,
                 bankAccountId: refundAccountId,
-                source: 'CREDIT_DISTRIBUTION',
+                source: 'CASH_RETURN',
                 paymentMethod: isBank ? 'TRANSFERENCIA' : 'EFECTIVO',
                 movementType: 'EXPENSE',
                 fromAccountType: isBank ? 'BANK' : 'CASH',
                 toAccountType: 'EXTERNAL',
                 createdBy: userId,
+                clientDocument: order.client.identificationNumber,
                 transactionGroupId: distGroupId,
-                notes: JSON.stringify({
-                  v: 2,
-                  title: isBank ? 'REEMBOLSO_BANCARIO' : 'REEMBOLSO_CASH',
-                  module: 'DELIVERY',
-                  description: dist.description,
-                  orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null }]
-                }),
+                balanceBefore: balanceBefore,
+                balanceAfter: balanceAfter,
+                notes: refundNotesJson,
                 version: 1
               }
             });
@@ -496,6 +515,23 @@ export class DeliverOrderUseCase {
               include: { brand: true }
             });
 
+            // Maintenance of client wallet balance for the card 'Saldo' display
+            if (clientWalletRunningBal === null) {
+              clientWalletRunningBal = Number(clientAccount.totalCreditAvailable);
+            }
+            const balanceBefore: number = clientWalletRunningBal;
+            const balanceAfter: number = balanceBefore - Number(dist.amount);
+            clientWalletRunningBal = balanceAfter;
+
+            // Update Client Account in DB (Important for correctness!)
+            await tx.clientAccount.update({
+              where: { id: clientAccount.id },
+              data: {
+                totalCreditAvailable: { decrement: dist.amount },
+                version: { increment: 1 }
+              }
+            });
+
             // Create expense leg (source order losing credit)
             await tx.financialRecord.create({
               data: {
@@ -514,16 +550,15 @@ export class DeliverOrderUseCase {
                 toAccountType: 'ORDER',
                 createdBy: userId,
                 transactionGroupId: distGroupId,
-                notes: JSON.stringify({
-                  v: 2,
-                  title: 'TRASPASO_SALDO',
+                notes: buildNotesJSON({
+                  title: 'USO_BILLETERA',
                   module: 'DELIVERY',
-                  description: dist.description,
-                  orders: [
-                    { receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null },
-                    ...(targetOrder ? [{ receiptNumber: targetOrder.receiptNumber, orderNumber: targetOrder.orderNumber, brandName: targetOrder.brand?.name ?? null }] : [])
-                  ]
+                  clientDoc: (order as any).client?.identificationNumber ?? 'S/N',
+                  orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null }],
+                  extra: `Traspaso desde esta orden hacia: ${targetOrder?.receiptNumber || dist.targetOrderId}`,
                 }),
+                balanceBefore,
+                balanceAfter,
                 version: 1
               }
             });
@@ -546,15 +581,17 @@ export class DeliverOrderUseCase {
                 toAccountType: 'ORDER',
                 createdBy: userId,
                 transactionGroupId: distGroupId,
-                notes: JSON.stringify({
-                  v: 2,
-                  title: 'TRASPASO_SALDO',
+                notes: buildNotesJSON({
+                  title: 'USO_BILLETERA',
                   module: 'DELIVERY',
-                  description: dist.description,
+                  clientDoc: (order as any).client?.identificationNumber ?? 'S/N',
                   orders: targetOrder 
                     ? [{ receiptNumber: targetOrder.receiptNumber, orderNumber: targetOrder.orderNumber, brandName: targetOrder.brand?.name ?? null }]
-                    : []
+                    : [{ receiptNumber: dist.targetOrderId!, orderNumber: null, brandName: null }],
+                  extra: `Saldo recibido desde orden: ${order.receiptNumber}`,
                 }),
+                balanceBefore,
+                balanceAfter,
                 version: 1
               }
             });

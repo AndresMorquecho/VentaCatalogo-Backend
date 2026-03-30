@@ -38,6 +38,10 @@ export class BatchDeliverOrdersUseCase {
     }
 
     return await prisma.$transaction(async (tx) => {
+      // Pre-fetch common account info to avoid repetitive lookups in loops
+      const cashAccount = await tx.bankAccount.findFirst({ where: { type: 'CASH', isActive: true } });
+      const cashAccountId = cashAccount?.id || '';
+
       // 1. Obtener pedidos con relaciones
       const orders = await tx.order.findMany({
         where: { id: { in: orderIds } },
@@ -114,6 +118,7 @@ export class BatchDeliverOrdersUseCase {
 
       // 3. Procesar pagos si existen
       const accountBalancesMap = new Map<string, number>();
+      let totalSpentInBatch = 0;
       let clientWalletRunningBal: number | null = null;
       const totalAggregatePayment = payments.reduce((sum, p) => sum + p.amount, 0);
 
@@ -141,8 +146,7 @@ export class BatchDeliverOrdersUseCase {
           // Buscar cuenta bancaria para el registro financiero
           let bankAccountId = payment.bankAccountId;
           if (payment.paymentMethod === 'EFECTIVO' && !bankAccountId) {
-            const cashAccount = await tx.bankAccount.findFirst({ where: { type: 'CASH' } });
-            bankAccountId = cashAccount?.id;
+            bankAccountId = cashAccountId;
           }
 
           let balanceBefore: number | null = null;
@@ -256,34 +260,7 @@ export class BatchDeliverOrdersUseCase {
               creditToSubtract -= amountToSubtract;
             }
 
-            // Sync ClientAccount with optimistic locking
-            const clientAccountData = await tx.clientAccount.findUnique({
-              where: { id: clientAccount.id },
-              select: { id: true, totalCreditAvailable: true, version: true }
-            });
-
-            if (!clientAccountData) {
-              throw new Error(`Client account not found: ${clientAccount.id}`);
-            }
-
-            const accountResult = await tx.clientAccount.updateMany({
-              where: {
-                id: clientAccount.id,
-                version: clientAccountData.version
-              },
-              data: {
-                totalCreditAvailable: { decrement: payment.amount },
-                version: { increment: 1 }
-              }
-            });
-
-            if (accountResult.count === 0) {
-              throw new ConcurrencyError(
-                'Client account was modified by another transaction. Please retry.',
-                'ClientAccount',
-                clientAccount.id
-              );
-            }
+            // Intermediate balance tracking happens in clientWalletRunningBal only
           } else if (bankAccountId) {
             // Read account with version
             const bankAccount = await tx.bankAccount.findUnique({
@@ -349,7 +326,6 @@ export class BatchDeliverOrdersUseCase {
       }
 
       // 4. Actualizar pedidos
-      let totalSpentInBatch = 0;
 
       for (const order of orders) {
         const effectiveTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
@@ -400,32 +376,68 @@ export class BatchDeliverOrdersUseCase {
 
       // 6. Process all credit distributions (one for each source order in the batch that has surplus)
       if (data.creditDistributions && data.creditDistributions.length > 0) {
+        console.log('[BatchDeliverOrders] Processing distributions:', data.creditDistributions.length);
+        // Pre-fetch TARGET orders for distributions to avoid repetitive sub-queries
+        const targetOrderIds = data.creditDistributions.flatMap(ds => ds.distributions.map(d => d.targetOrderId)).filter(Boolean) as string[];
+        const targetOrdersFromDB = await tx.order.findMany({
+          where: { id: { in: targetOrderIds } },
+          include: { brand: true }
+        });
+        const targetOrderMap = new Map(targetOrdersFromDB.map(o => [o.id, o]));
+
         for (const distSource of data.creditDistributions) {
           const sourceOrderId = distSource.sourceOrderId;
-          const sourceOrder = orders.find(o => o.id === sourceOrderId);
-          if (!sourceOrder) continue;
+          let sourceOrder = orders.find(o => o.id === sourceOrderId);
+          
+          if (!sourceOrder) {
+             console.log('[BatchDeliverOrders] Source order not in current batch, fetching from DB:', sourceOrderId);
+             sourceOrder = await tx.order.findUnique({ where: { id: sourceOrderId }, include: { brand: true } }) as any;
+          }
+
+          if (!sourceOrder) {
+            console.error('[BatchDeliverOrders] Source order NOT FOUND even in DB:', sourceOrderId);
+            continue;
+          }
 
           for (const dist of distSource.distributions) {
              if (dist.amount <= 0.005) continue;
 
              if (dist.isCashReturn) {
-              // Cash refund to client → EXPENSE financial record
-              const refundAccountId = dist.bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '';
+              // Cash refund to client → CREDIT_APPLICATION financial record with CASH_RETURN source
+              const refundAccountId = dist.bankAccountId || cashAccountId;
               const refundAccount = await tx.bankAccount.findUnique({ where: { id: refundAccountId }, select: { currentBalance: true, version: true, name: true, type: true } });
 
               const isBank = refundAccount?.type !== 'CASH';
+              const balanceBefore = refundAccount ? Number(refundAccount.currentBalance) : 0;
+              const balanceAfter = balanceBefore - dist.amount;
+
+              // Validate that we are not refunding more than what is in the account
+              validateBankAccountBalance(
+                balanceBefore,
+                -dist.amount,
+                refundAccountId,
+                refundAccount?.name || 'Cuenta'
+              );
+
+              const distGroupId = `REFUND-BATCH-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
               const refundNotesJson = buildNotesJSON({
-                title: isBank ? 'REEMBOLSO_BANCARIO' : 'REEMBOLSO_CASH',
+                title: 'DEVOLUCION',
                 module: 'BATCH_DELIVERY',
                 clientDoc: firstClientDoc,
                 orders: [{ receiptNumber: sourceOrder.receiptNumber, orderNumber: sourceOrder.orderNumber ?? undefined, brandName: (sourceOrder as any).brand?.name ?? undefined }],
-                extra: dist.description,
+                extra: dist.description || 'Devolución de saldo a favor al cliente',
+              });
+
+              console.log('[BatchDeliverOrder] Creating refund financial record', { 
+                amount: dist.amount, 
+                bankAccountId: refundAccountId,
+                groupId: distGroupId
               });
 
               await tx.financialRecord.create({
                 data: {
-                  type: 'EXPENSE',
+                  type: 'CREDIT_APPLICATION',
                   referenceNumber: `REFUND-BATCH-${Date.now()}`,
                   amount: dist.amount,
                   date: new Date(),
@@ -433,18 +445,23 @@ export class BatchDeliverOrdersUseCase {
                   clientName: clientName,
                   orderId: sourceOrderId,
                   bankAccountId: refundAccountId,
-                  source: 'CREDIT_DISTRIBUTION',
+                  source: 'CASH_RETURN',
                   paymentMethod: isBank ? 'TRANSFERENCIA' : 'EFECTIVO',
                   movementType: 'EXPENSE',
                   fromAccountType: isBank ? 'BANK' : 'CASH',
                   toAccountType: 'EXTERNAL',
                   createdBy: userId,
+                  clientDocument: firstClientDoc,
+                  transactionGroupId: distGroupId,
+                  balanceBefore: balanceBefore,
+                  balanceAfter: balanceAfter,
                   notes: refundNotesJson,
                   version: 1
                 }
               });
 
               if (refundAccount) {
+                console.log(`[BatchDeliverOrder] Decrementing bank account ${refundAccountId}: -${dist.amount}`);
                 await tx.bankAccount.updateMany({
                   where: { id: refundAccountId, version: refundAccount.version },
                   data: { currentBalance: { decrement: dist.amount }, updatedAt: new Date(), version: { increment: 1 } }
@@ -463,16 +480,39 @@ export class BatchDeliverOrdersUseCase {
 
               // Distribution group: FROM source order TO target order
               const distGroupId = generateGroupId();
-              const distNotesBase = buildNotesJSON({
-                title: 'TRASPASO_SALDO',
+              // Robustly resolve target order info for the card
+              let targetInfo = orders.find(o => o.id === dist.targetOrderId) || targetOrderMap.get(dist.targetOrderId || '');
+
+              const sourceNotes = buildNotesJSON({
+                title: 'USO_BILLETERA',
                 module: 'BATCH_DELIVERY',
                 clientDoc: firstClientDoc,
-                orders: [
-                  { receiptNumber: sourceOrder.receiptNumber, orderNumber: sourceOrder.orderNumber ?? undefined, brandName: (sourceOrder as any).brand?.name ?? undefined },
-                  { receiptNumber: orders.find(o => o.id === dist.targetOrderId)?.receiptNumber || dist.targetOrderId!, orderNumber: orders.find(o => o.id === dist.targetOrderId)?.orderNumber ?? undefined },
-                ],
-                extra: dist.description,
+                orders: [{ receiptNumber: sourceOrder.receiptNumber, orderNumber: sourceOrder.orderNumber ?? undefined, brandName: (sourceOrder as any).brand?.name ?? undefined }],
+                extra: `Traspaso desde esta orden hacia: ${targetInfo?.receiptNumber || dist.targetOrderId}`,
               });
+
+              const targetNotes = buildNotesJSON({
+                title: 'USO_BILLETERA',
+                module: 'BATCH_DELIVERY',
+                clientDoc: firstClientDoc,
+                orders: [{ 
+                  receiptNumber: targetInfo?.receiptNumber || dist.targetOrderId!, 
+                  orderNumber: targetInfo?.orderNumber ?? undefined,
+                  brandName: (targetInfo as any)?.brand?.name ?? undefined
+                }],
+                extra: `Saldo recibido desde orden: ${sourceOrder.receiptNumber}`,
+              });
+
+              // Maintenance of client wallet balance for the card 'Saldo' display
+              if (clientWalletRunningBal === null) {
+                clientWalletRunningBal = Number(clientAccount?.totalCreditAvailable || 0);
+              }
+              const balanceBefore: number = clientWalletRunningBal;
+              const balanceAfter: number = balanceBefore - Number(dist.amount);
+              clientWalletRunningBal = balanceAfter;
+
+              // Update Client Account in DB (Important for correctness!)
+              // Intermediate balance tracking happens in currentWalletBalance only
 
               // Create expense leg (source order losing credit)
               await tx.financialRecord.create({
@@ -484,15 +524,17 @@ export class BatchDeliverOrdersUseCase {
                   clientId: clientId,
                   clientName: clientName,
                   orderId: sourceOrderId,
-                  bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                  bankAccountId: cashAccountId,
                   source: 'CREDIT_DISTRIBUTION',
                   paymentMethod: 'CREDITO_CLIENTE',
                   movementType: 'EXPENSE',
                   fromAccountType: 'ORDER',
                   toAccountType: 'ORDER',
                   createdBy: userId,
-                  notes: distNotesBase,
+                  notes: sourceNotes,
                   transactionGroupId: distGroupId,
+                  balanceBefore,
+                  balanceAfter,
                   version: 1
                 }
               });
@@ -507,28 +549,38 @@ export class BatchDeliverOrdersUseCase {
                   clientId: clientId,
                   clientName: clientName,
                   orderId: dist.targetOrderId,
-                  bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                  bankAccountId: cashAccountId,
                   source: 'CREDIT_DISTRIBUTION',
                   paymentMethod: 'CREDITO_CLIENTE',
                   movementType: 'INCOME',
                   fromAccountType: 'ORDER',
                   toAccountType: 'ORDER',
                   createdBy: userId,
-                  notes: distNotesBase,
+                  notes: targetNotes,
                   transactionGroupId: distGroupId,
+                  balanceBefore,
+                  balanceAfter,
                   version: 1
                 }
               });
             } else {
               // Move to wallet → create ClientCredit
               const clientAccountData = await tx.clientAccount.findUnique({
-                where: { id: clientAccount.id }, // reuse our clientAccount
+                where: { id: clientAccount!.id }, // reuse our clientAccount
                 select: { id: true, totalCreditAvailable: true, version: true }
               });
 
+              // Record balance for wallet recharge too
+              if (clientWalletRunningBal === null) {
+                clientWalletRunningBal = Number(clientAccountData?.totalCreditAvailable || 0);
+              }
+              const walletBefore: number = clientWalletRunningBal;
+              const walletAfter: number = walletBefore + Number(dist.amount);
+              clientWalletRunningBal = walletAfter;
+
               await tx.clientCredit.create({
                 data: {
-                  clientAccountId: clientAccount.id,
+                  clientAccountId: clientAccount!.id,
                   amount: dist.amount,
                   remainingAmount: dist.amount,
                   status: 'AVAILABLE',
@@ -537,10 +589,7 @@ export class BatchDeliverOrdersUseCase {
                 }
               });
 
-              await tx.clientAccount.updateMany({
-                where: { id: clientAccount.id, version: clientAccountData!.version },
-                data: { totalCreditAvailable: { increment: dist.amount }, version: { increment: 1 } }
-              });
+              // No intermediate DB update for clientAccount in the loop, we do it once at the end
 
               const walletNotesJson = buildNotesJSON({
                 title: 'RECARGA_BILLETERA',
@@ -559,7 +608,7 @@ export class BatchDeliverOrdersUseCase {
                   clientId: clientId,
                   clientName: clientName,
                   orderId: sourceOrderId,
-                  bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                  bankAccountId: cashAccountId,
                   source: 'CREDIT_DISTRIBUTION',
                   paymentMethod: 'CREDITO_CLIENTE',
                   movementType: 'INTERNAL',
@@ -567,12 +616,15 @@ export class BatchDeliverOrdersUseCase {
                   toAccountType: 'WALLET',
                   createdBy: userId,
                   notes: walletNotesJson,
+                  balanceBefore: walletBefore,
+                  balanceAfter: walletAfter,
                   version: 1
                 }
-              });            }
+              });
           }
         }
       }
+    }
 
       // 5. Finalizar cuenta del cliente con optimistic locking
       const finalClientAccount = await tx.clientAccount.findUnique({
@@ -595,11 +647,13 @@ export class BatchDeliverOrdersUseCase {
         data: {
           totalOrders: updatedOrders,
           totalSpent: updatedSpent,
+          totalCreditAvailable: clientWalletRunningBal !== null ? clientWalletRunningBal : clientAccount.totalCreditAvailable,
           version: { increment: 1 }
         }
       });
 
       if (finalResult.count === 0) {
+        console.error(`[BatchDeliverOrders] clientAccount updateMany failed for id: ${clientAccount.id}, version: ${finalClientAccount.version}`);
         throw new ConcurrencyError(
           'Client account was modified by another transaction. Please retry.',
           'ClientAccount',
@@ -613,6 +667,6 @@ export class BatchDeliverOrdersUseCase {
         totalPointsEarned: 0,
         newLevel: clientAccount.rewardLevel
       };
-    });
+    }, { timeout: 20000 });
   }
 }

@@ -47,6 +47,8 @@ export interface BatchCreateOrderDTO {
     }>;
     deposit?: number;
     orderNumber?: string;
+    sourceOrderId?: string;
+    notes?: string;
   }>;
 }
 
@@ -108,6 +110,25 @@ export class BatchCreateOrderUseCase {
         const brand = brands.find(b => b.id === brandId);
         if (!brand || !brand.isActive) {
           return Result.fail(`La marca ${brand?.name || brandId} no está activa`);
+        }
+      }
+
+      // 2.5 Validate strict exchange source logic (Option B)
+      const sourceOrderIds = dto.orders.map(o => o.sourceOrderId).filter(id => id) as string[];
+      if (sourceOrderIds.length > 0) {
+        const existingExchanges = await prisma.order.findMany({
+          where: { sourceOrderId: { in: sourceOrderIds } },
+          select: { sourceOrderId: true, orderNumber: true }
+        });
+
+        if (existingExchanges.length > 0) {
+          const duplicatedSourceIds = existingExchanges.map(e => e.sourceOrderId) as string[];
+          const sourceOrders = await prisma.order.findMany({
+            where: { id: { in: duplicatedSourceIds } },
+            select: { orderNumber: true }
+          });
+          const conflictNames = sourceOrders.map(so => so.orderNumber).join(", ");
+          return Result.fail(`Doble devolución detectada: Las prendas de origen (${conflictNames}) ya fueron cambiadas anteriormente en otra guía.`);
         }
       }
 
@@ -212,10 +233,11 @@ export class BatchCreateOrderUseCase {
             possibleDeliveryDate: orderDto.possibleDeliveryDate,
             status: OrderStatus.POR_RECIBIR,
             parentOrderId: i > 0 ? parentId : null,
+            sourceOrderId: orderDto.sourceOrderId || null,
             orderNumber: orderDto.orderNumber || null,
             clientId: dto.clientId,
             clientName: clientName,
-            notes: '',
+            notes: orderDto.notes || '',
             createdByName: dto.createdByName || createdBy,
             createdAt: orderCreatedAt,
             version: 1
@@ -653,6 +675,14 @@ export class BatchCreateOrderUseCase {
         // 6. Crear todos los FinancialRecords de una vez
         if (allFinancialRecords.length > 0) {
           await tx.financialRecord.createMany({ data: allFinancialRecords });
+        }
+
+        // 6.5 Update source orders status to CAMBIADO (Prevents re-exchanging)
+        if (sourceOrderIds.length > 0) {
+          await tx.order.updateMany({
+            where: { id: { in: sourceOrderIds } },
+            data: { status: 'CAMBIADO', updatedAt: new Date(), version: { increment: 1 } }
+          });
         }
 
         // 7. Actualizar BankAccount(s)

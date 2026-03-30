@@ -125,6 +125,7 @@ router.post('/', authenticate, requirePermission('orders.create'), orderControll
 router.post('/:id/receive', authenticate, requirePermission('reception.confirm'), orderController.receiveOrder);
 router.post('/:id/reverse-reception', authenticate, requirePermission('reception.confirm'), orderController.reverseReception);
 router.post('/:id/deliver', authenticate, requirePermission('delivery.confirm'), orderController.deliverOrder);
+router.post('/:id/dismantle', authenticate, requirePermission('delivery.confirm'), orderController.dismantleOrder);
 router.put('/:id', authenticate, requirePermission('orders.edit'), orderController.update);
 router.delete('/:id', authenticate, requirePermission('orders.delete'), orderController.deleteOrder);
 
