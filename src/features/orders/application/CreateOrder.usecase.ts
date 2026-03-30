@@ -236,7 +236,13 @@ export class CreateOrderUseCase {
               clientId: dto.clientId,
               clientName: dto.clientName,
               createdBy,
-              notes: ((p as any).notes ? ((p as any).notes + ' | ') : `Pedido inicial | `) + `Cédula: ${clientDoc} | Orden: ${orderReceiptNumber} | Pedido: ${actualOrderNumber} | Marca: ${dto.brandName} | Tipo: ${dto.type.toUpperCase()}`,
+              notes: JSON.stringify({
+                v: 2,
+                title: 'ABONO',
+                module: 'ORDER',
+                description: ((p as any).notes ? (p as any).notes : `Pedido inicial`),
+                orders: [{ receiptNumber: orderReceiptNumber, orderNumber: actualOrderNumber, brandName: dto.brandName, type: dto.type }]
+              }),
               userReference: pReceiptNumber,
               bankAccountId: walletBankId,
               paymentMethod: p.method,
@@ -287,7 +293,13 @@ export class CreateOrderUseCase {
               clientName: dto.clientName,
               clientDocument: clientDoc,
               createdBy,
-              notes: `Pedido inicial | Cédula: ${clientDoc} | Orden: ${orderReceiptNumber} | Pedido: ${actualOrderNumber} | Marca: ${dto.brandName} | Tipo: ${dto.type.toUpperCase()}`,
+              notes: JSON.stringify({
+                v: 2,
+                title: 'ABONO',
+                module: 'ORDER',
+                description: ((p as any).notes ? (p as any).notes : `Pedido inicial`),
+                orders: [{ receiptNumber: orderReceiptNumber, orderNumber: actualOrderNumber, brandName: dto.brandName, type: dto.type }]
+              }),
               userReference: pReceiptNumber,
               bankAccountId: pBankId,
               paymentMethod: p.method,

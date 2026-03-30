@@ -3,9 +3,66 @@ import { PrismaFinancialRecordRepository } from './PrismaFinancialRecordReposito
 import { FinancialRecord } from '../domain/FinancialRecord.entity';
 import { authenticate } from '../../../middleware/auth';
 import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
+import { buildTransactionCards } from '../application/buildTransactionCards';
+import { prisma } from '../../../lib/prisma';
 
 const router = Router();
 const repository = new PrismaFinancialRecordRepository();
+
+// ─── GET /api/financial-records/cards ────────────────────────────────────────
+// Returns TransactionCardDTO[] — fully processed, ready for UI rendering.
+// Frontend does ZERO financial logic on this data.
+router.get('/cards', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { clientId, startDate, endDate, createdBy, page: pageStr, limit: limitStr } = req.query;
+
+    const page  = Math.max(1, parseInt(pageStr as string) || 1);
+    const limit = Math.min(500, Math.max(1, parseInt(limitStr as string) || 200));
+    const skip  = (page - 1) * limit;
+
+    const where: any = {};
+    if (clientId)   where.clientId = clientId as string;
+    if (createdBy)  where.createdBy = createdBy as string;
+    if (startDate || endDate) {
+      where.date = {};
+      if (startDate) where.date.gte = new Date(startDate as string);
+      if (endDate)   where.date.lte = new Date(endDate as string);
+    }
+
+    // Fetch with full relations needed by buildTransactionCards
+    const records = await prisma.financialRecord.findMany({
+      where,
+      include: {
+        bankAccount: { select: { name: true, type: true } },
+        order: { select: { receiptNumber: true, orderNumber: true, type: true } },
+      },
+      orderBy: { date: 'desc' },
+      // Fetch more than requested — buildTransactionCards groups records,
+      // so we need all legs before paginating the resulting cards.
+      skip,
+      take: limit,
+    });
+
+    const totalRecords = await prisma.financialRecord.count({ where });
+
+    const cards = buildTransactionCards(records as any);
+
+    return res.json({
+      success: true,
+      data: cards,
+      pagination: {
+        page,
+        limit,
+        totalRecords,
+        totalCards: cards.length,
+        pages: Math.ceil(totalRecords / limit),
+      },
+    });
+  } catch (error) {
+    next(error);
+    return;
+  }
+});
 
 // GET /api/financial-records - Get all with optional filters
 router.get('/', authenticate, async (req: Request, res: Response, next: NextFunction) => {

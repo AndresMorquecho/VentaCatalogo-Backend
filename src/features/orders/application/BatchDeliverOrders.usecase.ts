@@ -1,6 +1,7 @@
 import { prisma } from '../../../lib/prisma';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
+import { buildNotesJSON, cardTitleFromMethod, generateGroupId } from '../../../shared/utils/transactionNotes';
 
 export interface CreditDistributionItemDTO {
   targetOrderId?: string;
@@ -95,7 +96,18 @@ export class BatchDeliverOrdersUseCase {
         const paidAmount = order.payments
           .filter(p => !(hasSplitPayment && p.method === 'CREDITO_CLIENTE'))
           .reduce((sum, p) => sum + Number(p.amount), 0);
-        const pending = effectiveTotal - paidAmount;
+        let pending = effectiveTotal - paidAmount;
+        
+        if (data.creditDistributions) {
+          data.creditDistributions.forEach(distGroup => {
+            if (distGroup.distributions) {
+              const toThis = distGroup.distributions.find(d => d.targetOrderId === order.id);
+              if (toThis) pending -= toThis.amount;
+            }
+          });
+        }
+        
+        pending = Math.max(0, pending);
         totalPending += pending;
         return { orderId: order.id, pending, receiptNumber: order.receiptNumber };
       });
@@ -104,6 +116,17 @@ export class BatchDeliverOrdersUseCase {
       const accountBalancesMap = new Map<string, number>();
       let clientWalletRunningBal: number | null = null;
       const totalAggregatePayment = payments.reduce((sum, p) => sum + p.amount, 0);
+
+      // One groupId for ALL payment legs of this batch delivery (they form a single card)
+      const batchPaymentGroupId = generateGroupId();
+
+      // Build shared order context for notes
+      const batchOrderContexts = orders.map(o => ({
+        receiptNumber: o.receiptNumber,
+        orderNumber: o.orderNumber ?? undefined,
+        brandName: (o as any).brand?.name ?? undefined,
+      }));
+      const firstClientDoc = (orders[0] as any).client?.identificationNumber || orders[0].clientId || '—';
 
       if (totalAggregatePayment > 0) {
         if (totalAggregatePayment > totalPending + 0.01) {
@@ -151,12 +174,13 @@ export class BatchDeliverOrdersUseCase {
 
           // Crear registro financiero
           const referenceNumber = payment.reference || `BATCH-DEL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-          
-          const orderReceipts = orders.map(o => o.receiptNumber).join(', ');
-          const orderNumbers = orders.map(o => o.orderNumber || '—').join(', ');
-          const brands = Array.from(new Set(orders.map(o => (o as any).brand?.name || '—'))).join(', ');
-          const firstClient = (orders[0] as any).client;
-          const clientDoc = firstClient?.identificationNumber || orders[0].clientId || '—';
+
+          const paymentNotesJson = buildNotesJSON({
+            title: cardTitleFromMethod(payment.paymentMethod),
+            module: 'BATCH_DELIVERY',
+            clientDoc: firstClientDoc,
+            orders: batchOrderContexts,
+          });
 
           await tx.financialRecord.create({
             data: {
@@ -173,7 +197,7 @@ export class BatchDeliverOrdersUseCase {
               fromAccountType: isCredit ? 'WALLET' : 'EXTERNAL',
               toAccountType: isCredit ? 'ORDER' : 'CASH',
               createdBy: userId,
-              notes: `Pago lote entrega (${payment.paymentMethod}) | Cédula: ${clientDoc} | Orden: ${orderReceipts} | Pedido: ${orderNumbers} | Marca: ${brands} | Tipo: ENTREGA`,
+              notes: paymentNotesJson,
               balanceBefore,
               balanceAfter,
               version: 1
@@ -387,7 +411,17 @@ export class BatchDeliverOrdersUseCase {
              if (dist.isCashReturn) {
               // Cash refund to client → EXPENSE financial record
               const refundAccountId = dist.bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '';
-              const refundAccount = await tx.bankAccount.findUnique({ where: { id: refundAccountId }, select: { currentBalance: true, version: true, name: true } });
+              const refundAccount = await tx.bankAccount.findUnique({ where: { id: refundAccountId }, select: { currentBalance: true, version: true, name: true, type: true } });
+
+              const isBank = refundAccount?.type !== 'CASH';
+
+              const refundNotesJson = buildNotesJSON({
+                title: isBank ? 'REEMBOLSO_BANCARIO' : 'REEMBOLSO_CASH',
+                module: 'BATCH_DELIVERY',
+                clientDoc: firstClientDoc,
+                orders: [{ receiptNumber: sourceOrder.receiptNumber, orderNumber: sourceOrder.orderNumber ?? undefined, brandName: (sourceOrder as any).brand?.name ?? undefined }],
+                extra: dist.description,
+              });
 
               await tx.financialRecord.create({
                 data: {
@@ -400,12 +434,12 @@ export class BatchDeliverOrdersUseCase {
                   orderId: sourceOrderId,
                   bankAccountId: refundAccountId,
                   source: 'CREDIT_DISTRIBUTION',
-                  paymentMethod: 'EFECTIVO',
+                  paymentMethod: isBank ? 'TRANSFERENCIA' : 'EFECTIVO',
                   movementType: 'EXPENSE',
-                  fromAccountType: 'CASH',
+                  fromAccountType: isBank ? 'BANK' : 'CASH',
                   toAccountType: 'EXTERNAL',
                   createdBy: userId,
-                  notes: `${dist.description} | Orden: ${sourceOrder.receiptNumber} | Tipo: REEMBOLSO_ENTREGA_LOTE`,
+                  notes: refundNotesJson,
                   version: 1
                 }
               });
@@ -427,6 +461,19 @@ export class BatchDeliverOrdersUseCase {
                 }
               });
 
+              // Distribution group: FROM source order TO target order
+              const distGroupId = generateGroupId();
+              const distNotesBase = buildNotesJSON({
+                title: 'TRASPASO_SALDO',
+                module: 'BATCH_DELIVERY',
+                clientDoc: firstClientDoc,
+                orders: [
+                  { receiptNumber: sourceOrder.receiptNumber, orderNumber: sourceOrder.orderNumber ?? undefined, brandName: (sourceOrder as any).brand?.name ?? undefined },
+                  { receiptNumber: orders.find(o => o.id === dist.targetOrderId)?.receiptNumber || dist.targetOrderId!, orderNumber: orders.find(o => o.id === dist.targetOrderId)?.orderNumber ?? undefined },
+                ],
+                extra: dist.description,
+              });
+
               // Create expense leg (source order losing credit)
               await tx.financialRecord.create({
                 data: {
@@ -444,7 +491,8 @@ export class BatchDeliverOrdersUseCase {
                   fromAccountType: 'ORDER',
                   toAccountType: 'ORDER',
                   createdBy: userId,
-                  notes: `${dist.description} | Orden: ${sourceOrder.receiptNumber} | Tipo: DISTRIBUCION_ENTREGA_LOTE`,
+                  notes: distNotesBase,
+                  transactionGroupId: distGroupId,
                   version: 1
                 }
               });
@@ -466,8 +514,8 @@ export class BatchDeliverOrdersUseCase {
                   fromAccountType: 'ORDER',
                   toAccountType: 'ORDER',
                   createdBy: userId,
-                  // We also reference the SOURCE order in notes for traceability
-                  notes: `${dist.description} | Recibido de: ${sourceOrder.receiptNumber} | Tipo: ABONO_DISTRIBUCION_ENTREGA_LOTE`,
+                  notes: distNotesBase,
+                  transactionGroupId: distGroupId,
                   version: 1
                 }
               });
@@ -494,6 +542,14 @@ export class BatchDeliverOrdersUseCase {
                 data: { totalCreditAvailable: { increment: dist.amount }, version: { increment: 1 } }
               });
 
+              const walletNotesJson = buildNotesJSON({
+                title: 'RECARGA_BILLETERA',
+                module: 'BATCH_DELIVERY',
+                clientDoc: firstClientDoc,
+                orders: [{ receiptNumber: sourceOrder.receiptNumber, orderNumber: sourceOrder.orderNumber ?? undefined, brandName: (sourceOrder as any).brand?.name ?? undefined }],
+                extra: dist.description,
+              });
+
               await tx.financialRecord.create({
                 data: {
                   type: 'CREDIT',
@@ -510,11 +566,10 @@ export class BatchDeliverOrdersUseCase {
                   fromAccountType: 'ORDER',
                   toAccountType: 'WALLET',
                   createdBy: userId,
-                  notes: `${dist.description} | Orden: ${sourceOrder.receiptNumber} | Tipo: SALDO_BILLETERA_ENTREGA_LOTE`,
+                  notes: walletNotesJson,
                   version: 1
                 }
-              });
-            }
+              });            }
           }
         }
       }

@@ -436,10 +436,14 @@ export class DeliverOrderUseCase {
         for (const dist of distributions) {
           if (dist.amount <= 0.005) continue;
 
+          const distGroupId = `TNC-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
           if (dist.isCashReturn) {
             // Cash refund to client → EXPENSE financial record
             const refundAccountId = dist.bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '';
-            const refundAccount = await tx.bankAccount.findUnique({ where: { id: refundAccountId }, select: { currentBalance: true, version: true, name: true } });
+            const refundAccount = await tx.bankAccount.findUnique({ where: { id: refundAccountId }, select: { currentBalance: true, version: true, name: true, type: true } });
+
+            const isBank = refundAccount?.type !== 'CASH';
 
             await tx.financialRecord.create({
               data: {
@@ -452,12 +456,19 @@ export class DeliverOrderUseCase {
                 orderId: sourceOrderId,
                 bankAccountId: refundAccountId,
                 source: 'CREDIT_DISTRIBUTION',
-                paymentMethod: 'EFECTIVO',
+                paymentMethod: isBank ? 'TRANSFERENCIA' : 'EFECTIVO',
                 movementType: 'EXPENSE',
-                fromAccountType: 'CASH',
+                fromAccountType: isBank ? 'BANK' : 'CASH',
                 toAccountType: 'EXTERNAL',
                 createdBy: userId,
-                notes: `${dist.description} | Orden: ${order.receiptNumber} | Tipo: REEMBOLSO_ENTREGA`,
+                transactionGroupId: distGroupId,
+                notes: JSON.stringify({
+                  v: 2,
+                  title: isBank ? 'REEMBOLSO_BANCARIO' : 'REEMBOLSO_CASH',
+                  module: 'DELIVERY',
+                  description: dist.description,
+                  orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null }]
+                }),
                 version: 1
               }
             });
@@ -479,6 +490,12 @@ export class DeliverOrderUseCase {
               }
             });
 
+            // Target order context for JSON notes
+            const targetOrder = await tx.order.findUnique({ 
+              where: { id: dist.targetOrderId },
+              include: { brand: true }
+            });
+
             // Create expense leg (source order losing credit)
             await tx.financialRecord.create({
               data: {
@@ -496,7 +513,17 @@ export class DeliverOrderUseCase {
                 fromAccountType: 'ORDER',
                 toAccountType: 'ORDER',
                 createdBy: userId,
-                notes: `${dist.description} | Orden: ${order.receiptNumber} | Tipo: DISTRIBUCION_ENTREGA`,
+                transactionGroupId: distGroupId,
+                notes: JSON.stringify({
+                  v: 2,
+                  title: 'TRASPASO_SALDO',
+                  module: 'DELIVERY',
+                  description: dist.description,
+                  orders: [
+                    { receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null },
+                    ...(targetOrder ? [{ receiptNumber: targetOrder.receiptNumber, orderNumber: targetOrder.orderNumber, brandName: targetOrder.brand?.name ?? null }] : [])
+                  ]
+                }),
                 version: 1
               }
             });
@@ -518,12 +545,50 @@ export class DeliverOrderUseCase {
                 fromAccountType: 'ORDER',
                 toAccountType: 'ORDER',
                 createdBy: userId,
-                notes: `${dist.description} | Orden: ${order.receiptNumber} | Tipo: ABONO_DISTRIBUCION_ENTREGA`,
+                transactionGroupId: distGroupId,
+                notes: JSON.stringify({
+                  v: 2,
+                  title: 'TRASPASO_SALDO',
+                  module: 'DELIVERY',
+                  description: dist.description,
+                  orders: targetOrder 
+                    ? [{ receiptNumber: targetOrder.receiptNumber, orderNumber: targetOrder.orderNumber, brandName: targetOrder.brand?.name ?? null }]
+                    : []
+                }),
                 version: 1
               }
             });
           } else {
-            // Move to wallet → create ClientCredit
+            // Move to wallet → create FinancialRecord FIRST
+            const fr = await tx.financialRecord.create({
+              data: {
+                type: 'CREDIT',
+                referenceNumber: `WALLET-DEL-${Date.now()}`,
+                amount: dist.amount,
+                date: new Date(),
+                clientId: order.clientId,
+                clientName: order.clientName,
+                orderId: sourceOrderId,
+                bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
+                source: 'CREDIT_DISTRIBUTION',
+                paymentMethod: 'CREDITO_CLIENTE',
+                movementType: 'INTERNAL',
+                fromAccountType: 'ORDER',
+                toAccountType: 'WALLET',
+                createdBy: userId,
+                transactionGroupId: distGroupId,
+                notes: JSON.stringify({
+                  v: 2,
+                  title: 'RECARGA_BILLETERA',
+                  module: 'DELIVERY',
+                  description: 'Saldo a favor enviado a billetera virtual desde orden',
+                  orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null }]
+                }),
+                version: 1
+              }
+            });
+
+            // Create ClientCredit tied to actual Financial Record ID
             const clientAccountForCredit = await tx.clientAccount.findUnique({
               where: { clientId: order.clientId },
               select: { id: true, totalCreditAvailable: true, version: true }
@@ -543,7 +608,7 @@ export class DeliverOrderUseCase {
                 amount: dist.amount,
                 remainingAmount: dist.amount,
                 status: 'AVAILABLE',
-                originTransactionId: `DEL-CREDIT-${sourceOrderId}-${Date.now()}`,
+                originTransactionId: fr.id,
                 originOrderId: sourceOrderId
               }
             });
@@ -551,27 +616,6 @@ export class DeliverOrderUseCase {
             await tx.clientAccount.updateMany({
               where: { id: creditClientAccountId!, version: clientAccountForCredit?.version ?? 0 },
               data: { totalCreditAvailable: { increment: dist.amount }, version: { increment: 1 } }
-            });
-
-            await tx.financialRecord.create({
-              data: {
-                type: 'CREDIT',
-                referenceNumber: `WALLET-DEL-${Date.now()}`,
-                amount: dist.amount,
-                date: new Date(),
-                clientId: order.clientId,
-                clientName: order.clientName,
-                orderId: sourceOrderId,
-                bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
-                source: 'CREDIT_DISTRIBUTION',
-                paymentMethod: 'CREDITO_CLIENTE',
-                movementType: 'INTERNAL',
-                fromAccountType: 'ORDER',
-                toAccountType: 'WALLET',
-                createdBy: userId,
-                notes: `${dist.description} | Orden: ${order.receiptNumber} | Tipo: SALDO_BILLETERA_ENTREGA`,
-                version: 1
-              }
             });
           }
         }

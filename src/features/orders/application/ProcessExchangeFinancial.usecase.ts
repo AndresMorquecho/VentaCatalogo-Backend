@@ -1,5 +1,6 @@
 import { prisma } from '../../../lib/prisma';
 import { Prisma } from '@prisma/client';
+import { buildNotesJSON } from '../../../shared/utils/transactionNotes';
 
 export interface ProcessExchangeFinancialDTO {
   exchangeId: string;
@@ -60,7 +61,12 @@ export class ProcessExchangeFinancialUseCase {
             clientDocument: (exchange as any).client?.identificationNumber ?? null,
             orderId: item.originalOrderId,
             createdBy,
-            notes: `${baseNotes} | Mismo valor`,
+            notes: buildNotesJSON({
+              title: 'CAMBIO_MISMO_VALOR',
+              module: 'EXCHANGE',
+              clientDoc: (exchange as any).client?.identificationNumber ?? 'S/N',
+              orders: [{ receiptNumber: exchange.exchangeNumber, orderNumber: item.originalOrderId }],
+            }),
             bankAccountId: await getDefaultBankAccountId(tx),
             source: 'EXCHANGE',
             movementType: 'INTERNAL',
@@ -92,7 +98,13 @@ export class ProcessExchangeFinancialUseCase {
             orderId: item.originalOrderId,
             orderPaymentId: payment.id,
             createdBy,
-            notes: `${baseNotes} | Saldo adicional por cambio`,
+            notes: buildNotesJSON({
+              title: 'CAMBIO_CARGO_ADICIONAL',
+              module: 'EXCHANGE',
+              clientDoc: (exchange as any).client?.identificationNumber ?? 'S/N',
+              orders: [{ receiptNumber: exchange.exchangeNumber, orderNumber: item.originalOrderId }],
+              extra: 'Saldo adicional por cambio',
+            }),
             bankAccountId: await getDefaultBankAccountId(tx),
             source: 'EXCHANGE',
             movementType: 'INCOME',
@@ -149,7 +161,13 @@ export class ProcessExchangeFinancialUseCase {
               clientDocument: (exchange as any).client?.identificationNumber ?? null,
               orderId: item.originalOrderId,
               createdBy,
-              notes: `${baseNotes} | Crédito a billetera`,
+              notes: buildNotesJSON({
+                title: 'CAMBIO_CREDITO',
+                module: 'EXCHANGE',
+                clientDoc: (exchange as any).client?.identificationNumber ?? 'S/N',
+                orders: [{ receiptNumber: exchange.exchangeNumber, orderNumber: item.originalOrderId }],
+                extra: 'Crédito a billetera',
+              }),
               bankAccountId: await getDefaultBankAccountId(tx),
               source: 'EXCHANGE',
               movementType: 'INTERNAL',
@@ -170,7 +188,13 @@ export class ProcessExchangeFinancialUseCase {
               clientDocument: (exchange as any).client?.identificationNumber ?? null,
               orderId: item.originalOrderId,
               createdBy,
-              notes: `${baseNotes} | Devolución en efectivo`,
+              notes: buildNotesJSON({
+                title: 'REEMBOLSO_CASH',
+                module: 'EXCHANGE',
+                clientDoc: (exchange as any).client?.identificationNumber ?? 'S/N',
+                orders: [{ receiptNumber: exchange.exchangeNumber, orderNumber: item.originalOrderId }],
+                extra: 'Devolución en efectivo por cambio',
+              }),
               bankAccountId: bankAccountId!,
               source: 'EXCHANGE',
               movementType: 'EXPENSE',
@@ -192,7 +216,13 @@ export class ProcessExchangeFinancialUseCase {
               clientDocument: (exchange as any).client?.identificationNumber ?? null,
               orderId: item.originalOrderId,
               createdBy,
-              notes: `${baseNotes} | Crédito para distribuir`,
+              notes: buildNotesJSON({
+                title: 'TRASPASO_SALDO',
+                module: 'EXCHANGE',
+                clientDoc: (exchange as any).client?.identificationNumber ?? 'S/N',
+                orders: [{ receiptNumber: exchange.exchangeNumber, orderNumber: item.originalOrderId }],
+                extra: 'Crédito para distribuir',
+              }),
               bankAccountId: await getDefaultBankAccountId(tx),
               source: 'EXCHANGE',
               movementType: 'INTERNAL',

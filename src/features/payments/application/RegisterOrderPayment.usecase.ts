@@ -7,6 +7,7 @@ import { prisma } from '../../../lib/prisma';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 import { Order, OrderStatus } from '../../orders/domain/Order.entity';
+import { buildNotesJSON, cardTitleFromMethod, generateGroupId } from '../../../shared/utils/transactionNotes';
 
 export interface RegisterOrderPaymentDTO {
     orderId: string;
@@ -69,6 +70,11 @@ export class RegisterOrderPaymentUseCase {
                 }
             }
 
+            // A shared groupId links the cash leg + wallet leg into ONE card in the UI
+            const sharedGroupId = (dto.amount > 0 && dto.creditAmount && dto.creditAmount > 0)
+                ? generateGroupId()
+                : undefined;
+
             const runInTransaction = async (tx: any) => {
                 let mainPayment = null;
 
@@ -111,6 +117,18 @@ export class RegisterOrderPaymentUseCase {
                         }
                     });
 
+                    const notesJson = buildNotesJSON({
+                        title: cardTitleFromMethod(dto.method),
+                        module: 'ORDERS',
+                        clientDoc,
+                        orders: [{
+                            receiptNumber: order.receiptNumber,
+                            orderNumber: order.orderNumber ?? undefined,
+                            brandName: order.brandName ?? undefined,
+                        }],
+                        extra: dto.notes || undefined,
+                    });
+
                     await tx.financialRecord.create({
                         data: {
                             type: 'PAYMENT',
@@ -122,7 +140,7 @@ export class RegisterOrderPaymentUseCase {
                             orderId: order.id,
                             orderPaymentId: mainPayment.id,
                             createdBy,
-                            notes: (dto.notes || `Abono a pedido`) + ` | Cédula: ${clientDoc} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brandName || '—'} | Tipo: ${order.type.toUpperCase()}`,
+                            notes: notesJson,
                             userReference: payRef,
                             bankAccountId: dto.bankAccountId!,
                             source: 'ORDER_PAYMENT',
@@ -133,6 +151,7 @@ export class RegisterOrderPaymentUseCase {
                             clientDocument: clientDoc,
                             balanceBefore,
                             balanceAfter,
+                            transactionGroupId: sharedGroupId ?? finRef,
                             version: 1,
                             createdAt: new Date()
                         }
@@ -264,6 +283,17 @@ export class RegisterOrderPaymentUseCase {
                         }
                     }
 
+                    const creditNotesJson = buildNotesJSON({
+                        title: 'USO_BILLETERA',
+                        module: 'ORDERS',
+                        clientDoc,
+                        orders: [{
+                            receiptNumber: order.receiptNumber,
+                            orderNumber: order.orderNumber ?? undefined,
+                            brandName: order.brandName ?? undefined,
+                        }],
+                    });
+
                     await tx.financialRecord.create({
                         data: {
                             type: 'PAYMENT',
@@ -275,7 +305,7 @@ export class RegisterOrderPaymentUseCase {
                             orderId: order.id,
                             orderPaymentId: creditPayment.id,
                             createdBy,
-                            notes: `Abono con saldo a favor | Cédula: ${clientDoc} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || 'N/A'} | Marca: ${order.brandName} | Tipo: ${order.type.toUpperCase()}`,
+                            notes: creditNotesJson,
                             userReference: creditPayRef,
                             bankAccountId: creditBankAccountId!,
                             source: 'ORDER_PAYMENT',
@@ -286,6 +316,7 @@ export class RegisterOrderPaymentUseCase {
                             clientDocument: clientDoc,
                             balanceBefore: Number(clientAccount.totalCreditAvailable),
                             balanceAfter: Number(clientAccount.totalCreditAvailable) - dto.creditAmount,
+                            transactionGroupId: sharedGroupId ?? `REF-CRED-${Date.now()}`,
                             version: 1
                         }
                     });

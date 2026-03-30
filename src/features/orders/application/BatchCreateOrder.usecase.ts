@@ -259,184 +259,183 @@ export class BatchCreateOrderUseCase {
             
             const rowDeposit = Number(orderDto.deposit || 0);
             
-            // BILLETERA_VIRTUAL en flujo simple: crear financial record INTERNAL
-            if (dto.paymentMethod === 'BILLETERA_VIRTUAL' && dto.creditAmount && dto.creditAmount > 0 && i === 0) {
-              console.log(`[BatchCreateOrder] Creating financial record for simple BILLETERA_VIRTUAL payment`);
-              console.log(`  - creditAmount: ${dto.creditAmount}`);
-              
-              // Buscar el crédito más antiguo (FIFO) y obtener el bankAccountId de su FinancialRecord de origen
-              const oldestCredit = await tx.clientCredit.findFirst({
-                where: {
-                  clientAccount: { clientId: dto.clientId },
-                  status: 'AVAILABLE',
-                  remainingAmount: { gt: 0 }
-                },
-                orderBy: { createdAt: 'asc' },
-                select: {
-                  id: true,
-                  originTransactionId: true
-                }
-              });
-              
-              let walletBankId: string | null = null;
-              
-              if (oldestCredit?.originTransactionId) {
-                console.log(`  - Found credit with originTransactionId: ${oldestCredit.originTransactionId}`);
-                
-                // Buscar el FinancialRecord que generó este crédito
-                const originFR = await tx.financialRecord.findUnique({
-                  where: { id: oldestCredit.originTransactionId },
-                  select: { bankAccountId: true }
-                });
-                
-                if (originFR?.bankAccountId) {
-                  walletBankId = originFR.bankAccountId;
-                  console.log(`  - Using bankAccountId from origin FR: ${walletBankId}`);
-                } else {
-                  console.log(`  - Origin FR found but no bankAccountId`);
-                }
-              } else {
-                console.log(`  - No credit found with originTransactionId`);
-              }
-              
-              // Fallback: buscar una cuenta de tipo CASH
-              if (!walletBankId) {
-                console.log(`  - Trying to find any CASH account as fallback`);
-                const cashAccount = await tx.bankAccount.findFirst({
-                  where: { type: 'CASH', isActive: true },
-                  select: { id: true }
-                });
-                
-                if (cashAccount) {
-                  walletBankId = cashAccount.id;
-                  console.log(`  - Using CASH account as fallback: ${walletBankId}`);
-                }
-              }
-              
-              if (!walletBankId) {
-                console.error(`[BatchCreateOrder] ERROR: Could not find bankAccountId for wallet payment`);
-                console.error(`  - No origin FinancialRecord with bankAccountId`);
-                console.error(`  - No CASH account found as fallback`);
-                console.error(`  - Financial record will NOT be created`);
-              } else {
-                // Capture wallet balance snapshot
-                if (clientWalletRunningBal === null) {
-                  const clientAccount = await tx.clientAccount.findUnique({
-                    where: { clientId: dto.clientId },
-                    select: { totalCreditAvailable: true }
-                  });
-                  clientWalletRunningBal = Number(clientAccount?.totalCreditAvailable || 0);
-                }
-                
-                const balanceBefore: number = clientWalletRunningBal!;
-                const balanceAfter: number = balanceBefore - Number(dto.creditAmount);
-                clientWalletRunningBal = balanceAfter;
+            if (rowDeposit > 0) {
+              const paymentId = crypto.randomUUID();
+              paymentIdMap.set(orderId, paymentId);
 
+              if (dto.paymentMethod === 'BILLETERA_VIRTUAL') {
+                console.log(`[BatchCreateOrder] Creating financial record and order payment for simple BILLETERA_VIRTUAL payment on row ${i}`);
+                
+                // Buscar el crédito más antiguo (FIFO) y obtener el bankAccountId de su FinancialRecord de origen
+                let walletBankId: string | null = null;
+                const oldestCredit = await tx.clientCredit.findFirst({
+                  where: {
+                    clientAccount: { clientId: dto.clientId },
+                    status: 'AVAILABLE',
+                    remainingAmount: { gt: 0 }
+                  },
+                  orderBy: { createdAt: 'asc' },
+                  select: { originTransactionId: true }
+                });
+                
+                if (oldestCredit?.originTransactionId) {
+                  const originFR = await tx.financialRecord.findUnique({
+                    where: { id: oldestCredit.originTransactionId },
+                    select: { bankAccountId: true }
+                  });
+                  if (originFR?.bankAccountId) walletBankId = originFR.bankAccountId;
+                }
+                
+                // Fallback: buscar una cuenta de tipo CASH
+                if (!walletBankId) {
+                  const cashAccount = await tx.bankAccount.findFirst({
+                    where: { type: 'CASH', isActive: true },
+                    select: { id: true }
+                  });
+                  if (cashAccount) walletBankId = cashAccount.id;
+                }
+                
+                if (!walletBankId) {
+                  console.error(`[BatchCreateOrder] ERROR: Could not find bankAccountId for wallet payment - FR will NOT be created!`);
+                } else {
+                  // Capture wallet balance snapshot
+                  if (clientWalletRunningBal === null) {
+                    const clientAccount = await tx.clientAccount.findUnique({
+                      where: { clientId: dto.clientId },
+                      select: { totalCreditAvailable: true }
+                    });
+                    clientWalletRunningBal = Number(clientAccount?.totalCreditAvailable || 0);
+                  }
+                  
+                  const balanceBefore: number = clientWalletRunningBal!;
+                  const balanceAfter: number = balanceBefore - rowDeposit;
+                  clientWalletRunningBal = balanceAfter;
+
+                  allFinancialRecords.push({
+                    id: crypto.randomUUID(),
+                    type: 'PAYMENT',
+                    source: 'ORDER_PAYMENT',
+                    movementType: 'INTERNAL',
+                    fromAccountType: 'WALLET',
+                    toAccountType: 'ORDER',
+                    referenceNumber: `REF-WALLET-SIMPLE-${Date.now()}-${i}`,
+                    userReference: receiptNumber,
+                    amount: rowDeposit,
+                    date: new Date(),
+                    clientId: dto.clientId,
+                    clientName: clientName,
+                    orderId: orderId,
+                    orderPaymentId: paymentId,
+                    createdBy,
+                    notes: JSON.stringify({
+                      v: 2,
+                      title: 'USO_BILLETERA',
+                      module: 'ORDERS',
+                      description: 'Abono inicial con Billetera Virtual',
+                      orders: [{ receiptNumber: receiptNumber, orderNumber: orderDto.orderNumber, brandName: orderDto.brandName, type: orderDto.type }]
+                    }),
+                    bankAccountId: walletBankId,
+                    paymentMethod: 'BILLETERA_VIRTUAL',
+                    balanceBefore: balanceBefore,
+                    balanceAfter: balanceAfter,
+                    clientDocument: clientDoc,
+                    version: 1
+                  });
+                }
+
+                // Payment de crédito para esta orden (flujo simple)
+                allPayments.push({
+                  id: paymentId,
+                  orderId: orderId,
+                  amount: rowDeposit,
+                  method: 'CREDITO_CLIENTE',
+                  receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
+                  description: 'Saldo a favor aplicado',
+                  createdAt: new Date()
+                });
+
+              } else {
+                // Flujos Cash / Bank (EFECTIVO, TRANSFERENCIA, DEPOSITO, CHEQUE)
+                allPayments.push({
+                  id: paymentId,
+                  orderId: orderId,
+                  amount: rowDeposit,
+                  method: dto.paymentMethod,
+                  reference: dto.initialPayment?.reference || undefined,
+                  receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
+                  description: `Abono inicial (fila ${i + 1})`,
+                  createdAt: new Date()
+                });
+
+                // Preparar FinancialRecord
+                const simpleBankId = dto.bankAccountId && dto.bankAccountId.trim() ? dto.bankAccountId.trim() : null;
+                if (!simpleBankId) {
+                  throw new Error(`Cuenta bancaria requerida para el método de pago ${dto.paymentMethod}`);
+                }
+                
+                // Capture bank balance snapshot BEFORE the payment
+                if (!accountBalancesMap.has(simpleBankId)) {
+                  const bankAcc = await tx.bankAccount.findUnique({
+                    where: { id: simpleBankId },
+                    select: { currentBalance: true }
+                  });
+                  accountBalancesMap.set(simpleBankId, Number(bankAcc?.currentBalance || 0));
+                }
+                
+                const balanceBefore: number = accountBalancesMap.get(simpleBankId)!;
+                const balanceAfter: number = balanceBefore + rowDeposit;
+                accountBalancesMap.set(simpleBankId, balanceAfter);
+                
                 allFinancialRecords.push({
                   id: crypto.randomUUID(),
                   type: 'PAYMENT',
                   source: 'ORDER_PAYMENT',
-                  movementType: 'INTERNAL',
-                  fromAccountType: 'WALLET',
-                  toAccountType: 'ORDER',
-                  referenceNumber: `REF-WALLET-SIMPLE-${Date.now()}`,
-                  userReference: receiptNumber,
-                  amount: Number(dto.creditAmount),
+                  movementType: 'INCOME',
+                  fromAccountType: 'EXTERNAL',
+                  toAccountType: 'CASH',
+                  referenceNumber: `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
+                  userReference: (dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference)
+                    ? dto.initialPayment.reference
+                    : `AB${(nextPaymentNumber - 1).toString().padStart(3, '0')}`,
+                  amount: rowDeposit,
                   date: new Date(),
                   clientId: dto.clientId,
                   clientName: clientName,
                   orderId: orderId,
+                  orderPaymentId: paymentId,
                   createdBy,
-                  notes: `Pedido inicial | Cédula: ${clientDoc} | Orden: ${receiptNumber} | Pedido: ${processedOrders[i].actualOrderNumber} | Marca: ${orderDto.brandName} | Tipo: ${orderDto.type.toUpperCase()}`,
-                  bankAccountId: walletBankId,
-                  paymentMethod: 'BILLETERA_VIRTUAL',
+                  notes: JSON.stringify({
+                    v: 2,
+                    title: dto.paymentMethod === 'TRANSFERENCIA' ? 'TRANSFERENCIA_BANCARIA' :
+                           dto.paymentMethod === 'DEPOSITO' ? 'DEPOSITO_BANCARIO' :
+                           dto.paymentMethod === 'CHEQUE' ? 'PAGO_CHEQUE' : 'PAGO_EFECTIVO',
+                    module: 'ORDERS',
+                    description: 'Abono inicial de pedido',
+                    orders: [{ receiptNumber: receiptNumber, orderNumber: orderDto.orderNumber, brandName: orderDto.brandName, type: orderDto.type }]
+                  }),
+                  bankAccountId: simpleBankId,
+                  paymentMethod: dto.paymentMethod,
                   balanceBefore: balanceBefore,
                   balanceAfter: balanceAfter,
                   clientDocument: clientDoc,
                   version: 1
                 });
-                console.log(`[BatchCreateOrder] Financial record for simple wallet payment added to batch`);
-              }
-            }
-            
-            // BUGFIX: No crear pago con método BILLETERA_VIRTUAL si hay creditAmount
-            // porque ya se creará un pago CREDITO_CLIENTE más abajo
-            if (rowDeposit > 0 && dto.paymentMethod !== 'BILLETERA_VIRTUAL') {
-              const paymentId = crypto.randomUUID();
-              paymentIdMap.set(orderId, paymentId);
-              
-              allPayments.push({
-                id: paymentId,
-                orderId: orderId,
-                amount: rowDeposit,
-                method: dto.paymentMethod,
-                reference: dto.initialPayment?.reference || undefined,
-                receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
-                description: `Abono inicial (fila ${i + 1})`,
-                createdAt: new Date()
-              });
 
-              // Preparar FinancialRecord
-              const simpleBankId = dto.bankAccountId && dto.bankAccountId.trim() ? dto.bankAccountId.trim() : null;
-              if (!simpleBankId) {
-                throw new Error(`Cuenta bancaria requerida para el método de pago ${dto.paymentMethod}`);
-              }
-              
-              // Capture bank balance snapshot BEFORE the payment
-              if (!accountBalancesMap.has(simpleBankId)) {
-                const bankAcc = await tx.bankAccount.findUnique({
-                  where: { id: simpleBankId },
-                  select: { currentBalance: true }
-                });
-                accountBalancesMap.set(simpleBankId, Number(bankAcc?.currentBalance || 0));
-              }
-              
-              const balanceBefore: number = accountBalancesMap.get(simpleBankId)!;
-              const balanceAfter: number = balanceBefore + rowDeposit;
-              accountBalancesMap.set(simpleBankId, balanceAfter);
-              
-              allFinancialRecords.push({
-                id: crypto.randomUUID(),
-                type: 'PAYMENT',
-                source: 'ORDER_PAYMENT',
-                movementType: 'INCOME',
-                fromAccountType: 'EXTERNAL',
-                toAccountType: 'CASH',
-                referenceNumber: `REF-INI-${Date.now()}-${i}-${Math.random().toString(36).substring(7)}`,
-                userReference: (dto.paymentMethod !== 'EFECTIVO' && dto.initialPayment?.reference)
-                  ? dto.initialPayment.reference
-                  : `AB${(nextPaymentNumber - 1).toString().padStart(3, '0')}`,
-                amount: rowDeposit,
-                date: new Date(),
-                clientId: dto.clientId,
-                clientName: clientName,
-                orderId: orderId,
-                orderPaymentId: paymentId,
-                createdBy,
-                notes: `Pedido inicial | Cédula: ${clientDoc} | Orden: ${receiptNumber} | Pedido: ${orderDto.orderNumber || 'N/A'} | Marca: ${orderDto.brandName} | Tipo: ${orderDto.type.toUpperCase()}`,
-                bankAccountId: simpleBankId,
-                paymentMethod: dto.paymentMethod,
-                balanceBefore: balanceBefore,
-                balanceAfter: balanceAfter,
-                clientDocument: clientDoc,
-                version: 1
-              });
+                totalBankIncrement += rowDeposit;
 
-              totalBankIncrement += rowDeposit;
-            }
-
-            // Payment de crédito (solo primera iteración) - Solo en flujo simple
-            // En flujo SPLIT, el crédito ya está incluido en totalAmount -> rowDeposit
-            if (i === 0 && dto.creditAmount && dto.creditAmount > 0) {
-              allPayments.push({
-                id: crypto.randomUUID(),
-                orderId: orderId,
-                amount: Number(dto.creditAmount),
-                method: 'CREDITO_CLIENTE',
-                receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
-                description: 'Saldo a favor aplicado',
-                createdAt: new Date()
-              });
+                // Soporte Legacy: si es pago Cash pero existe creditAmount
+                if (i === 0 && dto.creditAmount && dto.creditAmount > 0) {
+                  allPayments.push({
+                    id: crypto.randomUUID(),
+                    orderId: orderId,
+                    amount: Number(dto.creditAmount),
+                    method: 'CREDITO_CLIENTE',
+                    receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
+                    description: 'Saldo a favor aplicado (Legado)',
+                    createdAt: new Date()
+                  });
+                }
+              }
             }
           }
         }
@@ -483,12 +482,8 @@ export class BatchCreateOrderUseCase {
               const balanceAfter: number = balanceBefore + paymentAmount;
               accountBalancesMap.set(bankId, balanceAfter);
 
-              // Build notes with order info
-              let notesText = (paymentItem.notes ? (paymentItem.notes + ' | ') : 'Pedido inicial | ') + `Orden: ${receiptNumber} | Pedido: VARIOS | Marca: ${dto.orders.map(o => o.brandName).join(', ')} | Tipo: VARIOS`;
-              if (dto.orders.length === 1) {
-                const singleOrder = dto.orders[0];
-                notesText = (paymentItem.notes ? (paymentItem.notes + ' | ') : `Pedido inicial | `) + `Orden: ${receiptNumber} | Pedido: ${singleOrder.orderNumber || 'N/A'} | Marca: ${singleOrder.brandName} | Tipo: ${singleOrder.type.toUpperCase()}`;
-              }
+              // Build notes logically
+              let notesOrders = dto.orders.map(o => ({ receiptNumber, orderNumber: o.orderNumber, brandName: o.brandName, type: o.type }));
 
               allFinancialRecords.push({
                 id: crypto.randomUUID(),
@@ -509,7 +504,16 @@ export class BatchCreateOrderUseCase {
                 orderPaymentId: firstSplitPaymentId || undefined,
                 orderId: dto.orders.length === 1 ? allOrders[0].id : null,
                 createdBy,
-                notes: notesText,
+                notes: JSON.stringify({
+                  v: 2,
+                  title: paymentItem.method === 'TRANSFERENCIA' ? 'TRANSFERENCIA_BANCARIA' :
+                         paymentItem.method === 'DEPOSITO' ? 'DEPOSITO_BANCARIO' :
+                         paymentItem.method === 'CHEQUE' ? 'PAGO_CHEQUE' : 
+                         paymentItem.method === 'BILLETERA_VIRTUAL' ? 'USO_BILLETERA' : 'PAGO_EFECTIVO',
+                  module: 'ORDERS',
+                  description: paymentItem.notes || 'Abono inicial (Múltiple)',
+                  orders: notesOrders
+                }),
                 bankAccountId: bankId,
                 paymentMethod: paymentItem.method,
                 balanceBefore: balanceBefore,
@@ -590,14 +594,7 @@ export class BatchCreateOrderUseCase {
                 const balanceAfter: number = balanceBefore - paymentAmount;
                 clientWalletRunningBal = balanceAfter;
 
-                // Build notes with order info
-                let notesText = `Pedido inicial | Cédula: ${clientDoc} | Orden: ${receiptNumber} | Pedido: VARIOS | Marca: ${dto.orders.map(o => o.brandName).join(', ')} | Tipo: VARIOS`;
-                if (dto.orders.length === 1) {
-                  const singleOrderIndex = 0;
-                  notesText = `Pedido inicial | Cédula: ${clientDoc} | Orden: ${receiptNumber} | Pedido: ${processedOrders[singleOrderIndex].actualOrderNumber} | Marca: ${processedOrders[singleOrderIndex].brandName} | Tipo: ${processedOrders[singleOrderIndex].type.toUpperCase()}`;
-                } else {
-                  notesText += ` | ${dto.orders.length} pedidos`;
-                }
+                let notesOrders = dto.orders.map(o => ({ receiptNumber, orderNumber: o.orderNumber, brandName: o.brandName, type: o.type }));
 
                 allFinancialRecords.push({
                   id: crypto.randomUUID(),
@@ -615,7 +612,13 @@ export class BatchCreateOrderUseCase {
                   orderPaymentId: firstSplitPaymentId || undefined,
                   orderId: dto.orders.length === 1 ? allOrders[0].id : null,
                   createdBy,
-                  notes: notesText,
+                  notes: JSON.stringify({
+                    v: 2,
+                    title: 'USO_BILLETERA',
+                    module: 'ORDERS',
+                    description: 'Abono inicial con Billetera Virtual (Múltiple)',
+                    orders: notesOrders
+                  }),
                   bankAccountId: walletBankId,
                   paymentMethod: 'BILLETERA_VIRTUAL',
                   balanceBefore: balanceBefore,

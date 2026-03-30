@@ -85,11 +85,10 @@ export class PaymentController {
                     }
 
                     if (method === 'BILLETERA_VIRTUAL') {
-                        // Pago con billetera
                         const dto = {
                             orderId,
                             amount: 0,
-                            method: 'EFECTIVO',
+                            method: 'BILLETERA_VIRTUAL',
                             referenceNumber: undefined,
                             bankAccountId: 'default',
                             notes: notes || 'Pago con billetera virtual',
@@ -125,6 +124,9 @@ export class PaymentController {
                     }
                 }
                 return innerResults;
+            }, {
+                maxWait: 15000,
+                timeout: 30000
             });
 
             return HttpResponse.created(res, { 

@@ -3,6 +3,7 @@ import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRec
 import { prisma } from '../../../lib/prisma';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance } from '../../../shared/utils/financialValidations';
+import { buildNotesJSON, cardTitleFromMethod } from '../../../shared/utils/transactionNotes';
 
 export interface ReceiveOrderDTO {
   finalTotal: number;
@@ -238,6 +239,18 @@ export class ReceiveOrderUseCase {
             ? data.reference
             : await this.financialRepository.generateReferenceNumber();
 
+          const receptionNotesJson = buildNotesJSON({
+            title: cardTitleFromMethod(data.paymentMethod!),
+            module: 'RECEPTION',
+            clientDoc: order.client.identificationNumber,
+            orders: [{
+              receiptNumber: order.receiptNumber,
+              orderNumber: order.orderNumber ?? undefined,
+              brandName: order.brand?.name ?? undefined,
+            }],
+            extra: 'Abono en recepción de bodega (Packing)',
+          });
+
           await tx.financialRecord.create({
             data: {
               type: 'PAYMENT',
@@ -253,7 +266,7 @@ export class ReceiveOrderUseCase {
               paymentMethod: data.paymentMethod!,
               movementType: 'INCOME',
               createdBy: userId,
-              notes: `Abono en recepción | Cédula: ${order.client.identificationNumber} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type.toUpperCase()}`,
+              notes: receptionNotesJson,
               clientDocument: order.client.identificationNumber,
               userReference: abonoReceiptNumber,
               balanceBefore: balanceBefore != null ? Number(balanceBefore) : null,
