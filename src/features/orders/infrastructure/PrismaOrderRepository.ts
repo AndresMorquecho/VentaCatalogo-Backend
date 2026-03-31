@@ -299,23 +299,37 @@ export class PrismaOrderRepository implements IOrderRepository {
   }
 
   async generateReceiptNumber(): Promise<string> {
-    const year = new Date().getFullYear();
-    const count = await prisma.order.count({
-      where: {
-        receiptNumber: { startsWith: `OR-${year}` }
-      }
-    });
-    return `OR-${year}-${String(count + 1).padStart(3, '0')}`;
+    return this.generateSequence('OR');
   }
 
   async generateOrderNumber(): Promise<string> {
+    return this.generateSequence('PD');
+  }
+
+  async generateSequence(prefix: string): Promise<string> {
     const year = new Date().getFullYear();
-    const count = await prisma.order.count({
+    const searchPattern = `${prefix}-${year}-`;
+
+    const lastOrder = await prisma.order.findFirst({
       where: {
-        orderNumber: { startsWith: `PD-${year}` }
-      }
+        OR: [
+          { receiptNumber: { startsWith: searchPattern } },
+          { orderNumber: { startsWith: searchPattern } }
+        ]
+      },
+      orderBy: { createdAt: 'desc' }
     });
-    return `PD-${year}-${String(count + 1).padStart(3, '0')}`;
+
+    let lastNumber = 0;
+    if (lastOrder) {
+      const matchTarget = prefix === 'OR' ? lastOrder.receiptNumber : (lastOrder.orderNumber || '');
+      const parts = matchTarget.split('-');
+      if (parts.length >= 3) {
+        lastNumber = parseInt(parts[2]) || 0;
+      }
+    }
+
+    return `${prefix}-${year}-${String(lastNumber + 1).padStart(3, '0')}`;
   }
 
   private toDomain(raw: any): Order {

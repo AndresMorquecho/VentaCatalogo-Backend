@@ -26,6 +26,21 @@ export class CreateWalletRechargeUseCase {
 
             if (!client) return Result.fail(`Client with ID ${dto.clientId} not found`);
 
+            // For EFECTIVO, if no bankAccountId is provided, try to find a CASH account
+            let finalBankAccountId = dto.bankAccountId;
+            if (dto.paymentMethod === 'EFECTIVO' && !finalBankAccountId) {
+                const cashAccount = await prisma.bankAccount.findFirst({
+                    where: { type: 'CASH', isActive: true }
+                });
+                if (cashAccount) {
+                    finalBankAccountId = cashAccount.id;
+                }
+            }
+
+            if (dto.paymentMethod === 'EFECTIVO' && !finalBankAccountId) {
+                return Result.fail('No se encontró una cuenta de CAJA activa para registrar el ingreso en efectivo.');
+            }
+
             if (!client.clientAccount) {
                 // Initialize client account if it doesn't exist
                 await prisma.clientAccount.create({
@@ -36,49 +51,129 @@ export class CreateWalletRechargeUseCase {
                 });
             }
 
-            // All recharges start as PENDING, regardless of payment method
-            const status = 'PENDIENTE_VALIDACION';
-
-            // Validate duplicate reference for banked payments
-            if (dto.paymentMethod !== 'EFECTIVO' && dto.reference) {
-                const existing = await prisma.walletRecharge.findFirst({
-                    where: { 
-                        reference: dto.reference, 
-                        paymentMethod: dto.paymentMethod,
-                        status: { in: ['PENDIENTE_VALIDACION', 'VALIDADO'] }
-                    }
-                });
-                if (existing) {
-                    return Result.fail(`La referencia ${dto.reference} ya fue utilizada en una recarga previa.`);
-                }
-                
-                // Also check financial records just in case
-                const existingFin = await prisma.financialRecord.findFirst({
-                    where: { referenceNumber: dto.reference }
-                });
-                if (existingFin) {
-                    return Result.fail(`La referencia ${dto.reference} ya existe en los registros financieros.`);
-                }
-            }
-
             const result = await prisma.$transaction(async (tx) => {
                 const recharge = await tx.walletRecharge.create({
                     data: {
                         clientId: dto.clientId,
                         amount: dto.amount,
                         paymentMethod: dto.paymentMethod,
-                        bankAccountId: dto.bankAccountId,
+                        bankAccountId: finalBankAccountId,
                         reference: dto.reference,
                         notes: dto.notes,
-                        status: status,
+                        status: dto.paymentMethod === 'EFECTIVO' ? 'VALIDADO' : 'PENDIENTE_VALIDACION',
                         createdByName: createdBy,
-                        validatedByName: null,
-                        validatedAt: null
+                        validatedByName: dto.paymentMethod === 'EFECTIVO' ? createdBy : null,
+                        validatedAt: dto.paymentMethod === 'EFECTIVO' ? new Date() : null
                     }
                 });
 
-                // Immediate processing removed as requested. 
-                // All recharges must be validated in the /wallet-validations module.
+                // If it's CASH (EFECTIVO), we process it immediately (no validation needed from bank)
+                if (dto.paymentMethod === 'EFECTIVO') {
+                    const clientData = client as any;
+                    const clientName = clientData.lastName ? `${clientData.firstName} ${clientData.lastName}` : clientData.firstName;
+                    const refNumber = dto.reference || await this.financialRepository.generateReferenceNumber();
+                    const groupId = crypto.randomUUID();
+                    const internalRef = `REC-${recharge.id.substring(0, 8)}-${refNumber}-INT`;
+
+                    // Ensure client account exists (already checked above but for TS)
+                    let clientAccountId = client.clientAccount?.id;
+                    if (!clientAccountId) {
+                        const newAccount = await tx.clientAccount.create({
+                            data: { clientId: dto.clientId, totalCreditAvailable: 0 }
+                        });
+                        clientAccountId = newAccount.id;
+                    }
+
+                    // Snapshots for balance tracking
+                    const bankSnap = finalBankAccountId ? await tx.bankAccount.findUnique({ where: { id: finalBankAccountId }, select: { currentBalance: true } }) : null;
+                    const balanceBefore = bankSnap ? parseFloat(bankSnap.currentBalance.toString()) : 0;
+                    const balanceAfter = balanceBefore + dto.amount;
+
+                    const walletBalanceBefore = parseFloat(client.clientAccount?.totalCreditAvailable?.toString() || "0");
+                    const walletBalanceAfter = walletBalanceBefore + dto.amount;
+
+                    // 1. INCOME: Money enters cash account
+                    const incomeFR = await tx.financialRecord.create({
+                        data: {
+                            type: 'PAYMENT',
+                            referenceNumber: `REC-${recharge.id.substring(0, 8)}-${refNumber}`,
+                            userReference: dto.reference || null,
+                            amount: dto.amount,
+                            date: new Date(),
+                            clientId: dto.clientId,
+                            clientName,
+                            clientDocument: client.identificationNumber,
+                            createdBy,
+                            notes: (dto.notes || `Recarga de billetera (EFECTIVO)`) + ` | Cédula: ${client.identificationNumber} | Tipo: RECARGA_BILLETERA`,
+                            bankAccountId: finalBankAccountId!,
+                            source: 'MANUAL',
+                            paymentMethod: 'EFECTIVO',
+                            movementType: 'INCOME',
+                            fromAccountType: 'EXTERNAL',
+                            toAccountType: 'BANK_ACCOUNT',
+                            transactionGroupId: groupId,
+                            balanceBefore,
+                            balanceAfter,
+                            version: 1
+                        }
+                    });
+
+                    // 2. INTERNAL: From cash account to client wallet
+                    await tx.financialRecord.create({
+                        data: {
+                            type: 'PAYMENT',
+                            referenceNumber: internalRef,
+                            userReference: dto.reference || null,
+                            amount: dto.amount,
+                            date: new Date(),
+                            clientId: dto.clientId,
+                            clientName,
+                            clientDocument: client.identificationNumber,
+                            createdBy,
+                            notes: `Ingreso a billetera virtual (EFECTIVO) | Cédula: ${client.identificationNumber} | Tipo: RECARGA_BILLETERA`,
+                            bankAccountId: finalBankAccountId!,
+                            source: 'MANUAL',
+                            paymentMethod: 'EFECTIVO',
+                            movementType: 'INTERNAL',
+                            fromAccountType: 'BANK_ACCOUNT',
+                            toAccountType: 'WALLET',
+                            transactionGroupId: groupId,
+                            balanceBefore: walletBalanceBefore,
+                            balanceAfter: walletBalanceAfter,
+                            version: 1
+                        }
+                    });
+
+                    // 3. Create credit record
+                    await tx.clientCredit.create({
+                        data: {
+                            clientAccountId,
+                            amount: dto.amount,
+                            remainingAmount: dto.amount,
+                            originTransactionId: incomeFR.id,
+                            status: 'AVAILABLE'
+                        }
+                    });
+
+                    // 4. Update balances
+                    await tx.clientAccount.update({
+                        where: { id: clientAccountId },
+                        data: {
+                            totalCreditAvailable: { increment: dto.amount },
+                            version: { increment: 1 }
+                        }
+                    });
+
+                    if (finalBankAccountId) {
+                        await tx.bankAccount.update({
+                            where: { id: finalBankAccountId },
+                            data: {
+                                currentBalance: { increment: dto.amount },
+                                version: { increment: 1 }
+                            }
+                        });
+                    }
+                }
 
                 return recharge;
             });

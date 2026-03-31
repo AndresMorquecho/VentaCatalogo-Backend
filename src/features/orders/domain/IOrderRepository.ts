@@ -25,5 +25,6 @@ export interface IOrderRepository {
   delete(id: string): Promise<void>;
   generateReceiptNumber(): Promise<string>;
   generateOrderNumber(): Promise<string>;
+  generateSequence(prefix: string): Promise<string>;
   dismantle(orderId: string, mode: 'BLOCK' | 'NORMAL', reason: string): Promise<void>;
 }

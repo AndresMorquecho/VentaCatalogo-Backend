@@ -829,7 +829,11 @@ export class BatchCreateOrderUseCase {
           where: { id: { in: allOrders.map(o => o.id) } },
           include: {
             items: true,
-            payments: true,
+            payments: {
+              include: {
+                financialRecords: true
+              }
+            },
             brand: true
           },
           orderBy: { createdAt: 'asc' }
@@ -873,7 +877,8 @@ export class BatchCreateOrderUseCase {
             method: p.method,
             reference: p.reference || undefined,
             description: p.description || undefined,
-            createdAt: p.createdAt
+            createdAt: p.createdAt,
+            financialRecords: p.financialRecords
           })),
           createdAt: raw.createdAt,
           updatedAt: raw.updatedAt,

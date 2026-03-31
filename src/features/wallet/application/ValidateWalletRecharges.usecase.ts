@@ -38,6 +38,10 @@ export class ValidateWalletRechargesUseCase {
                 const results = [];
 
                 for (const recharge of recharges) {
+                    // Validar que tenga cuenta bancaria si es necesario
+                    if (!recharge.bankAccountId) {
+                        return Result.fail(`La recarga ${recharge.id} no tiene una cuenta bancaria asociada`);
+                    }
                     // 1. Update status
                     const updatedRecharge = await tx.walletRecharge.update({
                         where: { id: recharge.id },
@@ -94,11 +98,11 @@ export class ValidateWalletRechargesUseCase {
                             amount: recharge.amount,
                             date: new Date(),
                             clientId: recharge.clientId,
-                            clientName: recharge.client.firstName,
+                            clientName: `${recharge.client.firstName}`,
                             clientDocument: recharge.client.identificationNumber,
                             createdBy: validatedBy,
-                            notes: `Transferencia recibida | Recarga billetera (${recharge.paymentMethod}) | Comprobante: ${recharge.reference || 'N/A'}`,
-                            bankAccountId: recharge.bankAccountId!,
+                            notes: `Transferencia recibida | Recarga billetera (${recharge.paymentMethod}) | Comprobante: ${recharge.reference || 'N/A'} | Tipo: RECARGA_BILLETERA`,
+                            bankAccountId: recharge.bankAccountId,
                             source: 'MANUAL',
                             paymentMethod: recharge.paymentMethod,
                             movementType: 'INCOME',
@@ -120,11 +124,11 @@ export class ValidateWalletRechargesUseCase {
                             amount: recharge.amount,
                             date: new Date(),
                             clientId: recharge.clientId,
-                            clientName: recharge.client.firstName,
+                            clientName: `${recharge.client.firstName}`,
                             clientDocument: recharge.client.identificationNumber,
                             createdBy: validatedBy,
-                            notes: `Recarga a billetera virtual | Comprobante: ${recharge.reference || 'N/A'}`,
-                            bankAccountId: recharge.bankAccountId!,
+                            notes: `Ingreso a billetera virtual | Comprobante: ${recharge.reference || 'N/A'} | Tipo: RECARGA_BILLETERA`,
+                            bankAccountId: recharge.bankAccountId,
                             source: 'MANUAL',
                             paymentMethod: recharge.paymentMethod,
                             movementType: 'INTERNAL',

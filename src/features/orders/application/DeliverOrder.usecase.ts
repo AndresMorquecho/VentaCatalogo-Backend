@@ -158,7 +158,15 @@ export class DeliverOrderUseCase {
               toAccountType: isCredit ? 'ORDER' : 'CASH',
               createdBy: userId,
               clientDocument: order.client.identificationNumber,
-              notes: (data.notes || `Pago en entrega (${payment.paymentMethod})`) + ` | Cédula: ${order.client.identificationNumber} | Orden: ${order.receiptNumber} | Pedido: ${order.orderNumber || '—'} | Marca: ${order.brand?.name || '—'} | Tipo: ${order.type.toUpperCase()}`,
+              notes: JSON.stringify({
+                v: 2,
+                title: isCredit ? 'USO_BILLETERA' : (payment.paymentMethod === 'TRANSFERENCIA' ? 'TRANSFERENCIA_BANCARIA' :
+                       payment.paymentMethod === 'DEPOSITO' ? 'DEPOSITO_BANCARIO' :
+                       payment.paymentMethod === 'CHEQUE' ? 'PAGO_CHEQUE' : 'PAGO_EFECTIVO'),
+                module: 'ORDERS',
+                description: isCredit ? 'Uso de Billetera Virtual (Entrega)' : 'Abono en entrega',
+                orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null, type: order.type }]
+              }),
               balanceBefore: balanceBefore != null ? Number(balanceBefore) : null,
               balanceAfter: balanceAfter != null ? Number(balanceAfter) : null,
               version: 1
@@ -619,7 +627,7 @@ export class DeliverOrderUseCase {
                   title: 'RECARGA_BILLETERA',
                   module: 'DELIVERY',
                   description: 'Saldo a favor enviado a billetera virtual desde orden',
-                  orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null }]
+                  orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null, type: order.type }]
                 }),
                 version: 1
               }
