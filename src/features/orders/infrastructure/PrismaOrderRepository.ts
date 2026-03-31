@@ -127,6 +127,7 @@ export class PrismaOrderRepository implements IOrderRepository {
             }
           },
           brand: true,
+          client: { select: { identificationNumber: true } },
           childOrders: {
             include: {
               items: true,
@@ -146,7 +147,8 @@ export class PrismaOrderRepository implements IOrderRepository {
                   }
                 }
               },
-              brand: true
+              brand: true,
+              client: { select: { identificationNumber: true } }
             }
           },
           _count: {
@@ -203,6 +205,7 @@ export class PrismaOrderRepository implements IOrderRepository {
           }
         },
         brand: true,
+        client: { select: { identificationNumber: true } },
         childOrders: {
           include: {
             items: true,
@@ -222,7 +225,8 @@ export class PrismaOrderRepository implements IOrderRepository {
                 }
               }
             },
-            brand: true
+            brand: true,
+            client: { select: { identificationNumber: true } }
           }
         }
       }
@@ -340,6 +344,7 @@ export class PrismaOrderRepository implements IOrderRepository {
         status: raw.status as OrderStatus,
         clientId: raw.clientId,
         clientName: raw.clientName,
+        clientIdentification: raw.client?.identificationNumber || undefined,
         notes: raw.notes,
         createdByName: raw.createdByName || undefined,
         receivedByName: raw.receivedByName || undefined,
@@ -396,6 +401,7 @@ export class PrismaOrderRepository implements IOrderRepository {
               receiptNumber: payment.receiptNumber,
               description: payment.description,
               createdAt: payment.createdAt,
+              createdBy: financialRecords[0]?.createdBy || undefined,
               financialRecords
             };
           });

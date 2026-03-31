@@ -20,6 +20,7 @@ export interface OrderProps {
   status: OrderStatus;
   clientId: string;
   clientName: string;
+  clientIdentification?: string;
   notes?: string;
   createdByName?: string;
   receivedByName?: string;
