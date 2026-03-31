@@ -47,6 +47,7 @@ export interface NotesSchema {
   module: TransactionModule;
   clientDoc: string;
   orders: NotesOrderContext[];
+  description?: string;           // Note or description from user
   extra?: string;                 // Optional free-form context
 }
 

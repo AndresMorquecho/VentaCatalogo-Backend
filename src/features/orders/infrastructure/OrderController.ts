@@ -168,6 +168,7 @@ export class OrderController {
           reference: req.body.transaction_reference || ''
         },
         creditAmount: creditAmount,
+        notes: req.body.notes,
         paymentData: paymentData, // Agregar datos de múltiples pagos
         orders: req.body.orders.map((o: any) => ({
           brandId: o.brand_id,

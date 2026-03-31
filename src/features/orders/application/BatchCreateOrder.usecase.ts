@@ -22,6 +22,7 @@ export interface BatchCreateOrderDTO {
     reference?: string;
   };
   creditAmount?: number;
+  notes?: string;
   paymentData?: {
     payments: Array<{
       method: string;
@@ -237,7 +238,7 @@ export class BatchCreateOrderUseCase {
             orderNumber: orderDto.orderNumber || null,
             clientId: dto.clientId,
             clientName: clientName,
-            notes: orderDto.notes || '',
+            notes: orderDto.notes || dto.notes || '',
             createdByName: dto.createdByName || createdBy,
             createdAt: orderCreatedAt,
             version: 1
@@ -353,7 +354,7 @@ export class BatchCreateOrderUseCase {
                       v: 2,
                       title: 'USO_BILLETERA',
                       module: 'ORDERS',
-                      description: 'Abono inicial con Billetera Virtual',
+                      description: dto.notes || 'Abono inicial con Billetera Virtual',
                       orders: [{ receiptNumber: receiptNumber, orderNumber: orderDto.orderNumber, brandName: orderDto.brandName, type: orderDto.type }]
                     }),
                     bankAccountId: walletBankId,
@@ -372,7 +373,7 @@ export class BatchCreateOrderUseCase {
                   amount: rowDeposit,
                   method: 'CREDITO_CLIENTE',
                   receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
-                  description: 'Saldo a favor aplicado',
+                  description: dto.notes ? `Saldo a favor aplicado: ${dto.notes}` : 'Saldo a favor aplicado',
                   createdAt: new Date()
                 });
 
@@ -385,7 +386,7 @@ export class BatchCreateOrderUseCase {
                   method: dto.paymentMethod,
                   reference: dto.initialPayment?.reference || undefined,
                   receiptNumber: `AB${(nextPaymentNumber++).toString().padStart(3, '0')}`,
-                  description: `Abono inicial (fila ${i + 1})`,
+                  description: dto.notes || `Abono inicial (fila ${i + 1})`,
                   createdAt: new Date()
                 });
 
@@ -432,7 +433,7 @@ export class BatchCreateOrderUseCase {
                            dto.paymentMethod === 'DEPOSITO' ? 'DEPOSITO_BANCARIO' :
                            dto.paymentMethod === 'CHEQUE' ? 'PAGO_CHEQUE' : 'PAGO_EFECTIVO',
                     module: 'ORDERS',
-                    description: 'Abono inicial de pedido',
+                    description: dto.notes || 'Abono inicial de pedido',
                     orders: [{ receiptNumber: receiptNumber, orderNumber: orderDto.orderNumber, brandName: orderDto.brandName, type: orderDto.type }]
                   }),
                   bankAccountId: simpleBankId,
@@ -533,7 +534,7 @@ export class BatchCreateOrderUseCase {
                          paymentItem.method === 'CHEQUE' ? 'PAGO_CHEQUE' : 
                          paymentItem.method === 'BILLETERA_VIRTUAL' ? 'USO_BILLETERA' : 'PAGO_EFECTIVO',
                   module: 'ORDERS',
-                  description: paymentItem.notes || 'Abono inicial (Múltiple)',
+                  description: paymentItem.notes || dto.notes || 'Abono inicial (Múltiple)',
                   orders: notesOrders
                 }),
                 bankAccountId: bankId,
@@ -638,7 +639,7 @@ export class BatchCreateOrderUseCase {
                     v: 2,
                     title: 'USO_BILLETERA',
                     module: 'ORDERS',
-                    description: 'Abono inicial con Billetera Virtual (Múltiple)',
+                    description: paymentItem.notes || dto.notes || 'Abono inicial con Billetera Virtual (Múltiple)',
                     orders: notesOrders
                   }),
                   bankAccountId: walletBankId,

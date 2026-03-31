@@ -69,6 +69,7 @@ export interface TransactionCardDTO {
   affectsBank: boolean;
   affectsWallet: boolean;
   isInternal: boolean;
+  notes: string | null;
 }
 
 // ─── Internal raw record shape (from Prisma includes) ────────────────────────
@@ -352,6 +353,10 @@ function buildDTO(records: RawRecord[]): TransactionCardDTO {
   const movements = buildMovements(records, title);
   const totalAmount = calcTotalAmount(movements);
 
+  const parsed = parseNotesJSON(primary.notes);
+  const notesStr = parsed?.v === 2 && parsed.description ? parsed.description : (primary.notes || null);
+  const notes = typeof notesStr === 'string' && notesStr.startsWith('{') ? null : notesStr;
+
   const affectsCash = movements.some(m => m.accountType === 'CASH' && !m.informative);
   const affectsBank = movements.some(m => m.accountType === 'BANK' && !m.informative);
   const affectsWallet = movements.some(m => m.accountType === 'WALLET');
@@ -377,6 +382,7 @@ function buildDTO(records: RawRecord[]): TransactionCardDTO {
     affectsBank,
     affectsWallet,
     isInternal,
+    notes,
   };
 }
 

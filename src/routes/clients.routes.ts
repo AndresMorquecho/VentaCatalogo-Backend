@@ -221,9 +221,9 @@ router.get('/:id', authenticate, requirePermission('clients.view'), async (req: 
 router.post('/', authenticate, requirePermission('clients.create'), async (req: any, res, next) => {
   try {
     const clientData: any = {};
-    if (req.body.identification_type) clientData.identificationType = req.body.identification_type;
-    if (req.body.identification_number) clientData.identificationNumber = req.body.identification_number;
-    if (req.body.first_name) clientData.firstName = req.body.first_name;
+    if (req.body.identificationType) clientData.identificationType = req.body.identificationType;
+    if (req.body.identificationNumber) clientData.identificationNumber = req.body.identificationNumber;
+    if (req.body.firstName) clientData.firstName = req.body.firstName;
     if (req.body.country) clientData.country = req.body.country;
     if (req.body.province) clientData.province = req.body.province;
     if (req.body.city) clientData.city = req.body.city;
@@ -236,13 +236,13 @@ router.post('/', authenticate, requirePermission('clients.create'), async (req: 
     if (req.body.phone2) clientData.phone2 = req.body.phone2;
     if (req.body.operator2) clientData.operator2 = req.body.operator2;
     if (req.body.reference) clientData.reference = req.body.reference;
-    if (req.body.is_active !== undefined) clientData.isActive = req.body.is_active;
+    if (req.body.isActive !== undefined) clientData.isActive = req.body.isActive;
 
     // Nuevos campos FASE 1 & 2
-    if (req.body.birth_date) clientData.birthDate = new Date(req.body.birth_date);
-    if (req.body.is_whatsapp !== undefined) clientData.isWhatsApp = req.body.is_whatsapp;
-    if (req.body.referred_by_id) clientData.referredById = req.body.referred_by_id;
-    if (req.body.is_blocked !== undefined) clientData.isBlocked = req.body.is_blocked;
+    if (req.body.birthDate) clientData.birthDate = new Date(req.body.birthDate);
+    if (req.body.isWhatsApp !== undefined) clientData.isWhatsApp = req.body.isWhatsApp;
+    if (req.body.referredById) clientData.referredById = req.body.referredById;
+    if (req.body.isBlocked !== undefined) clientData.isBlocked = req.body.isBlocked;
     clientData.createdByName = (req as any).user?.username || 'Administrador';
     clientData.lastDataUpdate = new Date();
 
@@ -261,9 +261,9 @@ router.post('/', authenticate, requirePermission('clients.create'), async (req: 
 router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: any, res, next) => {
   try {
     const data: any = {};
-    if (req.body.identification_type !== undefined) data.identificationType = req.body.identification_type;
-    if (req.body.identification_number !== undefined) data.identificationNumber = req.body.identification_number;
-    if (req.body.first_name !== undefined) data.firstName = req.body.first_name;
+    if (req.body.identificationType !== undefined) data.identificationType = req.body.identificationType;
+    if (req.body.identificationNumber !== undefined) data.identificationNumber = req.body.identificationNumber;
+    if (req.body.firstName !== undefined) data.firstName = req.body.firstName;
     if (req.body.country !== undefined) data.country = req.body.country;
     if (req.body.province !== undefined) data.province = req.body.province;
     if (req.body.city !== undefined) data.city = req.body.city;
@@ -276,13 +276,13 @@ router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: 
     if (req.body.phone2 !== undefined) data.phone2 = req.body.phone2;
     if (req.body.operator2 !== undefined) data.operator2 = req.body.operator2;
     if (req.body.reference !== undefined) data.reference = req.body.reference;
-    if (req.body.is_active !== undefined) data.isActive = req.body.is_active;
+    if (req.body.isActive !== undefined) data.isActive = req.body.isActive;
 
     // Nuevos campos FASE 1 & 2
-    if (req.body.birth_date !== undefined) data.birthDate = req.body.birth_date ? new Date(req.body.birth_date) : null;
-    if (req.body.is_whatsapp !== undefined) data.isWhatsApp = req.body.is_whatsapp;
-    if (req.body.referred_by_id !== undefined) data.referredById = req.body.referred_by_id;
-    if (req.body.is_blocked !== undefined) data.isBlocked = req.body.is_blocked;
+    if (req.body.birthDate !== undefined) data.birthDate = req.body.birthDate ? new Date(req.body.birthDate) : null;
+    if (req.body.isWhatsApp !== undefined) data.isWhatsApp = req.body.isWhatsApp;
+    if (req.body.referredById !== undefined) data.referredById = req.body.referredById;
+    if (req.body.isBlocked !== undefined) data.isBlocked = req.body.isBlocked;
 
 
     // Siempre que se edite, actualizamos la fecha de última actualización de datos
