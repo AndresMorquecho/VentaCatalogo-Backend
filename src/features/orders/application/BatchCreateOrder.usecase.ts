@@ -67,15 +67,9 @@ export class BatchCreateOrderUseCase {
         return Result.fail('No orders provided in batch');
       }
 
-      // Validate payment methods — TRANSFERENCIA/DEPOSITO/CHEQUE only allowed for wallet recharges
+      // Validate payment methods — All methods allowed
       if (dto.paymentData?.payments) {
-        for (const p of dto.paymentData.payments) {
-          if (BLOCKED_PAYMENT_METHODS.includes(p.method)) {
-            return Result.fail(`El método "${p.method}" no está permitido para pedidos. Use EFECTIVO o BILLETERA_VIRTUAL.`);
-          }
-        }
-      } else if (BLOCKED_PAYMENT_METHODS.includes(dto.paymentMethod)) {
-        return Result.fail(`El método "${dto.paymentMethod}" no está permitido para pedidos. Use EFECTIVO o BILLETERA_VIRTUAL.`);
+        // Allowing all methods as per latest requirement to unify validation
       }
 
       // 1. Pre-fetch shared data

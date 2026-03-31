@@ -24,6 +24,7 @@ export class WalletController {
                 paymentMethod: body.payment_method || body.paymentMethod,
                 bankAccountId: body.bank_account_id || body.bankAccountId,
                 reference: body.reference,
+                controlValidation: body.control_validation || body.controlValidation,
                 notes: body.notes
             };
 
@@ -198,17 +199,29 @@ export class WalletController {
     async instantRecharge(req: AuthRequest, res: Response) {
         try {
             const body = req.body;
-            // Reuse the standard create flow — recharge goes to PENDIENTE_VALIDACION
-            // and must be validated in /wallet-validations before credit is applied.
             const dto = {
                 clientId: body.clientId || body.client_id,
                 amount: Number(body.amount),
                 paymentMethod: body.paymentMethod || body.payment_method,
                 bankAccountId: body.bankAccountId || body.bank_account_id,
-                reference: body.reference,
+                reference: body.reference || body.reference,
+                controlValidation: body.controlValidation || body.control_validation,
                 notes: body.notes
             };
             const createdBy = req.user?.username || 'system';
+
+            // Check if we have the instant use case available
+            if (this.instantRechargeUseCase) {
+                console.log(`[WalletController] Using InstantWalletRechargeUseCase for ${dto.paymentMethod}`);
+                const result = await this.instantRechargeUseCase.execute(dto, createdBy);
+                if (result.isFailure) {
+                    return HttpResponse.badRequest(res, result.error || 'Unknown error');
+                }
+                return HttpResponse.created(res, result.getValue());
+            }
+
+            // Fallback (should not happen if DI is correct)
+            console.warn('[WalletController] InstantWalletRechargeUseCase not provided, falling back to create');
             const result = await this.createUseCase.execute(dto, createdBy);
             if (result.isFailure) {
                 return HttpResponse.badRequest(res, result.error || 'Unknown error');

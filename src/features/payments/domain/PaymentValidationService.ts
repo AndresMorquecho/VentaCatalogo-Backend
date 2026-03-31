@@ -7,7 +7,7 @@ export interface OrderAllocation {
 }
 
 export interface PaymentMethodAllocation {
-  method: 'EFECTIVO' | 'TRANSFERENCIA' | 'BILLETERA_VIRTUAL';
+  method: 'EFECTIVO' | 'TRANSFERENCIA' | 'DEPOSITO' | 'CHEQUE' | 'BILLETERA_VIRTUAL';
   amount: number;
   bankAccountId?: string;
 }

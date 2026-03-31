@@ -26,16 +26,9 @@ export class RegisterOrderPaymentUseCase {
         private bankAccountRepository: IBankAccountRepository
     ) { }
 
-    private static readonly BLOCKED_METHODS = ['TRANSFERENCIA', 'DEPOSITO', 'CHEQUE'];
-
     async execute(dto: RegisterOrderPaymentDTO, createdBy: string, existingTx?: any): Promise<Result<any>> {
         const txClient = existingTx || prisma;
         try {
-            // Validate payment method — TRANSFERENCIA/DEPOSITO/CHEQUE only allowed for wallet recharges
-            if (RegisterOrderPaymentUseCase.BLOCKED_METHODS.includes(dto.method)) {
-                return Result.fail(`El método "${dto.method}" no está permitido para abonos directos. Use EFECTIVO o BILLETERA_VIRTUAL.`);
-            }
-
             // 1. Verify existence of core entities before transaction
             const order = await this.orderRepository.findById(dto.orderId);
             if (!order) return Result.fail(`Order with ID ${dto.orderId} not found`);

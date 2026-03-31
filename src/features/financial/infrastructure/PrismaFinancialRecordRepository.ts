@@ -189,7 +189,7 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
   async generatePaymentReceiptNumber(): Promise<string> {
     const lastPayment = await prisma.orderPayment.findFirst({
       where: { receiptNumber: { startsWith: 'AB' } },
-      orderBy: { receiptNumber: 'desc' },
+      orderBy: { createdAt: 'desc' },
       select: { receiptNumber: true }
     });
 

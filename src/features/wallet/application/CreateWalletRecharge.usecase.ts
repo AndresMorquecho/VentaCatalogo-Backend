@@ -1,7 +1,8 @@
-
+import { randomUUID } from 'crypto';
 import { Result } from '../../../shared/domain/Result';
 import { prisma } from '../../../lib/prisma';
 import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRecordRepository';
+import { buildNotesJSON, cardTitleFromMethod, generateGroupId } from '../../../shared/utils/transactionNotes';
 
 export interface CreateWalletRechargeDTO {
     clientId: string;
@@ -9,6 +10,7 @@ export interface CreateWalletRechargeDTO {
     paymentMethod: string;
     bankAccountId?: string;
     reference?: string;
+    controlValidation?: string;
     notes?: string;
 }
 
@@ -59,6 +61,7 @@ export class CreateWalletRechargeUseCase {
                         paymentMethod: dto.paymentMethod,
                         bankAccountId: finalBankAccountId,
                         reference: dto.reference,
+                        controlValidation: dto.controlValidation,
                         notes: dto.notes,
                         status: dto.paymentMethod === 'EFECTIVO' ? 'VALIDADO' : 'PENDIENTE_VALIDACION',
                         createdByName: createdBy,
@@ -70,9 +73,9 @@ export class CreateWalletRechargeUseCase {
                 // If it's CASH (EFECTIVO), we process it immediately (no validation needed from bank)
                 if (dto.paymentMethod === 'EFECTIVO') {
                     const clientData = client as any;
-                    const clientName = clientData.lastName ? `${clientData.firstName} ${clientData.lastName}` : clientData.firstName;
+                    const clientFullName = clientData.lastName ? `${clientData.firstName} ${clientData.lastName}` : clientData.firstName;
                     const refNumber = dto.reference || await this.financialRepository.generateReferenceNumber();
-                    const groupId = crypto.randomUUID();
+                    const groupId = generateGroupId();
                     const internalRef = `REC-${recharge.id.substring(0, 8)}-${refNumber}-INT`;
 
                     // Ensure client account exists (already checked above but for TS)
@@ -92,8 +95,8 @@ export class CreateWalletRechargeUseCase {
                     const walletBalanceBefore = parseFloat(client.clientAccount?.totalCreditAvailable?.toString() || "0");
                     const walletBalanceAfter = walletBalanceBefore + dto.amount;
 
-                    // 1. INCOME: Money enters cash account
-                    const incomeFR = await tx.financialRecord.create({
+                    // 1. INCOME: Money enters cash account (external)
+                    const incomeFR = await (tx as any).financialRecord.create({
                         data: {
                             type: 'PAYMENT',
                             referenceNumber: `REC-${recharge.id.substring(0, 8)}-${refNumber}`,
@@ -101,10 +104,16 @@ export class CreateWalletRechargeUseCase {
                             amount: dto.amount,
                             date: new Date(),
                             clientId: dto.clientId,
-                            clientName,
+                            clientName: clientFullName,
                             clientDocument: client.identificationNumber,
                             createdBy,
-                            notes: (dto.notes || `Recarga de billetera (EFECTIVO)`) + ` | Cédula: ${client.identificationNumber} | Tipo: RECARGA_BILLETERA`,
+                            notes: buildNotesJSON({
+                                title: cardTitleFromMethod('EFECTIVO'),
+                                module: 'WALLET',
+                                clientDoc: client.identificationNumber || 'S/N',
+                                orders: [],
+                                extra: `Recarga de billetera (EFECTIVO) - Ref: ${dto.reference || 'N/A'}`
+                            }),
                             bankAccountId: finalBankAccountId!,
                             source: 'MANUAL',
                             paymentMethod: 'EFECTIVO',
@@ -119,7 +128,7 @@ export class CreateWalletRechargeUseCase {
                     });
 
                     // 2. INTERNAL: From cash account to client wallet
-                    await tx.financialRecord.create({
+                    await (tx as any).financialRecord.create({
                         data: {
                             type: 'PAYMENT',
                             referenceNumber: internalRef,
@@ -127,10 +136,16 @@ export class CreateWalletRechargeUseCase {
                             amount: dto.amount,
                             date: new Date(),
                             clientId: dto.clientId,
-                            clientName,
+                            clientName: clientFullName,
                             clientDocument: client.identificationNumber,
                             createdBy,
-                            notes: `Ingreso a billetera virtual (EFECTIVO) | Cédula: ${client.identificationNumber} | Tipo: RECARGA_BILLETERA`,
+                            notes: buildNotesJSON({
+                                title: 'RECARGA_BILLETERA',
+                                module: 'WALLET',
+                                clientDoc: client.identificationNumber || 'S/N',
+                                orders: [],
+                                extra: `Ingreso a billetera virtual (EFECTIVO)`
+                            }),
                             bankAccountId: finalBankAccountId!,
                             source: 'MANUAL',
                             paymentMethod: 'EFECTIVO',
