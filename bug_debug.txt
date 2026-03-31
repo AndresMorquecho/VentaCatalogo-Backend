@@ -1,0 +1,3 @@
+Order: OR-2026-005, Total: 50, ID: 51dd7f64-1416-457e-8d4c-60ba4a981173
+  Payment Amount: 25, Method: EFECTIVO, ID: 7a5ecc0f-395d-4d2e-99e0-b94fe10968e2
+  FR Amount: 25, Type: PAYMENT, OP_ID: 7a5ecc0f-395d-4d2e-99e0-b94fe10968e2

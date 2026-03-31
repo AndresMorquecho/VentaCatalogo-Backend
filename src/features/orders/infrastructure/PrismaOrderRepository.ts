@@ -122,6 +122,7 @@ export class PrismaOrderRepository implements IOrderRepository {
               referenceNumber: true,
               movementType: true,
               type: true,
+              orderPaymentId: true,
               bankAccount: { select: { name: true } }
             }
           },
@@ -197,6 +198,7 @@ export class PrismaOrderRepository implements IOrderRepository {
             referenceNumber: true,
             movementType: true,
             type: true,
+            orderPaymentId: true,
             bankAccount: { select: { name: true } }
           }
         },
@@ -410,7 +412,7 @@ export class PrismaOrderRepository implements IOrderRepository {
                   createdAt: raw.createdAt,
                   financialRecords: [fr]
                 });
-              } else if (fr.movementType === 'INCOME' && !raw.payments.some((p: any) => p.id === fr.orderPaymentId)) {
+              } else if (fr.movementType === 'INCOME' && !fr.orderPaymentId && !raw.payments.some((p: any) => p.id === fr.orderPaymentId)) {
                 // Income not linked to a payment (e.g. legacy or direct FR)
                 mappedPayments.push({
                   id: fr.id,
