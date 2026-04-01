@@ -70,6 +70,7 @@ export interface TransactionCardDTO {
   affectsWallet: boolean;
   isInternal: boolean;
   notes: string | null;
+  extra: string | null;
 }
 
 // ─── Internal raw record shape (from Prisma includes) ────────────────────────
@@ -353,10 +354,27 @@ function buildDTO(records: RawRecord[]): TransactionCardDTO {
   const movements = buildMovements(records, title);
   const totalAmount = calcTotalAmount(movements);
 
-  const parsed = parseNotesJSON(primary.notes);
-  const notesStr = parsed?.v === 2 && parsed.description ? parsed.description : (primary.notes || null);
-  const notes = typeof notesStr === 'string' && notesStr.startsWith('{') ? null : notesStr;
+  const parsedNotes = records.map(r => parseNotesJSON(r.notes)).filter(p => !!p) as NotesSchema[];
+  
+  // Find the most descriptive fields across all records in the group
+  const firstWithDescription = parsedNotes.find(p => p.description && p.description.trim().length > 0);
+  const firstWithExtra = parsedNotes.find(p => p.extra && p.extra.trim().length > 0);
+  const firstWithOrders = parsedNotes.find(p => p.orders && p.orders.length > 0);
 
+  // Notes extraction: v2 description > v1 raw notes (only if not JSON)
+  let notes: string | null = null;
+  if (firstWithDescription) {
+    notes = firstWithDescription.description!;
+  } else {
+    const rawNotes = primary.notes;
+    if (rawNotes && !rawNotes.trim().startsWith('{')) {
+      notes = rawNotes;
+    }
+  }
+
+  // Extra extraction: v2 extra field
+  const extra = firstWithExtra ? firstWithExtra.extra! : null;
+  
   const affectsCash = movements.some(m => m.accountType === 'CASH' && !m.informative);
   const affectsBank = movements.some(m => m.accountType === 'BANK' && !m.informative);
   const affectsWallet = movements.some(m => m.accountType === 'WALLET');
@@ -375,7 +393,13 @@ function buildDTO(records: RawRecord[]): TransactionCardDTO {
     reference: primary.userReference ?? primary.referenceNumber,
     clientName: primary.clientName,
     clientDocument: primary.clientDocument ?? null,
-    orders,
+    orders: firstWithOrders ? firstWithOrders.orders.map(o => ({
+      orderId: null,
+      type: null,
+      receiptNumber: o.receiptNumber,
+      orderNumber: o.orderNumber ?? null,
+      brandName: o.brandName ?? null
+    })) : orders,
     brands,
     movements,
     affectsCash,
@@ -383,6 +407,7 @@ function buildDTO(records: RawRecord[]): TransactionCardDTO {
     affectsWallet,
     isInternal,
     notes,
+    extra,
   };
 }
 

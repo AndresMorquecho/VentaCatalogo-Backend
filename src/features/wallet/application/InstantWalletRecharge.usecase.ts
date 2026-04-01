@@ -1,6 +1,7 @@
 import { Result } from '../../../shared/domain/Result';
 import { prisma } from '../../../lib/prisma';
 import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRecordRepository';
+import { buildNotesJSON, cardTitleFromMethod } from '../../../shared/utils/transactionNotes';
 
 export interface InstantWalletRechargeDTO {
     clientId: string;
@@ -8,6 +9,7 @@ export interface InstantWalletRechargeDTO {
     paymentMethod: string; // TRANSFERENCIA | DEPOSITO | CHEQUE
     bankAccountId: string;
     reference?: string;
+    controlValidation?: string;
     notes?: string;
 }
 
@@ -126,7 +128,14 @@ export class InstantWalletRechargeUseCase {
                         clientName,
                         clientDocument: (client as any).identificationNumber ?? null,
                         createdBy,
-                        notes: (dto.notes || `Recarga rápida de billetera`) + ` | Cédula: ${(client as any).identificationNumber || '—'} | Tipo: RECARGA_BILLETERA`,
+                        notes: buildNotesJSON({
+                            title: cardTitleFromMethod(dto.paymentMethod),
+                            module: 'WALLET',
+                            clientDoc: (client as any).identificationNumber || 'S/N',
+                            orders: [],
+                            description: dto.notes,
+                            extra: dto.controlValidation ? `Control: ${dto.controlValidation}` : undefined
+                        }),
                         bankAccountId: dto.bankAccountId,
                         source: 'MANUAL',
                         paymentMethod: dto.paymentMethod as any,
@@ -152,7 +161,14 @@ export class InstantWalletRechargeUseCase {
                         clientName,
                         clientDocument: (client as any).identificationNumber ?? null,
                         createdBy,
-                        notes: `Ingreso a billetera virtual | Cédula: ${(client as any).identificationNumber || '—'} | Tipo: RECARGA_BILLETERA`,
+                        notes: buildNotesJSON({
+                            title: 'RECARGA_BILLETERA',
+                            module: 'WALLET',
+                            clientDoc: (client as any).identificationNumber || 'S/N',
+                            orders: [],
+                            description: dto.notes,
+                            extra: dto.controlValidation ? `Control: ${dto.controlValidation}` : undefined
+                        }),
                         bankAccountId: dto.bankAccountId,
                         source: 'MANUAL',
                         paymentMethod: dto.paymentMethod as any,

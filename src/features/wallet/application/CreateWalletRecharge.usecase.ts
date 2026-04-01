@@ -112,7 +112,8 @@ export class CreateWalletRechargeUseCase {
                                 module: 'WALLET',
                                 clientDoc: client.identificationNumber || 'S/N',
                                 orders: [],
-                                extra: `Recarga de billetera (EFECTIVO) - Ref: ${dto.reference || 'N/A'}`
+                                description: dto.notes,
+                                extra: dto.controlValidation ? `Control: ${dto.controlValidation}` : undefined
                             }),
                             bankAccountId: finalBankAccountId!,
                             source: 'MANUAL',
@@ -144,7 +145,8 @@ export class CreateWalletRechargeUseCase {
                                 module: 'WALLET',
                                 clientDoc: client.identificationNumber || 'S/N',
                                 orders: [],
-                                extra: `Ingreso a billetera virtual (EFECTIVO)`
+                                description: dto.notes,
+                                extra: dto.controlValidation ? `Control: ${dto.controlValidation}` : undefined
                             }),
                             bankAccountId: finalBankAccountId!,
                             source: 'MANUAL',

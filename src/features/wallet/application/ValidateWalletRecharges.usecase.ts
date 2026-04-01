@@ -128,7 +128,8 @@ export class ValidateWalletRechargesUseCase {
                                 module: 'WALLET',
                                 clientDoc: recharge.client.identificationNumber || 'S/N',
                                 orders: [],
-                                extra: `Validación de recarga - Comprobante: ${recharge.reference || 'N/A'}`
+                                description: recharge.notes || undefined,
+                                extra: recharge.controlValidation ? `Control: ${recharge.controlValidation}` : undefined
                             }),
                             bankAccountId: finalBankAccountId,
                             source: 'MANUAL',
@@ -160,7 +161,8 @@ export class ValidateWalletRechargesUseCase {
                                 module: 'WALLET',
                                 clientDoc: recharge.client.identificationNumber || 'S/N',
                                 orders: [],
-                                extra: `Ingreso a billetera (${methodLabel})`
+                                description: recharge.notes || undefined,
+                                extra: recharge.controlValidation ? `Control: ${recharge.controlValidation}` : undefined
                             }),
                             bankAccountId: finalBankAccountId,
                             source: 'MANUAL',

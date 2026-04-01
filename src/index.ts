@@ -19,6 +19,7 @@ import callsRoutes from './features/calls/infrastructure/calls.routes';
 import cashClosureRoutes from './features/cash-closures/infrastructure/cash-closures.routes';
 import portfolioRecoveryRoutes from './features/portfolio-recovery/infrastructure/portfolio-recovery.routes';
 import walletRoutes from './routes/wallet.routes';
+import systemSettingsRoutes from './routes/system-settings.routes';
 import catalogRoutes from './features/catalogs/infrastructure/catalogs.routes';
 
 // Legacy routes (pending hexagonal migration)
@@ -93,6 +94,7 @@ app.use('/api/cash-closures', cashClosureRoutes);
 app.use('/api/portfolio', portfolioRecoveryRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/catalogs', catalogRoutes);
+app.use('/api/system-settings', systemSettingsRoutes);
 
 // API Routes - Legacy (to be migrated)
 app.use('/api/auth', authRouter);

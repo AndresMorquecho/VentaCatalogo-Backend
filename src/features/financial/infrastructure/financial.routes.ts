@@ -14,20 +14,69 @@ const repository = new PrismaFinancialRecordRepository();
 // Frontend does ZERO financial logic on this data.
 router.get('/cards', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { clientId, startDate, endDate, createdBy, page: pageStr, limit: limitStr } = req.query;
+    const { 
+      clientId, 
+      startDate, 
+      endDate, 
+      createdBy, 
+      referenceNumber, 
+      accountType, 
+      bankAccountId,
+      page: pageStr, 
+      limit: limitStr 
+    } = req.query;
 
     const page  = Math.max(1, parseInt(pageStr as string) || 1);
     const limit = Math.min(500, Math.max(1, parseInt(limitStr as string) || 200));
     const skip  = (page - 1) * limit;
 
-    const where: any = {};
-    if (clientId)   where.clientId = clientId as string;
-    if (createdBy)  where.createdBy = createdBy as string;
-    if (startDate || endDate) {
-      where.date = {};
-      if (startDate) where.date.gte = new Date(startDate as string);
-      if (endDate)   where.date.lte = new Date(endDate as string);
+    const AND: any[] = [];
+    if (clientId)   AND.push({ clientId: clientId as string });
+    if (createdBy)  AND.push({ createdBy: createdBy as string });
+    if (bankAccountId) AND.push({ bankAccountId: bankAccountId as string });
+    
+    if (referenceNumber) {
+      AND.push({
+        OR: [
+          { referenceNumber: { contains: referenceNumber as string, mode: 'insensitive' } },
+          { userReference: { contains: referenceNumber as string, mode: 'insensitive' } },
+          { clientName: { contains: referenceNumber as string, mode: 'insensitive' } },
+          { notes: { contains: referenceNumber as string, mode: 'insensitive' } },
+          { order: { receiptNumber: { contains: referenceNumber as string, mode: 'insensitive' } } },
+          { order: { orderNumber: { contains: referenceNumber as string, mode: 'insensitive' } } },
+          { order: { brand: { name: { contains: referenceNumber as string, mode: 'insensitive' } } } }
+        ]
+      });
     }
+
+    if (accountType) {
+      if (accountType === 'CASH') {
+        AND.push({ bankAccount: { type: 'CASH' } });
+      } else if (accountType === 'BANK_ACCOUNT') {
+        AND.push({ bankAccount: { type: 'BANK' } });
+      } else if (accountType === 'WALLET') {
+        AND.push({
+          OR: [
+            { fromAccountType: 'WALLET' },
+            { toAccountType: 'WALLET' },
+            { source: 'WALLET' }
+          ]
+        });
+      }
+    }
+
+    if (startDate || endDate) {
+      const dateFilter: any = {};
+      if (startDate) dateFilter.gte = new Date(startDate as string);
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        dateFilter.lte = end;
+      }
+      AND.push({ date: dateFilter });
+    }
+
+    const where = AND.length > 0 ? { AND } : {};
 
     // Fetch with full relations needed by buildTransactionCards
     const records = await prisma.financialRecord.findMany({
@@ -37,8 +86,6 @@ router.get('/cards', authenticate, async (req: Request, res: Response, next: Nex
         order: { select: { receiptNumber: true, orderNumber: true, type: true } },
       },
       orderBy: { date: 'desc' },
-      // Fetch more than requested — buildTransactionCards groups records,
-      // so we need all legs before paginating the resulting cards.
       skip,
       take: limit,
     });
