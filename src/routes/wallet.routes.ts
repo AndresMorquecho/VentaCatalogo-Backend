@@ -22,6 +22,7 @@ router.post('/recharges/instant', authenticate, (req, res) => controller.instant
 router.get('/recharges/pending', authenticate, (req, res) => controller.getPendingRecharges(req, res));
 router.post('/recharges/validate', authenticate, (req, res) => controller.validateRecharges(req, res));
 router.post('/recharge/:id/reject', authenticate, (req, res) => controller.rejectRecharge(req, res));
+router.post('/recharge/:id/dismiss', authenticate, (req, res) => controller.dismissRecharge(req, res));
 router.get('/recharges/history', authenticate, (req, res) => controller.getHistory(req, res));
 router.get('/client/:clientId/history', authenticate, (req, res) => controller.getClientWalletHistory(req, res));
 

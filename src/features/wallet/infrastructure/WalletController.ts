@@ -123,11 +123,14 @@ export class WalletController {
             const search = (req.query.search || req.query.searchText) as string;
             const skip = (page - 1) * limit;
 
-            const { client_id, clientId } = req.query;
+            const { client_id, clientId, status, isDismissed } = req.query;
             const targetId = (client_id || clientId) as string;
             
             const where: any = {};
             if (targetId) where.clientId = targetId;
+            if (status) where.status = status;
+            if (isDismissed === 'false') where.isDismissed = false;
+            if (isDismissed === 'true') where.isDismissed = true;
 
             if (search) {
                 const searchFilter = {
@@ -138,7 +141,7 @@ export class WalletController {
                     ]
                 };
                 
-                if (where.clientId) {
+                if (Object.keys(where).length > 0) {
                     where.AND = [searchFilter];
                 } else {
                     Object.assign(where, searchFilter);
@@ -187,6 +190,23 @@ export class WalletController {
                     rejectionReason: reason,
                     validatedByName: validatedBy,
                     validatedAt: new Date()
+                }
+            });
+
+            return HttpResponse.ok(res, recharge);
+        } catch (error: any) {
+            return HttpResponse.fail(res, error || 'Internal Server Error');
+        }
+    }
+
+    async dismissRecharge(req: AuthRequest, res: Response) {
+        try {
+            const { id } = req.params;
+
+            const recharge = await (prisma as any).walletRecharge.update({
+                where: { id },
+                data: {
+                    isDismissed: true
                 }
             });
 

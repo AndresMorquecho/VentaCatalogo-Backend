@@ -6,6 +6,7 @@ import { IProcessingRequestRepository } from '../domain/IProcessingRequestReposi
 import { validateBankAccountBalance } from '../../../shared/utils/financialValidations';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { FinancialIntegrityError } from '../../../shared/errors/FinancialIntegrityError';
+import { buildNotesJSON, cardTitleFromMethod } from '../../../shared/utils/transactionNotes';
 
 export interface ProcessSplitPaymentDTO {
   orders: OrderAllocation[];
@@ -186,6 +187,21 @@ export class ProcessSplitPaymentUseCase {
               }
             }
 
+            const isCatalog = ordersValidation.data!.some((o: any) => o.type === 'CATALOGO');
+            const cardTitle = isCatalog ? 'VENTA_CATALOGO' : cardTitleFromMethod(paymentAllocation.method);
+
+            const notesJson = buildNotesJSON({
+              title: cardTitle,
+              module: 'ORDERS',
+              clientDoc: ordersValidation.data![0].client?.identificationNumber ?? 'S/N',
+              orders: ordersValidation.data!.map((o: any) => ({
+                receiptNumber: o.receiptNumber,
+                orderNumber: o.orderNumber ?? undefined,
+                brandName: o.brandName || o.brand?.name || undefined
+              })),
+              description: `Abono inicial (Múltiple) - Request ${dto.requestId}`
+            });
+
             const financialRecord = await (tx as any).financialRecord.create({
               data: {
                 type: 'PAYMENT',
@@ -201,7 +217,7 @@ export class ProcessSplitPaymentUseCase {
                 clientName: ordersValidation.data![0].clientName,
                 clientDocument: ordersValidation.data![0].client?.identificationNumber ?? null,
                 orderId: dto.orders.length === 1 ? dto.orders[0].orderId : null,
-                notes: `Abono | ` + ordersValidation.data!.map((o: any) => `Orden: ${o.receiptNumber} | Pedido: ${o.orderNumber || 'N/A'} | Marca: ${o.brandName || o.brand?.name || 'Varios'}`).join(', '),
+                notes: notesJson,
                 createdBy: dto.createdBy,
                 bankAccountId,
                 paymentMethod: paymentAllocation.method,

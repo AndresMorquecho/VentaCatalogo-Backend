@@ -20,6 +20,7 @@ router.get('/', authenticate, requirePermission('bank_accounts.view'), async (re
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(500, Math.max(1, parseInt(req.query.limit as string) || 500));
     const skip = (page - 1) * limit;
+    const { startDate, endDate } = req.query;
 
     const where = { isActive: true };
 
@@ -33,10 +34,42 @@ router.get('/', authenticate, requirePermission('bank_accounts.view'), async (re
       prisma.bankAccount.count({ where })
     ]);
 
-    const formattedAccounts = accounts.map(acc => ({
+    let formattedAccounts: any[] = accounts.map(acc => ({
       ...acc,
       currentBalance: Number(acc.currentBalance)
     }));
+
+    if (startDate && endDate) {
+      const parsedStart = new Date(startDate as string);
+      const parsedEnd = new Date(endDate as string);
+      parsedEnd.setHours(23, 59, 59, 999);
+
+      const summaries = await prisma.financialRecord.groupBy({
+        by: ['bankAccountId', 'movementType'],
+        where: {
+          date: {
+            gte: parsedStart,
+            lte: parsedEnd
+          }
+        },
+        _sum: {
+          amount: true
+        }
+      });
+
+      formattedAccounts = formattedAccounts.map(acc => {
+        const accSummaries = summaries.filter(s => s.bankAccountId === acc.id);
+        const income = accSummaries.find(s => s.movementType === 'INCOME')?._sum.amount || 0;
+        const expense = accSummaries.find(s => s.movementType === 'EXPENSE')?._sum.amount || 0;
+
+        return {
+          ...acc,
+          periodIncome: Number(income),
+          periodExpense: Number(expense),
+          periodNet: Number(income) - Number(expense)
+        };
+      });
+    }
 
     res.json({
       success: true,
@@ -86,6 +119,12 @@ router.put('/:id', authenticate, requirePermission('bank_accounts.edit'), async 
 
     // BUSSINESS RULES: If deactivating
     if (is_active === false && existing.isActive === true) {
+      if (existing.type === 'VIRTUAL') {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'No se puede desactivar la cuenta virtual del sistema.' }
+        });
+      }
       // 1. Check current balance
       if (Number(existing.currentBalance) !== 0) {
         return res.status(400).json({
@@ -93,6 +132,8 @@ router.put('/:id', authenticate, requirePermission('bank_accounts.edit'), async 
           error: { message: 'No se puede desactivar una cuenta con saldo activo. El saldo debe ser 0.00.' }
         });
       }
+      
+      // ... (rest of deactivation logic)
 
       // 2. Check for movements after last closure
       const lastClosure = await prisma.cashClosure.findFirst({
@@ -168,6 +209,13 @@ router.delete('/:id', authenticate, requirePermission('bank_accounts.delete'), a
 
     if (!account) {
       return res.status(404).json({ success: false, error: { message: 'Cuenta no encontrada' } });
+    }
+
+    if (account.type === 'VIRTUAL') {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'Por seguridad, la "Cuenta Virtual" no puede ser eliminada bajo ninguna circunstancia, ya que es vital para la contabilidad del sistema.' }
+      });
     }
 
     // 2. REGLA DE SEGURIDAD: No borrar si tiene saldo

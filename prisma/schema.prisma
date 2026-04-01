@@ -337,6 +337,7 @@ model WalletRecharge {
   validatedByName String?      @map("validated_by_name")
   validatedAt     DateTime?    @map("validated_at")
   rejectionReason String?      @map("rejection_reason")
+  isDismissed     Boolean      @default(false) @map("is_dismissed")
   createdAt       DateTime     @default(now()) @map("created_at")
   updatedAt       DateTime     @updatedAt @map("updated_at")
   bankAccount     BankAccount? @relation(fields: [bankAccountId], references: [id])
