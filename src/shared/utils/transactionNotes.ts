@@ -69,7 +69,7 @@ export const CARD_TITLE_LABELS: Record<CardTitle, string> = {
   CAMBIO_MISMO_VALOR: 'Cambio — Mismo Valor',
   CAMBIO_CARGO_ADICIONAL: 'Cargo Adicional por Cambio',
   CAMBIO_CREDITO: 'Crédito por Cambio',
-  VENTA_CATALOGO: 'Venta de Catálogo',
+  VENTA_CATALOGO: 'VENTAS - CATÁLOGO',
 };
 
 // ─── Derive CardTitle from payment method ────────────────────────────────────

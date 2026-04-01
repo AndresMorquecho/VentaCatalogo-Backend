@@ -19,6 +19,7 @@ export type OperationType =
   | 'REEMBOLSO'
   | 'CAMBIO'
   | 'TRASPASO'
+  | 'VENTA_CATALOGO'
   | 'INTERNO';
 
 export type AccountMovementType = 'CASH' | 'BANK' | 'WALLET';
@@ -179,6 +180,7 @@ function resolveOperationType(records: RawRecord[], title: CardTitle): Operation
 
   // Use module from v2 notes if available
   if (parsed?.v === 2) {
+    if (title === 'VENTA_CATALOGO') return 'VENTA_CATALOGO';
     const mod = parsed.module;
     if (mod === 'WALLET') return 'RECARGA';
     if (mod === 'DELIVERY' || mod === 'BATCH_DELIVERY') {
@@ -194,10 +196,18 @@ function resolveOperationType(records: RawRecord[], title: CardTitle): Operation
   }
 
   // Derive from title
+  if (title === 'VENTA_CATALOGO') return 'VENTA_CATALOGO';
   if (title === 'RECARGA_BILLETERA') return 'RECARGA';
   if (title === 'REEMBOLSO_CASH') return 'REEMBOLSO';
   if (title === 'TRASPASO_SALDO') return 'TRASPASO';
   if (title.startsWith('CAMBIO')) return 'CAMBIO';
+
+  // Derive from order context (historical or manual records)
+  const isCatalog = records.some(r => 
+    r.order?.type?.toUpperCase() === 'CATALOGO' || 
+    (parseNotesJSON(r.notes)?.orders.some(o => o.brandName?.toUpperCase().includes('CATAL')))
+  );
+  if (isCatalog) return 'VENTA_CATALOGO';
 
   // Derive from source/movementType
   const source = primary.source;

@@ -242,7 +242,7 @@ export class CreateOrderUseCase {
               createdBy,
               notes: JSON.stringify({
                 v: 2,
-                title: 'ABONO',
+                title: dto.type === 'CATALOGO' ? 'VENTA_CATALOGO' : 'ABONO',
                 module: 'ORDER',
                 description: ((p as any).notes ? (p as any).notes : `Pedido inicial`),
                 orders: [{ receiptNumber: orderReceiptNumber, orderNumber: actualOrderNumber, brandName: dto.brandName, type: dto.type }]
@@ -299,7 +299,7 @@ export class CreateOrderUseCase {
               createdBy,
               notes: JSON.stringify({
                 v: 2,
-                title: 'ABONO',
+                title: dto.type === 'CATALOGO' ? 'VENTA_CATALOGO' : 'ABONO',
                 module: 'ORDER',
                 description: ((p as any).notes ? (p as any).notes : `Pedido inicial`),
                 orders: [{ receiptNumber: orderReceiptNumber, orderNumber: actualOrderNumber, brandName: dto.brandName, type: dto.type }]
