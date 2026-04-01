@@ -42,7 +42,7 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
     const limit = pagination.pageSize;
 
     // Build dynamic WHERE conditions for filters
-    const whereConditions: string[] = ["o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR')"];
+    const whereConditions: string[] = ["o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR', 'ENTREGADO')"];
     const params: any[] = [];
     let paramIndex = 1;
 
@@ -282,7 +282,7 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
           o.reception_date,
           ${dateGrouping} as period_date
         FROM orders o
-        WHERE o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR')
+        WHERE o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR', 'ENTREGADO')
           AND o.reception_date IS NOT NULL
       ),
       payments_by_order AS (
@@ -330,7 +330,7 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
         b.name
       FROM brands b
       INNER JOIN orders o ON o.brand_id = b.id
-      WHERE o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR')
+      WHERE o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR', 'ENTREGADO')
         AND b.is_active = true
       ORDER BY b.name ASC
     `;
