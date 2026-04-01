@@ -46,9 +46,12 @@ export class CatalogController {
     try {
       const useCase = new GetCatalogInventoryUseCase(this.inventoryRepository);
 
+      const brandId = (req.query.brand_id === 'undefined' || req.query.brand_id === 'null') ? undefined : req.query.brand_id as string;
+      const campaign = (req.query.campaign === 'undefined' || req.query.campaign === 'null') ? undefined : req.query.campaign as string;
+
       const result = await useCase.execute({
-        brandId: req.query.brand_id as string,
-        campaign: req.query.campaign as string,
+        brandId,
+        campaign,
         page: req.query.page ? Number(req.query.page) : undefined,
         limit: req.query.limit ? Number(req.query.limit) : undefined
       });
@@ -145,13 +148,24 @@ export class CatalogController {
     try {
       const useCase = new GetCatalogDeliveriesUseCase(this.deliveryRepository);
 
+      const clientId = (req.query.client_id === 'undefined' || req.query.client_id === 'null') ? undefined : req.query.client_id as string;
+      const brandId = (req.query.brand_id === 'undefined' || req.query.brand_id === 'null') ? undefined : req.query.brand_id as string;
+      const campaign = (req.query.campaign === 'undefined' || req.query.campaign === 'null') ? undefined : req.query.campaign as string;
+      const type = (req.query.type === 'undefined' || req.query.type === 'null') ? undefined : req.query.type as string;
+
+      const parseDate = (val: any) => {
+        if (!val || val === 'undefined' || val === 'null' || val === 'Invalid Date') return undefined;
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? undefined : d;
+      };
+
       const result = await useCase.execute({
-        clientId: req.query.client_id as string,
-        brandId: req.query.brand_id as string,
-        campaign: req.query.campaign as string,
-        type: req.query.type as string,
-        startDate: req.query.start_date ? new Date(req.query.start_date as string) : undefined,
-        endDate: req.query.end_date ? new Date(req.query.end_date as string) : undefined,
+        clientId,
+        brandId,
+        campaign,
+        type,
+        startDate: parseDate(req.query.start_date),
+        endDate: parseDate(req.query.end_date),
         page: req.query.page ? Number(req.query.page) : undefined,
         limit: req.query.limit ? Number(req.query.limit) : undefined
       });

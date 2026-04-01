@@ -33,7 +33,8 @@ export type CardTitle =
   | 'PAGO_COMISION'
   | 'CAMBIO_MISMO_VALOR'
   | 'CAMBIO_CARGO_ADICIONAL'
-  | 'CAMBIO_CREDITO';
+  | 'CAMBIO_CREDITO'
+  | 'VENTA_CATALOGO';
 
 export interface NotesOrderContext {
   receiptNumber: string;
@@ -68,6 +69,7 @@ export const CARD_TITLE_LABELS: Record<CardTitle, string> = {
   CAMBIO_MISMO_VALOR: 'Cambio — Mismo Valor',
   CAMBIO_CARGO_ADICIONAL: 'Cargo Adicional por Cambio',
   CAMBIO_CREDITO: 'Crédito por Cambio',
+  VENTA_CATALOGO: 'Venta de Catálogo',
 };
 
 // ─── Derive CardTitle from payment method ────────────────────────────────────

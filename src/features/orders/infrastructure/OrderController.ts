@@ -373,7 +373,7 @@ export class OrderController {
         brandId: req.body.brand_id || req.body.brandId,
         total: req.body.total !== undefined ? Number(req.body.total) : undefined,
         paymentMethod: req.body.payment_method || req.body.paymentMethod,
-        bankAccountId: req.body.bank_account_id || req.body.bankAccountId,
+        bankAccountId: (req.body.bank_account_id || req.body.bankAccountId) || null,
         transactionDate: (req.body.transaction_date || req.body.transactionDate) ? new Date(req.body.transaction_date || req.body.transactionDate) : undefined,
         possibleDeliveryDate: (req.body.possible_delivery_date || req.body.possibleDeliveryDate) ? new Date(req.body.possible_delivery_date || req.body.possibleDeliveryDate) : undefined,
         orderNumber: req.body.orderNumber || req.body.order_number,
@@ -623,13 +623,18 @@ export class OrderController {
       }
 
       const { id } = req.params;
-      const result = await this.deleteOrderUseCase.execute(id);
+      const cascade = req.query.cascade === 'true';
+      const result = await this.deleteOrderUseCase.execute(id, cascade);
 
       if (result.isFailure) {
         return HttpResponse.badRequest(res, result.error!);
       }
 
-      return HttpResponse.ok(res, { message: 'Pedido y registros asociados eliminados permanentemente, incluyendo saldos y créditos generados.' });
+      return HttpResponse.ok(res, { 
+        message: cascade 
+          ? 'Recibo completo y todos sus pedidos asociados eliminados, incluyendo reversión de saldos.' 
+          : 'Pedido eliminado permanentemente, incluyendo reversión de saldos y créditos vinculados.' 
+      });
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to delete order');
     }

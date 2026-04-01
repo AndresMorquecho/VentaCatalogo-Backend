@@ -95,10 +95,14 @@ export class CreateOrderUseCase {
 
       const receiptNumber = generatedReceiptNumber;
 
-      // Create order items with IDs
+      // 4. Transform items with defensive checks
       const itemsItems = dto.items.map(item => ({
         id: crypto.randomUUID(),
-        ...item
+        productName: item.productName || item.brandName || 'Producto',
+        brandName: item.brandName || item.productName || 'Marca',
+        quantity: Number(item.quantity || 1),
+        unitPrice: Number(item.unitPrice || 0),
+        brandId: item.brandId
       }));
 
       // Execute everything in a transaction for atomicity
@@ -445,6 +449,9 @@ export class CreateOrderUseCase {
 
         await Promise.all(finalOps);
         return createdOrder;
+      }, {
+        timeout: 30000,
+        maxWait: 10000
       });
 
       // Map back to Domain Entity

@@ -18,12 +18,17 @@ export class PrismaCatalogDeliveryRepository implements ICatalogDeliveryReposito
     const skip = (page - 1) * limit;
 
     const where: any = {};
-    if (filters.clientId) where.clientId = filters.clientId;
-    if (filters.brandId) where.brandId = filters.brandId;
-    if (filters.campaign) where.campaign = filters.campaign;
-    if (filters.type) where.type = filters.type;
-    if (filters.startDate) where.deliveredAt = { ...where.deliveredAt, gte: filters.startDate };
-    if (filters.endDate) where.deliveredAt = { ...where.deliveredAt, lte: filters.endDate };
+    if (filters.clientId && filters.clientId !== 'undefined') where.clientId = filters.clientId;
+    if (filters.brandId && filters.brandId !== 'undefined') where.brandId = filters.brandId;
+    if (filters.campaign && filters.campaign !== 'undefined') where.campaign = filters.campaign;
+    if (filters.type && filters.type !== 'undefined') where.type = filters.type;
+
+    if (filters.startDate && !isNaN(filters.startDate.getTime())) {
+      where.deliveredAt = { ...where.deliveredAt, gte: filters.startDate };
+    }
+    if (filters.endDate && !isNaN(filters.endDate.getTime())) {
+      where.deliveredAt = { ...where.deliveredAt, lte: filters.endDate };
+    }
 
     const [deliveries, total] = await Promise.all([
       prisma.catalogDelivery.findMany({

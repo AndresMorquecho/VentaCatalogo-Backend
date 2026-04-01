@@ -111,7 +111,7 @@ export class RegisterOrderPaymentUseCase {
                     });
 
                     const notesJson = buildNotesJSON({
-                        title: cardTitleFromMethod(dto.method),
+                        title: order.type === 'CATALOGO' ? 'VENTA_CATALOGO' : cardTitleFromMethod(dto.method),
                         module: 'ORDERS',
                         clientDoc,
                         orders: [{
@@ -277,7 +277,7 @@ export class RegisterOrderPaymentUseCase {
                     }
 
                     const creditNotesJson = buildNotesJSON({
-                        title: 'USO_BILLETERA',
+                        title: order.type === 'CATALOGO' ? 'VENTA_CATALOGO' : 'USO_BILLETERA',
                         module: 'ORDERS',
                         clientDoc,
                         orders: [{

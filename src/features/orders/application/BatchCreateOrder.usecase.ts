@@ -74,6 +74,10 @@ export class BatchCreateOrderUseCase {
       }
 
       // 1. Pre-fetch shared data
+      if (!dto.clientId) {
+        return Result.fail('ID de cliente no especificado');
+      }
+
       const [client, lastClosure] = await Promise.all([
         prisma.client.findUnique({ where: { id: dto.clientId } }),
         prisma.cashClosure.findFirst({ orderBy: { toDate: 'desc' } })
@@ -346,10 +350,10 @@ export class BatchCreateOrderUseCase {
                     createdBy,
                     notes: JSON.stringify({
                       v: 2,
-                      title: 'USO_BILLETERA',
-                      module: 'ORDERS',
-                      description: dto.notes || 'Abono inicial con Billetera Virtual',
-                      orders: [{ receiptNumber: receiptNumber, orderNumber: orderDto.orderNumber, brandName: orderDto.brandName, type: orderDto.type }]
+                    title: orderDto.type === 'CATALOGO' ? 'VENTA_CATALOGO' : 'USO_BILLETERA',
+                    module: 'ORDERS',
+                    description: dto.notes || 'Abono inicial con Billetera Virtual',
+                    orders: [{ receiptNumber: receiptNumber, orderNumber: orderDto.orderNumber, brandName: orderDto.brandName, type: orderDto.type }]
                     }),
                     bankAccountId: walletBankId,
                     paymentMethod: 'BILLETERA_VIRTUAL',
@@ -423,9 +427,10 @@ export class BatchCreateOrderUseCase {
                   createdBy,
                   notes: JSON.stringify({
                     v: 2,
-                    title: dto.paymentMethod === 'TRANSFERENCIA' ? 'TRANSFERENCIA_BANCARIA' :
-                           dto.paymentMethod === 'DEPOSITO' ? 'DEPOSITO_BANCARIO' :
-                           dto.paymentMethod === 'CHEQUE' ? 'PAGO_CHEQUE' : 'PAGO_EFECTIVO',
+                    title: orderDto.type === 'CATALOGO' ? 'VENTA_CATALOGO' : (
+                             dto.paymentMethod === 'TRANSFERENCIA' ? 'TRANSFERENCIA_BANCARIA' :
+                             dto.paymentMethod === 'DEPOSITO' ? 'DEPOSITO_BANCARIO' :
+                             dto.paymentMethod === 'CHEQUE' ? 'PAGO_CHEQUE' : 'PAGO_EFECTIVO'),
                     module: 'ORDERS',
                     description: dto.notes || 'Abono inicial de pedido',
                     orders: [{ receiptNumber: receiptNumber, orderNumber: orderDto.orderNumber, brandName: orderDto.brandName, type: orderDto.type }]
@@ -523,10 +528,11 @@ export class BatchCreateOrderUseCase {
                 createdBy,
                 notes: JSON.stringify({
                   v: 2,
-                  title: paymentItem.method === 'TRANSFERENCIA' ? 'TRANSFERENCIA_BANCARIA' :
+                  title: dto.orders.some(o => o.type === 'CATALOGO') ? 'VENTA_CATALOGO' : (
+                         paymentItem.method === 'TRANSFERENCIA' ? 'TRANSFERENCIA_BANCARIA' :
                          paymentItem.method === 'DEPOSITO' ? 'DEPOSITO_BANCARIO' :
                          paymentItem.method === 'CHEQUE' ? 'PAGO_CHEQUE' : 
-                         paymentItem.method === 'BILLETERA_VIRTUAL' ? 'USO_BILLETERA' : 'PAGO_EFECTIVO',
+                         paymentItem.method === 'BILLETERA_VIRTUAL' ? 'USO_BILLETERA' : 'PAGO_EFECTIVO'),
                   module: 'ORDERS',
                   description: paymentItem.notes || dto.notes || 'Abono inicial (Múltiple)',
                   orders: notesOrders
@@ -631,7 +637,7 @@ export class BatchCreateOrderUseCase {
                   createdBy,
                   notes: JSON.stringify({
                     v: 2,
-                    title: 'USO_BILLETERA',
+                    title: dto.orders.some(o => o.type === 'CATALOGO') ? 'VENTA_CATALOGO' : 'USO_BILLETERA',
                     module: 'ORDERS',
                     description: paymentItem.notes || dto.notes || 'Abono inicial con Billetera Virtual (Múltiple)',
                     orders: notesOrders
@@ -830,9 +836,12 @@ export class BatchCreateOrderUseCase {
               }
             },
             brand: true
-          },
-          orderBy: { createdAt: 'asc' }
+          }
         });
+
+        // Deterministic sort using the sequence from our prepared array
+        const idToIndexMap = new Map(allOrders.map((o, idx: number) => [o.id, idx]));
+        createdOrders.sort((a: any, b: any) => (idToIndexMap.get(a.id) ?? 0) - (idToIndexMap.get(b.id) ?? 0));
 
         return createdOrders;
       }, {

@@ -172,7 +172,7 @@ export async function computeCashClosureData(
 
         // Categorize income sources by card logic
         if (cardValidIncome > 0) {
-            const isCatalog = card.orders.some(o => 
+            const isCatalog = card.title === 'VENTA_CATALOGO' || card.orders.some(o => 
                 o.type?.toUpperCase() === 'CATALOGO' || 
                 o.brandName?.toUpperCase() === 'AMWAY' ||
                 o.brandName?.toUpperCase().includes('CATAL')
