@@ -146,4 +146,10 @@ export class PrismaCallRepository implements ICallRepository {
             where: { id },
         });
     }
+
+    async deleteMany(ids: string[]): Promise<void> {
+        await prisma.call.deleteMany({
+            where: { id: { in: ids } },
+        });
+    }
 }

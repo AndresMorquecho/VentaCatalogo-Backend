@@ -215,10 +215,20 @@ export class PaymentController {
                 where: { id: paymentId },
                 include: { order: true }
             });
-            if (!payment) return HttpResponse.notFound(res, 'Payment not found');
+            if (!payment) return HttpResponse.notFound(res, 'Abono no encontrado');
 
             if (payment.method === 'CREDITO_CLIENTE') {
-                return HttpResponse.badRequest(res, 'No se permite eliminar abonos de tipo CREDITO_CLIENTE desde este endpoint.');
+                return HttpResponse.badRequest(res, 'No se permite eliminar abonos de tipo CREDITO_CLIENTE desde este módulo. Use el módulo de billetera.');
+            }
+
+            // REGLA: Solo se puede eliminar el ÚLTIMO abono registrado del pedido para no desconfigurar saldos históricos
+            const lastPayment = await prisma.orderPayment.findFirst({
+                where: { orderId: payment.orderId },
+                orderBy: { createdAt: 'desc' }
+            });
+
+            if (lastPayment && lastPayment.id !== payment.id) {
+                return HttpResponse.badRequest(res, 'Solo se puede eliminar el último abono registrado para este pedido.');
             }
 
             const lastClosure = await prisma.cashClosure.findFirst({ orderBy: { toDate: 'desc' } });
@@ -233,9 +243,11 @@ export class PaymentController {
 
                 const amount = Number(payment.amount);
 
-                if (payment.order.bankAccountId && amount > 0) {
+                // REVERSIÓN DE BANCO/CAJA
+                // Usamos el bankAccountId del registro financiero (donde entró el dinero realmente)
+                if (fr && fr.bankAccountId && amount > 0) {
                     await tx.bankAccount.update({
-                        where: { id: payment.order.bankAccountId },
+                        where: { id: fr.bankAccountId },
                         data: { currentBalance: { decrement: amount }, version: { increment: 1 } }
                     });
                 }
@@ -245,11 +257,18 @@ export class PaymentController {
                 }
 
                 await tx.orderPayment.delete({ where: { id: payment.id } });
+                
+                // Actualizar timestamp del pedido para invalidar caches si es necesario
+                await tx.order.update({
+                    where: { id: payment.orderId },
+                    data: { updatedAt: new Date() }
+                });
             });
 
-            return HttpResponse.ok(res, { message: 'Payment deleted' });
+            return HttpResponse.ok(res, { message: 'Abono eliminado correctamente y saldo revertido.' });
         } catch (error) {
-            return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to delete payment');
+            console.error('[PaymentController.deletePayment] Error:', error);
+            return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error al eliminar el abono');
         }
     };
 }

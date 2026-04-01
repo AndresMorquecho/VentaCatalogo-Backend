@@ -28,7 +28,8 @@ export class OrderController {
     private createReceptionBatchUseCase?: CreateReceptionBatchUseCase,
     private createReceptionBatchOptimizedUseCase?: CreateReceptionBatchOptimizedUseCase,
     private deleteReceptionBatchUseCase?: DeleteReceptionBatchUseCase,
-    private batchDeliverOrdersUseCase?: BatchDeliverOrdersUseCase
+    private batchDeliverOrdersUseCase?: BatchDeliverOrdersUseCase,
+    private reverseOrderDeliveryUseCase?: any
   ) { }
 
   getAll = async (req: Request, res: Response) => {
@@ -1294,6 +1295,20 @@ export class OrderController {
       return HttpResponse.ok(res, { success: true, message: 'Pedido desmantelado correctamente' });
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to dismantle order');
+    }
+  };
+  reverseDelivery = async (req: AuthRequest, res: Response) => {
+    try {
+      if (!this.reverseOrderDeliveryUseCase) {
+        return HttpResponse.fail(res, 'ReverseOrderDeliveryUseCase not initialized');
+      }
+
+      const { id } = req.params;
+      const result = await this.reverseOrderDeliveryUseCase.execute(id, req.user!.username);
+
+      return HttpResponse.ok(res, result);
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to reverse delivery');
     }
   };
 }

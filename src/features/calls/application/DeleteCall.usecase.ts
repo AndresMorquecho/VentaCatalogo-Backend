@@ -6,15 +6,19 @@ export class DeleteCallUseCase {
 
     async execute(id: string): Promise<Result<void>> {
         try {
-            const call = await this.callRepository.findById(id);
-            if (!call) {
-                return Result.fail('Llamada no encontrada');
-            }
-
             await this.callRepository.delete(id);
             return Result.ok();
         } catch (error) {
             return Result.fail(error instanceof Error ? error.message : 'Error al eliminar la llamada');
+        }
+    }
+
+    async executeBatch(ids: string[]): Promise<Result<void>> {
+        try {
+            await this.callRepository.deleteMany(ids);
+            return Result.ok();
+        } catch (error) {
+            return Result.fail(error instanceof Error ? error.message : 'Error al eliminar las llamadas');
         }
     }
 }

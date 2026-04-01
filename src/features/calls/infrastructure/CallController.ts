@@ -104,6 +104,25 @@ export class CallController {
         }
     };
 
+    batchDelete = async (req: Request, res: Response) => {
+        try {
+            const { ids } = req.body;
+            if (!ids || !Array.isArray(ids) || ids.length === 0) {
+                return HttpResponse.badRequest(res, 'Se requiere un arreglo de IDs para eliminar');
+            }
+
+            const result = await this.deleteCallUseCase.executeBatch(ids);
+
+            if (result.isFailure) {
+                return HttpResponse.badRequest(res, result.error!);
+            }
+
+            return HttpResponse.ok(res, { message: `${ids.length} llamadas eliminadas correctamente` });
+        } catch (error) {
+            return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error al eliminar las llamadas');
+        }
+    };
+
     getGrouped = async (req: Request, res: Response) => {
         try {
             const filters = {

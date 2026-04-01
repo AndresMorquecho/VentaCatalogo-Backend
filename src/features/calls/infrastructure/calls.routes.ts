@@ -27,6 +27,7 @@ router.get('/', authenticate, requirePermission('calls.view'), callController.ge
 router.get('/grouped', authenticate, requirePermission('calls.view'), callController.getGrouped);
 router.post('/', authenticate, requirePermission('calls.create'), callController.create);
 router.put('/:id', authenticate, requirePermission('calls.create'), callController.update);  // calls.create covers edit too
+router.delete('/batch', authenticate, requirePermission('calls.create'), callController.batchDelete);
 router.delete('/:id', authenticate, requirePermission('calls.create'), callController.delete);
 
 export default router;

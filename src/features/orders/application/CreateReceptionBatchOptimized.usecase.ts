@@ -297,19 +297,21 @@ export class CreateReceptionBatchOptimizedUseCase {
         if (match) nextSaldoNumber = parseInt(match[1]) + 1;
       }
 
-      // Get last order number for consecutive generation (format: ORD-YYYYMMDD-XXX)
-      const today = new Date();
-      const datePrefix = `ORD-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+      // Get last order number for consecutive generation (format: PD-YYYY-NNN)
+      const year = new Date().getFullYear();
+      const datePrefix = `PD-${year}`;
       const lastOrder = await tx.order.findFirst({
-        where: { orderNumber: { startsWith: datePrefix } },
-        orderBy: { createdAt: 'desc' },
+        where: { orderNumber: { startsWith: `${datePrefix}-` } },
+        orderBy: { orderNumber: 'desc' },
         select: { orderNumber: true }
       });
       
       let nextOrderNumber = 1;
       if (lastOrder?.orderNumber) {
-        const match = lastOrder.orderNumber.match(/(\d+)$/);
-        if (match) nextOrderNumber = parseInt(match[1]) + 1;
+        const parts = lastOrder.orderNumber.split('-');
+        if (parts.length >= 3) {
+          nextOrderNumber = (parseInt(parts[2]) || 0) + 1;
+        }
       }
 
       // Process each item in memory

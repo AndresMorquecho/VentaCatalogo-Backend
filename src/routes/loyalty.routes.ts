@@ -102,7 +102,22 @@ router.put('/rules/:id', authenticate, requirePermission('loyalty.manage_rules')
 
 router.delete('/rules/:id', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
     try {
-        await prisma.loyaltyRule.delete({ where: { id: req.params.id } });
+        const { id } = req.params;
+
+        // Check for redemptions
+        const redemptionsCount = await prisma.loyaltyRedemption.count({
+            where: { ruleId: id }
+        });
+
+        if (redemptionsCount > 0) {
+            res.status(400).json({ 
+                success: false, 
+                error: 'Esta regla ya tiene historial de canjes. No se puede eliminar.' 
+            });
+            return;
+        }
+
+        await prisma.loyaltyRule.delete({ where: { id } });
         res.json({ success: true });
     } catch (error) {
         next(error);
@@ -513,9 +528,37 @@ router.put('/prizes/:id', authenticate, requirePermission('loyalty.manage_prizes
     }
 });
 
-router.delete('/prizes/:id', authenticate, requirePermission('loyalty.manage_rules'), async (req, res, next) => {
+router.delete('/prizes/:id', authenticate, requirePermission('loyalty.manage_prizes'), async (req, res, next) => {
     try {
-        await prisma.loyaltyPrize.delete({ where: { id: req.params.id } });
+        const { id } = req.params;
+
+        // Check if prize has associated rules
+        const rulesCount = await prisma.loyaltyRule.count({
+            where: { prizeId: id }
+        });
+
+        if (rulesCount > 0) {
+            res.status(400).json({ 
+                success: false, 
+                error: 'Este premio tiene una regla asociada. Elimine o edite primero la regla para poder eliminar el premio.' 
+            });
+            return;
+        }
+
+        // Check if prize has redemptions
+        const redemptionsCount = await prisma.loyaltyRedemption.count({
+            where: { prizeId: id }
+        });
+
+        if (redemptionsCount > 0) {
+            res.status(400).json({ 
+                success: false, 
+                error: 'Este premio ya ha sido canjeado y tiene historial. No se puede eliminar.' 
+            });
+            return;
+        }
+
+        await prisma.loyaltyPrize.delete({ where: { id } });
         res.json({ success: true });
     } catch (error) {
         next(error);

@@ -109,11 +109,35 @@ export async function computeCashClosureData(
         let cardValidIncome = 0;
 
         for (const m of card.movements) {
-            // RULE: informative movements do NOT count towards closure totals
-            if (m.informative) continue;
-
             const isIncome = m.direction === 'IN';
             const isExpense = m.direction === 'OUT';
+
+            // 1. Tables Enrichment (Movements appear in tables regardless of informative flag)
+            // ─── WALLET ──────────────────────────────────────────────────
+            if (m.accountType === 'WALLET') {
+                runningWallet += isIncome ? m.amount : -m.amount;
+                summaryTables.wallet.push({
+                    ...baseRow,
+                    amount: m.amount,
+                    type: isIncome ? 'INCOME' : 'EXPENSE',
+                    balance: runningWallet
+                });
+            }
+
+            // ─── BANCOS ──────────────────────────────────────────────────
+            if (m.accountType === 'BANK') {
+                runningBancos += isIncome ? m.amount : -m.amount;
+                summaryTables.bancos.push({
+                    ...baseRow,
+                    amount: m.amount,
+                    type: isIncome ? 'INCOME' : 'EXPENSE',
+                    balance: runningBancos
+                });
+            }
+
+            // 2. Closure Totals (Only non-informative movements count towards financial summary)
+            // RULE: informative movements do NOT count towards closure totals
+            if (m.informative) continue;
 
             if (isIncome) {
                 globalIncome += m.amount;
@@ -129,44 +153,18 @@ export async function computeCashClosureData(
                 userStats.set(username, { userId: username, userName: username, totalIncome: 0, totalExpense: 0, movementCount: 0 });
             }
             const st = userStats.get(username);
-            st.movementCount++; // simplistic translation
+            st.movementCount++; 
             if (isIncome && m.accountType === 'CASH') st.totalIncome += m.amount;
             if (isExpense && m.accountType === 'CASH') st.totalExpense += m.amount;
 
-            // Income by method mapping
+            // Income by method mapping (Financial Summary context)
             if (isIncome) {
                 if (m.accountType === 'CASH') incomeByMethod.EFECTIVO += m.amount;
-                // Since DTO hides TRANSFERENCIA vs DEPOSITO logic safely inside, we approximate if needed,
-                // but for accurate stats we can check the paymentMethod of the raw record
                 if (m.accountType === 'BANK' && mainRecord?.paymentMethod) {
                     if (incomeByMethod[mainRecord.paymentMethod as keyof typeof incomeByMethod] !== undefined) {
                         incomeByMethod[mainRecord.paymentMethod as keyof typeof incomeByMethod] += m.amount;
                     }
                 }
-            }
-
-            // ─── Tables Enrichment ──────────────────────────────────────────
-            
-            // 1. WALLET
-            if (m.accountType === 'WALLET') {
-                runningWallet += isIncome ? m.amount : -m.amount;
-                summaryTables.wallet.push({
-                    ...baseRow,
-                    amount: m.amount,
-                    type: isIncome ? 'INCOME' : 'EXPENSE',
-                    balance: runningWallet
-                });
-            }
-
-            // 2. BANCOS
-            if (m.accountType === 'BANK') {
-                runningBancos += isIncome ? m.amount : -m.amount;
-                summaryTables.bancos.push({
-                    ...baseRow,
-                    amount: m.amount,
-                    type: isIncome ? 'INCOME' : 'EXPENSE',
-                    balance: runningBancos
-                });
             }
         } // end movements loop
 

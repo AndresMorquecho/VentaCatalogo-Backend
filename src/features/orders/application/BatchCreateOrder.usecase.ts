@@ -93,11 +93,14 @@ export class BatchCreateOrderUseCase {
       // Pre-fetch client document for metadata
       const clientDoc = client.identificationNumber || 'S/N';
       
-      // Pre-generate order numbers for metadata if missing
-      const processedOrders = await Promise.all(dto.orders.map(async o => ({
-        ...o,
-        actualOrderNumber: o.orderNumber || await this.orderRepository.generateOrderNumber()
-      })));
+      // 2. Pre-generate order numbers for metadata if missing (Sequential to avoid duplicates)
+      const processedOrders: any[] = [];
+      for (const o of dto.orders) {
+        processedOrders.push({
+          ...o,
+          actualOrderNumber: o.orderNumber || await this.orderRepository.generateOrderNumber()
+        });
+      }
 
       // 2. Validate all brands
       const brandIds = [...new Set(dto.orders.map(o => o.brandId))];
@@ -211,8 +214,8 @@ export class BatchCreateOrderUseCase {
            orderCreatedAt = now;
         }
 
-        for (let i = 0; i < dto.orders.length; i++) {
-          const orderDto = dto.orders[i];
+        for (let i = 0; i < processedOrders.length; i++) {
+          const orderDto = processedOrders[i];
           const orderId = crypto.randomUUID();
           
           if (i === 0) parentId = orderId;
@@ -233,7 +236,7 @@ export class BatchCreateOrderUseCase {
             status: OrderStatus.POR_RECIBIR,
             parentOrderId: i > 0 ? parentId : null,
             sourceOrderId: orderDto.sourceOrderId || null,
-            orderNumber: orderDto.orderNumber || null,
+            orderNumber: orderDto.actualOrderNumber || null,
             clientId: dto.clientId,
             clientName: clientName,
             notes: orderDto.notes || dto.notes || '',
@@ -243,7 +246,7 @@ export class BatchCreateOrderUseCase {
           });
 
           // Preparar Items
-          orderDto.items.forEach(item => {
+          orderDto.items.forEach((item: any) => {
             allItems.push({
               id: crypto.randomUUID(),
               orderId: orderId,

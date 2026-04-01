@@ -18,12 +18,27 @@ export class DeleteOrderUseCase {
 
                 // Determinar qué pedidos vamos a borrar
                 let ordersToDeleteIds = [orderId];
-                if (cascadeReceipt && mainOrder.receiptId) {
-                    const relatedOrders = await tx.order.findMany({
-                        where: { receiptId: mainOrder.receiptId },
-                        select: { id: true }
-                    });
-                    ordersToDeleteIds = relatedOrders.map(o => o.id);
+                if (cascadeReceipt) {
+                    if (mainOrder.receiptId) {
+                        const relatedOrders = await tx.order.findMany({
+                            where: { receiptId: mainOrder.receiptId },
+                            select: { id: true, status: true }
+                        });
+                        if (relatedOrders.some(o => o.status === 'ENTREGADO')) {
+                            throw new Error('No se puede eliminar el recibo porque contiene pedidos que ya han sido entregados.');
+                        }
+                        ordersToDeleteIds = relatedOrders.map(o => o.id);
+                    } else if (mainOrder.receiptNumber) {
+                        // Para cambios que a veces no tienen receiptId formal pero sí receiptNumber agrupado
+                        const relatedOrders = await tx.order.findMany({
+                            where: { receiptNumber: mainOrder.receiptNumber },
+                            select: { id: true, status: true }
+                        });
+                        if (relatedOrders.some(o => o.status === 'ENTREGADO')) {
+                            throw new Error('No se puede eliminar la guía porque contiene cambios que ya han sido entregados.');
+                        }
+                        ordersToDeleteIds = relatedOrders.map(o => o.id);
+                    }
                 }
 
                 // REGLA: No borrar pedidos de periodos cerrados (aplicar a todos)
@@ -50,7 +65,13 @@ export class DeleteOrderUseCase {
 
                     // Validar estado e integridad de cada pedido
                     const currentPayments = order.payments || [];
-                    const hasRealMovement = order.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some(p => p.method === 'CREDITO_CLIENTE'));
+                    
+                    // Si es un CAMBIO, permitimos borrar aunque esté RECIBIDO_EN_BODEGA, 
+                    // a menos que el usuario lo prohíba explícitamente.
+                    // Pero la regla general de hasRealMovement sigue aplicando para pedidos normales.
+                    const isExchange = order.sourceOrderId !== null || order.receiptNumber?.startsWith('CAM-');
+                    
+                    const hasRealMovement = !isExchange && (order.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some(p => p.method === 'CREDITO_CLIENTE')));
 
                     if (hasRealMovement) {
                         let reason = `No se puede eliminar el pedido ${order.orderNumber || order.id} porque ya tiene movimientos procesados.`;
@@ -59,9 +80,22 @@ export class DeleteOrderUseCase {
                         
                         throw new Error(reason);
                     }
+                    
+                    // Si es un cambio ENTREGADO, bloqueamos siempre
+                    if (order.status === 'ENTREGADO') {
+                        throw new Error(`No se puede eliminar el cambio ${order.orderNumber} porque ya fue entregado.`);
+                    }
 
                     if (lastClosure && order.transactionDate <= lastClosure.toDate) {
                         throw new Error(`No se puede eliminar el pedido ${order.orderNumber || order.id} porque pertenece a un periodo de caja cerrado.`);
+                    }
+
+                    // --- REVERSIÓN DE CAMBIO (SOURCE ORDER) ---
+                    if (order.sourceOrderId) {
+                        await tx.order.update({
+                            where: { id: order.sourceOrderId },
+                            data: { status: 'ENTREGADO' }
+                        });
                     }
 
                     // --- REVERSIÓN FINANCIERA (Bancos) ---

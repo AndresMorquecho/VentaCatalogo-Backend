@@ -423,13 +423,30 @@ export class PrismaOrderRepository implements IOrderRepository {
           // Add dummy payments for Expenses/Refunds not linked to a specific payment object
           if (raw.financialRecords) {
             raw.financialRecords.forEach((fr: any) => {
+              // Si es REVERSE_DELIVERY, no lo agregamos como pago negativo porque el pago original ya fue eliminado
+              // y agregarlo duplicaría la deuda (paidAmount: -1, pendingAmount: 2).
+              if (fr.source === 'REVERSE_DELIVERY' && fr.movementType === 'EXPENSE') {
+                  return;
+              }
+
+              // Intentar parsear las notas si son JSON (formato buildNotesJSON)
+              let processedDescription = fr.notes || '';
+              try {
+                  const parsed = JSON.parse(fr.notes);
+                  if (parsed && typeof parsed === 'object' && parsed.v) {
+                      processedDescription = `${parsed.title || 'MOVIMIENTO'}: ${parsed.extra || ''}`;
+                  }
+              } catch (e) {
+                  // No es JSON, usar original
+              }
+
               if (fr.movementType === 'EXPENSE') {
                 mappedPayments.push({
                   id: fr.id,
                   amount: -Number(fr.amount),
                   method: fr.paymentMethod || 'EFECTIVO',
-                  description: `Devolución/Gasto: ${fr.notes || ''}`,
-                  createdAt: raw.createdAt,
+                  description: `Devolución/Gasto: ${processedDescription}`,
+                  createdAt: fr.createdAt || raw.createdAt,
                   financialRecords: [fr]
                 });
               } else if (fr.movementType === 'INCOME' && !fr.orderPaymentId && !raw.payments.some((p: any) => p.id === fr.orderPaymentId)) {
@@ -438,8 +455,8 @@ export class PrismaOrderRepository implements IOrderRepository {
                   id: fr.id,
                   amount: Number(fr.amount),
                   method: fr.paymentMethod || 'EFECTIVO',
-                  description: `Abono directo: ${fr.notes || ''}`,
-                  createdAt: raw.createdAt,
+                  description: `Abono directo: ${processedDescription}`,
+                  createdAt: fr.createdAt || raw.createdAt,
                   financialRecords: [fr]
                 });
               }

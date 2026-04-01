@@ -14,6 +14,7 @@ import { BatchDeliverOrdersUseCase } from '../application/BatchDeliverOrders.use
 import { PrismaOrderRepository } from './PrismaOrderRepository';
 import { PrismaFinancialRecordRepository } from '../../financial/infrastructure/PrismaFinancialRecordRepository';
 import { PrismaBankAccountRepository } from '../../financial/infrastructure/PrismaBankAccountRepository';
+import { ReverseOrderDeliveryUseCase } from '../application/ReverseOrderDelivery.usecase';
 import { authenticate, requirePermission } from '../../../middleware/auth';
 import { prisma } from '../../../lib/prisma';
 
@@ -36,6 +37,7 @@ const createReceptionBatchUseCase = new CreateReceptionBatchUseCase(receiveOrder
 const createReceptionBatchOptimizedUseCase = new CreateReceptionBatchOptimizedUseCase(); // ✅ OPTIMIZED VERSION
 const deleteReceptionBatchUseCase = new DeleteReceptionBatchUseCase();
 const batchDeliverOrdersUseCase = new BatchDeliverOrdersUseCase();
+const reverseOrderDeliveryUseCase = new ReverseOrderDeliveryUseCase();
 
 // Controller
 console.log(`[OrderRoutes] Initializing OrderController. BatchDeliverUsecase: ${!!batchDeliverOrdersUseCase}`);
@@ -51,7 +53,8 @@ const orderController = new OrderController(
   createReceptionBatchUseCase,
   createReceptionBatchOptimizedUseCase, // ✅ OPTIMIZED VERSION PASSED
   deleteReceptionBatchUseCase,
-  batchDeliverOrdersUseCase
+  batchDeliverOrdersUseCase,
+  reverseOrderDeliveryUseCase
 );
 
 // Routes — READ
@@ -125,6 +128,7 @@ router.post('/', authenticate, requirePermission('orders.create'), orderControll
 router.post('/:id/receive', authenticate, requirePermission('reception.confirm'), orderController.receiveOrder);
 router.post('/:id/reverse-reception', authenticate, requirePermission('reception.confirm'), orderController.reverseReception);
 router.post('/:id/deliver', authenticate, requirePermission('delivery.confirm'), orderController.deliverOrder);
+router.post('/:id/reverse-delivery', authenticate, requirePermission('delivery.confirm'), orderController.reverseDelivery);
 router.post('/:id/dismantle', authenticate, requirePermission('delivery.confirm'), orderController.dismantleOrder);
 router.put('/:id', authenticate, requirePermission('orders.edit'), orderController.update);
 router.delete('/:id', authenticate, requirePermission('orders.delete'), orderController.deleteOrder);
