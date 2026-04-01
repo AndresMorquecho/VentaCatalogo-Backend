@@ -8,20 +8,26 @@ async function main() {
 
   // 1. CREAR ROLES Y PERMISOS (Vital para el nuevo sistema RBAC)
   const allPermissions = [
-    "dashboard.view", 
-    "orders.view", "orders.create", "orders.edit", "orders.delete", "orders.confirm",
-    "reception.view", "reception.confirm",
-    "delivery.view", "delivery.confirm",
-    "clients.view", "clients.create", "clients.edit", "clients.delete",
+    "dashboard.view",
+    "orders.view", "orders.create", "orders.edit", "orders.delete", "orders.save_with_zero_deposit",
+    "reception.view", "reception.finalize", "reception.edit", "reception.delete",
+    "delivery.view", "delivery.dismantle", "delivery.return",
+    "clients.view", "clients.create", "clients.edit", "clients.delete", "clients.update_data",
     "transactions.view",
     "payments.view", "payments.create", "payments.delete",
-    "bank_accounts.view", "bank_accounts.create", "bank_accounts.edit", "bank_accounts.delete",
-    "inventory.view", "inventory.edit",
-    "brands.view", "brands.create", "brands.edit", "brands.delete",
-    "cash_closure.view", "cash_closure.close",
-    "calls.view", "calls.create",
-    "loyalty.view", "loyalty.manage_rules", "loyalty.manage_prizes",
-    "users.view", "users.create", "users.edit", "users.delete", "users.change_password", "users.assign_roles"
+    "wallet.view",
+    "wallet_validations.view", "wallet_validations.confirm", "wallet_validations.reject",
+    "bank_accounts.view", "bank_accounts.manage",
+    "inventory.view", "inventory.manage",
+    "brands.view", "brands.manage",
+    "catalogs.view", "catalogs.manage",
+    "cash_closure.view", "cash_closure.create", "cash_closure.history",
+    "cartera.view",
+    "calls.view", "calls.manage",
+    "loyalty.view", "loyalty.create_rule", "loyalty.edit_rule", "loyalty.delete_rule", "loyalty.create_prize", "loyalty.edit_prize", "loyalty.delete_prize",
+    "exchanges.view", "exchanges.create", "exchanges.reception", "exchanges.delivery",
+    "users.view", "users.manage",
+    "system_config.view", "system_config.edit_parameters", "system_config.create_notimonchito", "system_config.edit_notimonchito", "system_config.delete_notimonchito"
   ];
 
   console.log('Creating Roles...');
@@ -35,16 +41,18 @@ async function main() {
       name: 'CAJERA', 
       description: 'Gestión operativa de cobros y pedidos', 
       permissions: [
-        "dashboard.view", "orders.view", "orders.create", "orders.edit",
+        "dashboard.view", 
+        "orders.view", "orders.create", "orders.edit",
         "clients.view", "clients.create", "clients.edit",
         "payments.view", "payments.create",
-        "cash_closure.view", "cash_closure.close"
+        "cash_closure.view", "cash_closure.create", "cash_closure.history",
+        "wallet.view", "cartera.view"
       ] 
     },
     { 
       name: 'USER', 
       description: 'Acceso básico de consulta', 
-      permissions: ["dashboard.view", "orders.view", "clients.view"] 
+      permissions: ["dashboard.view", "orders.view", "clients.view", "wallet.view"] 
     }
   ];
 
@@ -138,8 +146,8 @@ async function main() {
   // 5. REGLAS DE LEALTAD (Para el módulo de Héctor)
   console.log('Seeding Loyalty Rules...');
   const loyaltyRules = [
-    { name: 'Puntos por Monto', type: 'POR_MONTO', pointsValue: 1, isActive: true, condition: '1 punto por cada $10 de compra' },
-    { name: 'Bono por primer pedido', type: 'POR_PEDIDO', pointsValue: 10, isActive: true }
+    { name: 'Puntos por Monto', type: 'POR_MONTO', pointsValue: 1, targetValue: 10, isActive: true, condition: '1 punto por cada $10 de compra' },
+    { name: 'Bono por primer pedido', type: 'POR_PEDIDO', pointsValue: 10, targetValue: 1, isActive: true }
   ];
 
   for (const rule of loyaltyRules) {
