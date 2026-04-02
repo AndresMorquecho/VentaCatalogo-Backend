@@ -1,5 +1,6 @@
 import { prisma } from '../../../lib/prisma';
 import { ValidationService } from './ValidationService';
+import { getNextSequence } from '../../../shared/utils/SequenceGenerator';
 
 export interface ExchangeBatchItemInput {
   orderId: string;
@@ -11,15 +12,6 @@ export interface CreateExchangeBatchDTO {
   notes?: string;
   createdByName?: string;
   items: ExchangeBatchItemInput[];
-}
-
-function generateBatchNumber(): string {
-  const now = new Date();
-  const yy = String(now.getFullYear()).slice(-2);
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const rand = Math.floor(Math.random() * 9000) + 1000;
-  return `LOTE-${yy}${mm}${dd}-${rand}`;
 }
 
 function calcPaid(payments: { method: string; amount: any }[]): number {
@@ -66,7 +58,7 @@ export class CreateExchangeBatchUseCase {
       throw new Error('Uno o más pedidos no fueron encontrados');
     }
 
-    const batchNumber = generateBatchNumber();
+    const batchNumber = await getNextSequence('LT-', 'EXCHANGE');
     console.log(`[CreateExchangeBatch] Creating batch ${batchNumber} with ${orders.length} orders`);
 
     // Get default bank account for fallback
@@ -85,8 +77,8 @@ export class CreateExchangeBatchUseCase {
           trackingGuide: dto.trackingGuide || null,
           notes: dto.notes || null,
           createdByName: dto.createdByName || null,
-          status: 'ENVIADO',
-          sentAt: new Date(),
+          status: 'POR_ENVIAR',
+          // sentAt is now set only when status moves to EN_TRANSITO via UpdateExchangeBatchStatus
           items: {
             create: orders.map((order) => {
               const paid = calcPaid(order.payments);
@@ -135,7 +127,7 @@ export class CreateExchangeBatchUseCase {
             receiptNumber: revReceipt,
             orderNumber: orderNumber,
             type: 'CAMBIO',
-            status: 'POR_RECIBIR',
+            status: 'POR_ENVIAR',
             clientId: order.clientId,
             clientName: order.clientName,
             brandId: order.brandId,

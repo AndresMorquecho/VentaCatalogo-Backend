@@ -41,6 +41,7 @@ export interface BatchCreateOrderDTO {
     total: number;
     type: string;
     possibleDeliveryDate: Date;
+    clientId?: string; // Optional: Override batch clientId
     items: Array<{
       productName: string;
       quantity: number;
@@ -74,24 +75,33 @@ export class BatchCreateOrderUseCase {
       }
 
       // 1. Pre-fetch shared data
-      if (!dto.clientId) {
+      if (!dto.clientId && (!dto.orders || !dto.orders.every(o => o.clientId))) {
         return Result.fail('ID de cliente no especificado');
       }
 
-      const [client, lastClosure] = await Promise.all([
-        prisma.client.findUnique({ where: { id: dto.clientId } }),
+      const allClientIds = [...new Set([
+        ...(dto.clientId ? [dto.clientId] : []),
+        ...dto.orders.map(o => o.clientId).filter(Boolean) as string[]
+      ])];
+
+      const [clients, lastClosure] = await Promise.all([
+        prisma.client.findMany({ where: { id: { in: allClientIds } } }),
         prisma.cashClosure.findFirst({ orderBy: { toDate: 'desc' } })
       ]);
 
-      if (!client) return Result.fail('Cliente no encontrado');
-      if (client.isBlocked) return Result.fail('La empresaria está bloqueada');
+      const mainClient = clients.find(c => c.id === dto.clientId) || clients[0];
+      if (!mainClient) return Result.fail('Cliente principal no encontrado');
+      
+      for (const client of clients) {
+        if (client.isBlocked) return Result.fail(`La empresaria ${client.firstName} está bloqueada`);
+      }
       
       if (lastClosure && new Date(dto.transactionDate) <= lastClosure.toDate) {
         return Result.fail('Periodo de caja cerrado');
       }
 
       // Pre-fetch client document for metadata
-      const clientDoc = client.identificationNumber || 'S/N';
+      const clientDoc = mainClient.identificationNumber || 'S/N';
       
       // 2. Pre-generate order numbers for metadata if missing (Sequential to avoid duplicates)
       const processedOrders: any[] = [];
@@ -134,7 +144,11 @@ export class BatchCreateOrderUseCase {
         }
       }
 
-      const receiptNumber = dto.receiptNumber || await this.orderRepository.generateReceiptNumber();
+      // If no receipt number provided, generate a unique "Sin Número" (S/N) guide so they can be grouped/edited later
+      // But we show it as empty in the UI. We use a UUID to ensure uniqueness even if multiple are 'empty'
+      const receiptNumber = dto.receiptNumber && dto.receiptNumber.trim() 
+        ? dto.receiptNumber 
+        : `S/N-${crypto.randomUUID().slice(0, 8)}`;
 
       // 3. Prepare all entities
       let parentId: string | undefined = undefined;
@@ -150,9 +164,9 @@ export class BatchCreateOrderUseCase {
           where: { receiptNumber }
         });
 
-        const clientName = (client as any).lastName 
-          ? `${client.firstName} ${(client as any).lastName}`
-          : client.firstName;
+        const clientNameForReceipt = (mainClient as any).lastName 
+          ? `${mainClient.firstName} ${(mainClient as any).lastName}`
+          : mainClient.firstName;
 
         if (existingReceipt) {
           receiptId = existingReceipt.id;
@@ -170,14 +184,14 @@ export class BatchCreateOrderUseCase {
               id: receiptId,
               receiptNumber,
               clientId: dto.clientId,
-              clientName: clientName,
+              clientName: clientNameForReceipt,
               salesChannel: dto.salesChannel,
               createdAt: receiptCreatedAt,
               transactionDate: dto.transactionDate,
               paymentMethod: dto.paymentMethod,
               bankAccountId: dto.bankAccountId || null,
               transactionReference: dto.initialPayment?.reference || null,
-              notes: null,
+              notes: dto.notes || null,
               createdByName: dto.createdByName || createdBy,
               version: 1
             }
@@ -220,6 +234,14 @@ export class BatchCreateOrderUseCase {
           
           if (i === 0) parentId = orderId;
 
+          const currentClientId = orderDto.clientId || dto.clientId;
+          const currentClient = clients.find(c => c.id === currentClientId);
+          if (!currentClient) throw new Error(`Cliente ${currentClientId} no encontrado`);
+          
+          const currentClientName = (currentClient as any).lastName 
+            ? `${currentClient.firstName} ${(currentClient as any).lastName}`
+            : currentClient.firstName;
+
           // Preparar Order
           allOrders.push({
             id: orderId,
@@ -233,12 +255,12 @@ export class BatchCreateOrderUseCase {
             bankAccountId: dto.bankAccountId || null,
             transactionDate: dto.transactionDate,
             possibleDeliveryDate: orderDto.possibleDeliveryDate,
-            status: OrderStatus.POR_RECIBIR,
+            status: (orderDto as any).status || (orderDto.type === 'CAMBIO' ? OrderStatus.RECOLECTADO : OrderStatus.POR_RECIBIR),
             parentOrderId: i > 0 ? parentId : null,
             sourceOrderId: orderDto.sourceOrderId || null,
             orderNumber: orderDto.actualOrderNumber || null,
-            clientId: dto.clientId,
-            clientName: clientName,
+            clientId: currentClientId,
+            clientName: currentClientName,
             notes: orderDto.notes || dto.notes || '',
             createdByName: dto.createdByName || createdBy,
             createdAt: orderCreatedAt,
@@ -346,8 +368,8 @@ export class BatchCreateOrderUseCase {
                     userReference: receiptNumber,
                     amount: rowDeposit,
                     date: new Date(),
-                    clientId: dto.clientId,
-                    clientName: clientName,
+                    clientId: currentClientId,
+                    clientName: currentClientName,
                     orderId: orderId,
                     orderPaymentId: paymentId,
                     createdBy,
@@ -362,7 +384,7 @@ export class BatchCreateOrderUseCase {
                     paymentMethod: 'BILLETERA_VIRTUAL',
                     balanceBefore: balanceBefore,
                     balanceAfter: balanceAfter,
-                    clientDocument: clientDoc,
+                    clientDocument: currentClient.identificationNumber || 'S/N',
                     version: 1
                   });
                 }
@@ -423,8 +445,8 @@ export class BatchCreateOrderUseCase {
                     : `AB${(nextPaymentNumber - 1).toString().padStart(3, '0')}`,
                   amount: rowDeposit,
                   date: new Date(),
-                  clientId: dto.clientId,
-                  clientName: clientName,
+                  clientId: currentClientId,
+                  clientName: currentClientName,
                   orderId: orderId,
                   orderPaymentId: paymentId,
                   createdBy,
@@ -442,7 +464,7 @@ export class BatchCreateOrderUseCase {
                   paymentMethod: dto.paymentMethod,
                   balanceBefore: balanceBefore,
                   balanceAfter: balanceAfter,
-                  clientDocument: clientDoc,
+                  clientDocument: currentClient.identificationNumber || 'S/N',
                   version: 1
                 });
 
@@ -524,7 +546,7 @@ export class BatchCreateOrderUseCase {
                 amount: paymentAmount,
                 date: new Date(),
                 clientId: dto.clientId,
-                clientName: clientName,
+                clientName: clientNameForReceipt,
                 // Link to the first order's split payment so the UI can find these FRs
                 orderPaymentId: firstSplitPaymentId || undefined,
                 orderId: dto.orders.length === 1 ? allOrders[0].id : null,
@@ -544,7 +566,7 @@ export class BatchCreateOrderUseCase {
                 paymentMethod: paymentItem.method,
                 balanceBefore: balanceBefore,
                 balanceAfter: balanceAfter,
-                clientDocument: clientDoc,
+                clientDocument: mainClient.identificationNumber || 'S/N',
                 version: 1
               });
 
@@ -634,7 +656,7 @@ export class BatchCreateOrderUseCase {
                   amount: paymentAmount,
                   date: new Date(),
                   clientId: dto.clientId,
-                  clientName: clientName,
+                  clientName: clientNameForReceipt,
                   orderPaymentId: firstSplitPaymentId || undefined,
                   orderId: dto.orders.length === 1 ? allOrders[0].id : null,
                   createdBy,
@@ -649,7 +671,7 @@ export class BatchCreateOrderUseCase {
                   paymentMethod: 'BILLETERA_VIRTUAL',
                   balanceBefore: balanceBefore,
                   balanceAfter: balanceAfter,
-                  clientDocument: clientDoc,
+                  clientDocument: mainClient.identificationNumber || 'S/N',
                   version: 1
                 });
                 
@@ -893,8 +915,18 @@ export class BatchCreateOrderUseCase {
       }, raw.id));
 
       return Result.ok(domainOrders);
-    } catch (error) {
+    } catch (error: any) {
       console.error('BatchCreateOrderUseCase Error:', error);
+      
+      // Manage Prisma unique constraint errors (P2002)
+      if (error.code === 'P2002') {
+        const target = (error.meta?.target as string[]) || [];
+        if (target.includes('receipt_number')) {
+          return Result.fail(`El número de guía ${dto.receiptNumber} ya existe en el sistema.`);
+        }
+        return Result.fail("Ya existe un registro con estos datos únicos.");
+      }
+
       return Result.fail(error instanceof Error ? error.message : 'Batch creation failed');
     }
   }

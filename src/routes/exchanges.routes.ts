@@ -78,9 +78,9 @@ router.post('/batches', authenticate, requirePermission('exchanges.manage'), asy
 router.patch('/batches/:id/status', authenticate, requirePermission('exchanges.manage'), async (req, res, next): Promise<void> => {
   try {
     const { id } = req.params;
-    const { newStatus } = req.body;
+    const { newStatus, trackingGuide, tracking_guide } = req.body;
     
-    const data = await updateExchangeBatchStatus.execute(id, newStatus);
+    const data = await updateExchangeBatchStatus.execute(id, newStatus, trackingGuide || tracking_guide);
     res.json({ success: true, data });
   } catch (error: any) {
     if (error.name === 'StateTransitionError' || error.message?.includes('found')) {

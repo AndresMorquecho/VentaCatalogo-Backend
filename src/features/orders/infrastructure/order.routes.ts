@@ -11,6 +11,8 @@ import { CreateReceptionBatchUseCase } from '../application/CreateReceptionBatch
 import { CreateReceptionBatchOptimizedUseCase } from '../application/CreateReceptionBatchOptimized.usecase';
 import { DeleteReceptionBatchUseCase } from '../application/DeleteReceptionBatch.usecase';
 import { BatchDeliverOrdersUseCase } from '../application/BatchDeliverOrders.usecase';
+import { DeleteDeliveryBatchUseCase } from '../application/DeleteDeliveryBatch.usecase';
+import { GetDeliveryBatchesUseCase } from '../application/GetDeliveryBatches.usecase';
 import { PrismaOrderRepository } from './PrismaOrderRepository';
 import { PrismaFinancialRecordRepository } from '../../financial/infrastructure/PrismaFinancialRecordRepository';
 import { PrismaBankAccountRepository } from '../../financial/infrastructure/PrismaBankAccountRepository';
@@ -37,6 +39,8 @@ const createReceptionBatchUseCase = new CreateReceptionBatchUseCase(receiveOrder
 const createReceptionBatchOptimizedUseCase = new CreateReceptionBatchOptimizedUseCase(); // ✅ OPTIMIZED VERSION
 const deleteReceptionBatchUseCase = new DeleteReceptionBatchUseCase();
 const batchDeliverOrdersUseCase = new BatchDeliverOrdersUseCase();
+const deleteDeliveryBatchUseCase = new DeleteDeliveryBatchUseCase();
+const getDeliveryBatchesUseCase = new GetDeliveryBatchesUseCase();
 const reverseOrderDeliveryUseCase = new ReverseOrderDeliveryUseCase();
 
 // Controller
@@ -54,6 +58,8 @@ const orderController = new OrderController(
   createReceptionBatchOptimizedUseCase, // ✅ OPTIMIZED VERSION PASSED
   deleteReceptionBatchUseCase,
   batchDeliverOrdersUseCase,
+  deleteDeliveryBatchUseCase,
+  getDeliveryBatchesUseCase,
   reverseOrderDeliveryUseCase
 );
 
@@ -113,8 +119,11 @@ router.get('/generate-receipt-number', authenticate, requirePermission('orders.c
 router.get('/generate-order-number', authenticate, requirePermission('orders.create'), orderController.generateOrderNumber);
 router.get('/check-receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.checkReceiptExists);
 router.get('/generate-packing-number', authenticate, requirePermission('reception.confirm'), orderController.generatePackingNumber);
+router.get('/generate-delivery-number', authenticate, requirePermission('delivery.confirm'), orderController.generateDeliveryNumber);
 router.get('/reception-batches', authenticate, requirePermission('reception.confirm'), orderController.getReceptionBatches);
+router.get('/delivery-batches', authenticate, requirePermission('delivery.confirm'), orderController.getDeliveryBatches);
 router.delete('/reception-batches/:id', authenticate, requirePermission('reception.confirm'), orderController.deleteReceptionBatch);
+router.delete('/delivery-batches/:id', authenticate, requirePermission('delivery.confirm'), orderController.deleteDeliveryBatch);
 router.get('/:id', authenticate, requirePermission('orders.view'), orderController.getById);
 router.get('/', authenticate, requirePermission('orders.view'), orderController.getAll);
 
@@ -130,6 +139,7 @@ router.post('/:id/reverse-reception', authenticate, requirePermission('reception
 router.post('/:id/deliver', authenticate, requirePermission('delivery.confirm'), orderController.deliverOrder);
 router.post('/:id/reverse-delivery', authenticate, requirePermission('delivery.confirm'), orderController.reverseDelivery);
 router.post('/:id/dismantle', authenticate, requirePermission('delivery.confirm'), orderController.dismantleOrder);
+router.patch('/receipt/:receiptNumber/rename', authenticate, requirePermission('orders.edit'), orderController.renameReceipt);
 router.put('/:id', authenticate, requirePermission('orders.edit'), orderController.update);
 router.delete('/:id', authenticate, requirePermission('orders.delete'), orderController.deleteOrder);
 

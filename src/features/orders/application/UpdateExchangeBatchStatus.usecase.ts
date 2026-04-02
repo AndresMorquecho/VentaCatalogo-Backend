@@ -23,10 +23,11 @@ export class UpdateExchangeBatchStatusUseCase {
    * @returns The updated ExchangeBatch with new status and timestamps
    * @throws StateTransitionError if the transition is invalid
    */
-  async execute(batchId: string, newStatus: ExchangeBatchStatus) {
+  async execute(batchId: string, newStatus: ExchangeBatchStatus, trackingGuide?: string) {
     return await this.statusTransitionService.transitionBatchStatus(
       batchId,
-      newStatus
+      newStatus,
+      trackingGuide
     );
   }
 }

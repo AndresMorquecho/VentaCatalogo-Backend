@@ -5,7 +5,7 @@ import { prisma } from '../../../lib/prisma';
  * 
  * Valid status values for ExchangeBatch entities
  */
-export type ExchangeBatchStatus = 'ENVIADO' | 'EN_BODEGA' | 'ENTREGADO';
+export type ExchangeBatchStatus = 'POR_ENVIAR' | 'EN_TRANSITO' | 'EN_BODEGA' | 'ENTREGADO';
 
 /**
  * StateTransitionError
@@ -54,7 +54,8 @@ export class StatusTransitionService {
    * Defines which status transitions are allowed from each state
    */
   private readonly validTransitions: Record<ExchangeBatchStatus, ExchangeBatchStatus[]> = {
-    ENVIADO: ['EN_BODEGA'],
+    POR_ENVIAR: ['EN_TRANSITO', 'EN_BODEGA'],
+    EN_TRANSITO: ['EN_BODEGA'],
     EN_BODEGA: ['ENTREGADO'],
     ENTREGADO: []
   };
@@ -68,7 +69,8 @@ export class StatusTransitionService {
    */
   async transitionBatchStatus(
     batchId: string,
-    newStatus: ExchangeBatchStatus
+    newStatus: ExchangeBatchStatus,
+    trackingGuide?: string
   ): Promise<any> {
     // Load the current batch
     const batch = await prisma.exchangeBatch.findUnique({
@@ -90,17 +92,45 @@ export class StatusTransitionService {
       updatedAt: new Date()
     };
 
+    if (trackingGuide) {
+      updateData.trackingGuide = trackingGuide;
+    }
+
     // Set timestamp based on new status
-    if (newStatus === 'EN_BODEGA') {
+    if (newStatus === 'EN_TRANSITO') {
+      updateData.sentAt = new Date();
+    } else if (newStatus === 'EN_BODEGA') {
       updateData.receivedAt = new Date();
     } else if (newStatus === 'ENTREGADO') {
       updateData.deliveredAt = new Date();
     }
 
-    // Update the batch
-    const updatedBatch = await prisma.exchangeBatch.update({
-      where: { id: batchId },
-      data: updateData
+    // Update the batch and its associated orders in a transaction
+    const updatedBatch = await prisma.$transaction(async (tx) => {
+      const batch = await tx.exchangeBatch.update({
+        where: { id: batchId },
+        data: updateData,
+        include: { items: true }
+      });
+
+      // Map batch status to Order status
+      let orderStatus: any = null;
+      if (newStatus === 'EN_TRANSITO') orderStatus = 'EN_TRANSITO';
+      else if (newStatus === 'EN_BODEGA') orderStatus = 'RECIBIDO_EN_BODEGA';
+      else if (newStatus === 'ENTREGADO') orderStatus = 'ENTREGADO';
+
+      if (orderStatus) {
+        const orderIds = batch.items.map(item => item.orderId);
+        await tx.order.updateMany({
+          where: { id: { in: orderIds } },
+          data: { 
+            status: orderStatus,
+            updatedAt: new Date()
+          }
+        });
+      }
+
+      return batch;
     });
 
     return updatedBatch;

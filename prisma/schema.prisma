@@ -27,8 +27,9 @@ model Client {
   isActive             Boolean             @default(true) @map("is_active")
   createdAt            DateTime            @default(now()) @map("created_at")
   updatedAt            DateTime            @updatedAt @map("updated_at")
-  birthDate            DateTime?           @map("birth_date")
-  isBlocked            Boolean             @default(false) @map("is_blocked")
+  birthDate                  DateTime?           @map("birth_date")
+  identificationIssuanceDate DateTime?           @map("identification_issuance_date")
+  isBlocked                  Boolean             @default(false) @map("is_blocked")
   isWhatsApp           Boolean             @default(false) @map("is_whatsapp")
   lastDataUpdate       DateTime            @default(now()) @map("last_data_update")
   referredById         String?             @map("referred_by_id")
@@ -121,7 +122,7 @@ model OrderReceipt {
 
 model ReceptionBatch {
   id             String   @id @default(uuid())
-  packingNumber  String   @map("packing_number")
+  packingNumber  String   @unique @map("packing_number")
   packingTotal   Decimal  @map("packing_total") @db.Decimal(10, 2)
   receptionDate  DateTime @default(now()) @map("reception_date")
   receivedByName String   @map("received_by_name")
@@ -132,6 +133,22 @@ model ReceptionBatch {
 
   @@index([packingNumber])
   @@map("reception_batches")
+}
+
+model DeliveryBatch {
+  id              String   @id @default(uuid())
+  deliveryNumber  String   @unique @map("delivery_number")
+  deliveryDate    DateTime @default(now()) @map("delivery_date")
+  deliveredByName String   @map("delivered_by_name")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  orders          Order[]
+  payments        OrderPayment[]
+  financialRecords FinancialRecord[]
+
+  @@index([deliveryNumber])
+  @@map("delivery_batches")
 }
 
 model Order {
@@ -168,6 +185,8 @@ model Order {
   packingNumber        String?             @map("packing_number")
   packingTotal         Decimal?            @map("packing_total") @db.Decimal(10, 2)
   receptionBatchId     String?             @map("reception_batch_id")
+  deliveryBatchId      String?             @map("delivery_batch_id")
+  deliveryNumber       String?             @map("delivery_number")
   loyaltyRedemptionId  String?             @map("loyalty_redemption_id")
   exchangeItemId       String?             @unique @map("exchange_item_id")
   creditNoteNumber     String?             @map("credit_note_number")
@@ -190,6 +209,7 @@ model Order {
   childOrders          Order[]             @relation("OrderHeirs")
   receipt              OrderReceipt?       @relation(fields: [receiptId], references: [id])
   receptionBatch       ReceptionBatch?     @relation(fields: [receptionBatchId], references: [id])
+  deliveryBatch        DeliveryBatch?      @relation(fields: [deliveryBatchId], references: [id])
   sourceOrder          Order?              @relation("ExchangeSource", fields: [sourceOrderId], references: [id])
   exchangesOriginated  Order[]             @relation("ExchangeSource")
   rewardApplications   RewardApplication?
@@ -233,6 +253,8 @@ model OrderPayment {
   processingRequestId String?            @map("processing_request_id")
   financialRecords    FinancialRecord[]
   order               Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  deliveryBatchId     String?            @map("delivery_batch_id")
+  deliveryBatch       DeliveryBatch?     @relation(fields: [deliveryBatchId], references: [id])
   processingRequest   ProcessingRequest? @relation(fields: [processingRequestId], references: [id])
 
   @@index([orderId])
@@ -265,10 +287,12 @@ model FinancialRecord {
   balanceBefore      Decimal?      @map("balance_before") @db.Decimal(10, 2)
   balanceAfter       Decimal?      @map("balance_after") @db.Decimal(10, 2)
   clientDocument     String?       @map("client_document")
+  deliveryBatchId    String?       @map("delivery_batch_id")
   bankAccount        BankAccount   @relation(fields: [bankAccountId], references: [id])
   client             Client        @relation(fields: [clientId], references: [id])
   order              Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
   orderPayment       OrderPayment? @relation(fields: [orderPaymentId], references: [id])
+  deliveryBatch      DeliveryBatch? @relation(fields: [deliveryBatchId], references: [id])
 
   @@index([clientId])
   @@index([orderId])

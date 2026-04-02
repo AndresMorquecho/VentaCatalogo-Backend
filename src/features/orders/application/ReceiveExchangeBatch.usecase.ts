@@ -24,7 +24,7 @@ export class ReceiveExchangeBatchUseCase {
       include: { items: true },
     });
     if (!batch) throw new Error('Lote no encontrado');
-    if (batch.status !== 'ENVIADO') throw new Error('Solo se pueden receptar lotes en estado Enviado');
+    if (batch.status !== 'EN_TRANSITO') throw new Error('Solo se pueden receptar lotes en estado En Tránsito');
 
     // Validate all batchItemIds belong to this batch
     const batchItemIds = new Set(batch.items.map((i) => i.id));

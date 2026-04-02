@@ -240,11 +240,19 @@ router.post('/', authenticate, requirePermission('clients.create'), async (req: 
 
     // Nuevos campos FASE 1 & 2
     if (req.body.birthDate) clientData.birthDate = new Date(req.body.birthDate);
+    if (req.body.identificationIssuanceDate) clientData.identificationIssuanceDate = new Date(req.body.identificationIssuanceDate);
     if (req.body.isWhatsApp !== undefined) clientData.isWhatsApp = req.body.isWhatsApp;
     if (req.body.referredById) clientData.referredById = req.body.referredById;
     if (req.body.isBlocked !== undefined) clientData.isBlocked = req.body.isBlocked;
     clientData.createdByName = (req as any).user?.username || 'Administrador';
     clientData.lastDataUpdate = new Date();
+
+    // 🔴 REGLA: Todos los campos de texto a MAYÚSCULAS (excepto email)
+    Object.keys(clientData).forEach(key => {
+        if (typeof clientData[key] === 'string' && key !== 'email') {
+            clientData[key] = clientData[key].toUpperCase();
+        }
+    });
 
     const client = await prisma.$transaction(async (tx) => {
       const newClient = await tx.client.create({ data: clientData });
@@ -280,9 +288,17 @@ router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: 
 
     // Nuevos campos FASE 1 & 2
     if (req.body.birthDate !== undefined) data.birthDate = req.body.birthDate ? new Date(req.body.birthDate) : null;
+    if (req.body.identificationIssuanceDate !== undefined) data.identificationIssuanceDate = req.body.identificationIssuanceDate ? new Date(req.body.identificationIssuanceDate) : null;
     if (req.body.isWhatsApp !== undefined) data.isWhatsApp = req.body.isWhatsApp;
     if (req.body.referredById !== undefined) data.referredById = req.body.referredById;
     if (req.body.isBlocked !== undefined) data.isBlocked = req.body.isBlocked;
+
+    // 🔴 REGLA: Todos los campos de texto editados a MAYÚSCULAS (excepto email)
+    Object.keys(data).forEach(key => {
+        if (typeof data[key] === 'string' && key !== 'email') {
+            data[key] = data[key].toUpperCase();
+        }
+    });
 
 
     // Siempre que se edite, actualizamos la fecha de última actualización de datos

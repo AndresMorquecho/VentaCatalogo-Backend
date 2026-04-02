@@ -27,6 +27,26 @@ export class CreateWalletRechargeUseCase {
             });
 
             if (!client) return Result.fail(`Client with ID ${dto.clientId} not found`);
+            
+            // Duplicate reference check
+            if (dto.reference) {
+                const existingRef = await prisma.walletRecharge.findFirst({
+                    where: { reference: dto.reference }
+                });
+                if (existingRef) {
+                    return Result.fail(`El número de comprobante/referencia "${dto.reference}" ya ha sido utilizado en otra solicitud.`);
+                }
+            }
+
+            // Duplicate control_validation check
+            if (dto.controlValidation) {
+                const existingControl = await prisma.walletRecharge.findFirst({
+                    where: { controlValidation: dto.controlValidation }
+                });
+                if (existingControl) {
+                    return Result.fail(`El código de validación/control "${dto.controlValidation}" ya ha sido utilizado en otra solicitud.`);
+                }
+            }
 
             // For EFECTIVO, if no bankAccountId is provided, try to find a CASH account
             let finalBankAccountId = dto.bankAccountId;

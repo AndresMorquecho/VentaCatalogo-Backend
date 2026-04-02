@@ -2,6 +2,7 @@ import { prisma } from '../../../lib/prisma';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 import { buildNotesJSON, cardTitleFromMethod, generateGroupId } from '../../../shared/utils/transactionNotes';
+import { getNextSequence } from '../../../shared/utils/SequenceGenerator';
 
 export interface CreditDistributionItemDTO {
   targetOrderId?: string;
@@ -18,7 +19,9 @@ export interface CreditDistributionDTO {
 }
 
 export interface BatchDeliverOrdersDTO {
+  id?: string;
   orderIds: string[];
+  deliveryNumber: string;
   payments?: {
     amount: number;
     bankAccountId?: string;
@@ -37,8 +40,38 @@ export class BatchDeliverOrdersUseCase {
       throw new Error('Debe proporcionar al menos un ID de pedido');
     }
 
-    return await prisma.$transaction(async (tx) => {
-      // Pre-fetch common account info to avoid repetitive lookups in loops
+    let attempts = 0;
+    const maxAttempts = 5;
+
+    while (attempts < maxAttempts) {
+      try {
+        return await prisma.$transaction(async (tx) => {
+      // 0. Handle Delivery Batch Creation (w/ Concurrency Control)
+      let deliveryBatch;
+      let finalDeliveryNumber = data.deliveryNumber;
+
+      if (data.id) {
+        // @ts-ignore
+        deliveryBatch = await tx.deliveryBatch.findUnique({ where: { id: data.id } });
+        if (!deliveryBatch) throw new Error('El lote de entrega a editar no existe');
+        finalDeliveryNumber = deliveryBatch.deliveryNumber;
+      } else {
+        // --- 🔒 CONCURRENCY CHECK ---
+        const finalDeliveryNumber = await getNextSequence('EN-', 'DELIVERY');
+        console.log(`✅ Robust delivery number generated: ${finalDeliveryNumber}`);
+        data.deliveryNumber = finalDeliveryNumber;
+
+        // @ts-ignore
+        deliveryBatch = await tx.deliveryBatch.create({
+          data: {
+            deliveryNumber: finalDeliveryNumber,
+            deliveredByName: userId,
+            deliveryDate: new Date(),
+          }
+        });
+      }
+
+      // Pre-fetch common account info
       const cashAccount = await tx.bankAccount.findFirst({ where: { type: 'CASH', isActive: true } });
       const cashAccountId = cashAccount?.id || '';
 
@@ -186,6 +219,7 @@ export class BatchDeliverOrdersUseCase {
             orders: batchOrderContexts,
           });
 
+          // @ts-ignore
           await tx.financialRecord.create({
             data: {
               type: 'PAYMENT',
@@ -204,6 +238,8 @@ export class BatchDeliverOrdersUseCase {
               notes: paymentNotesJson,
               balanceBefore,
               balanceAfter,
+              // @ts-ignore
+              deliveryBatchId: deliveryBatch.id,
               version: 1
             }
           });
@@ -311,12 +347,15 @@ export class BatchDeliverOrdersUseCase {
           if (remainingToDistribute <= 0) break;
           const amountToApply = Math.min(op.pending, remainingToDistribute);
           if (amountToApply > 0) {
+            // @ts-ignore
             await tx.orderPayment.create({
               data: {
                 orderId: op.orderId,
                 amount: amountToApply,
                 method: mainPaymentMethod,
-                description: `Pago lote en entrega (${payments.length} métodos)`
+                description: `Pago lote en entrega (${payments.length} métodos)`,
+                // @ts-ignore
+                deliveryBatchId: deliveryBatch.id
               }
             });
             appliedAmounts[op.orderId] = amountToApply;
@@ -337,6 +376,10 @@ export class BatchDeliverOrdersUseCase {
             status: 'ENTREGADO',
             deliveryDate: new Date(),
             deliveredByName: deliveredByName || null,
+            // @ts-ignore
+            deliveryBatchId: deliveryBatch.id,
+            // @ts-ignore
+            deliveryNumber: deliveryBatch.deliveryNumber,
             updatedAt: new Date(),
             version: { increment: 1 }
           }
@@ -435,6 +478,7 @@ export class BatchDeliverOrdersUseCase {
                 groupId: distGroupId
               });
 
+              // @ts-ignore
               await tx.financialRecord.create({
                 data: {
                   type: 'CREDIT_APPLICATION',
@@ -456,6 +500,8 @@ export class BatchDeliverOrdersUseCase {
                   balanceBefore: balanceBefore,
                   balanceAfter: balanceAfter,
                   notes: refundNotesJson,
+                  // @ts-ignore
+                  deliveryBatchId: deliveryBatch.id,
                   version: 1
                 }
               });
@@ -469,12 +515,15 @@ export class BatchDeliverOrdersUseCase {
               }
             } else if (dist.targetOrderId) {
               // Apply credit to another order → create a payment for that order
+              // @ts-ignore
               await tx.orderPayment.create({
                 data: {
                   orderId: dist.targetOrderId,
                   amount: dist.amount,
                   method: 'CREDITO_CLIENTE',
-                  description: dist.description
+                  description: dist.description,
+                  // @ts-ignore
+                  deliveryBatchId: deliveryBatch.id
                 }
               });
 
@@ -515,6 +564,7 @@ export class BatchDeliverOrdersUseCase {
               // Intermediate balance tracking happens in currentWalletBalance only
 
               // Create expense leg (source order losing credit)
+              // @ts-ignore
               await tx.financialRecord.create({
                 data: {
                   type: 'EXPENSE',
@@ -535,11 +585,14 @@ export class BatchDeliverOrdersUseCase {
                   transactionGroupId: distGroupId,
                   balanceBefore,
                   balanceAfter,
+                  // @ts-ignore
+                  deliveryBatchId: deliveryBatch.id,
                   version: 1
                 }
               });
 
               // Create income leg (target order receiving credit)
+              // @ts-ignore
               await tx.financialRecord.create({
                 data: {
                   type: 'PAYMENT',
@@ -560,6 +613,8 @@ export class BatchDeliverOrdersUseCase {
                   transactionGroupId: distGroupId,
                   balanceBefore,
                   balanceAfter,
+                  // @ts-ignore
+                  deliveryBatchId: deliveryBatch.id,
                   version: 1
                 }
               });
@@ -599,6 +654,7 @@ export class BatchDeliverOrdersUseCase {
                 extra: dist.description,
               });
 
+              // @ts-ignore
               await tx.financialRecord.create({
                 data: {
                   type: 'CREDIT',
@@ -618,6 +674,8 @@ export class BatchDeliverOrdersUseCase {
                   notes: walletNotesJson,
                   balanceBefore: walletBefore,
                   balanceAfter: walletAfter,
+                  // @ts-ignore
+                  deliveryBatchId: deliveryBatch.id,
                   version: 1
                 }
               });
@@ -663,10 +721,25 @@ export class BatchDeliverOrdersUseCase {
 
       return {
         success: true,
+        // @ts-ignore
+        batchId: deliveryBatch.id,
+        deliveryNumber: deliveryBatch.deliveryNumber,
         deliveredCount: orders.length,
         totalPointsEarned: 0,
         newLevel: clientAccount.rewardLevel
       };
-    }, { timeout: 20000 });
+        }, { timeout: 40000 });
+      } catch (error: any) {
+        if (attempts < maxAttempts - 1 && error.code === 'P2002' && error.meta?.target?.includes('delivery_number')) {
+          console.log(`⚠️ Concurrency collision detected on deliveryNumber. Retrying... (${attempts + 1}/${maxAttempts})`);
+          attempts++;
+          // Wait briefly
+          await new Promise(resolve => setTimeout(resolve, 100 * attempts));
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new Error('Could not generate a unique delivery number after multiple attempts.');
   }
 }

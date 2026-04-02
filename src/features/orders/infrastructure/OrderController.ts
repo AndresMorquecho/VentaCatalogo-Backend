@@ -14,6 +14,9 @@ import { CreateReceptionBatchUseCase } from '../application/CreateReceptionBatch
 import { CreateReceptionBatchOptimizedUseCase } from '../application/CreateReceptionBatchOptimized.usecase';
 import { DeleteReceptionBatchUseCase } from '../application/DeleteReceptionBatch.usecase';
 import { BatchDeliverOrdersUseCase } from '../application/BatchDeliverOrders.usecase';
+import { DeleteDeliveryBatchUseCase } from '../application/DeleteDeliveryBatch.usecase';
+import { GetDeliveryBatchesUseCase } from '../application/GetDeliveryBatches.usecase';
+import { PrismaOrderRepository } from './PrismaOrderRepository';
 
 export class OrderController {
   constructor(
@@ -29,6 +32,8 @@ export class OrderController {
     private createReceptionBatchOptimizedUseCase?: CreateReceptionBatchOptimizedUseCase,
     private deleteReceptionBatchUseCase?: DeleteReceptionBatchUseCase,
     private batchDeliverOrdersUseCase?: BatchDeliverOrdersUseCase,
+    private deleteDeliveryBatchUseCase?: DeleteDeliveryBatchUseCase,
+    private getDeliveryBatchesUseCase?: GetDeliveryBatchesUseCase,
     private reverseOrderDeliveryUseCase?: any
   ) { }
 
@@ -298,6 +303,11 @@ export class OrderController {
           items: true,
           payments: true,
           brand: true,
+          exchangeBatchItems: {
+            include: {
+              batch: true
+            }
+          },
           childOrders: {
             include: {
               items: true,
@@ -991,15 +1001,103 @@ export class OrderController {
   generatePackingNumber = async (req: Request, res: Response) => {
     try {
       const year = new Date().getFullYear();
-      const count = await prisma.receptionBatch.count({
+      const prefix = `PK-${year}-`;
+      
+      const lastBatch = await prisma.receptionBatch.findFirst({
         where: {
-          packingNumber: { startsWith: `PK-${year}` }
+          packingNumber: { startsWith: prefix }
+        },
+        orderBy: {
+          packingNumber: 'desc'
         }
       });
-      const nextNumber = `PK-${year}-${String(count + 1).padStart(3, '0')}`;
-      return res.status(200).json({ success: true, packingNumber: nextNumber });
+
+      let nextNumber = 1;
+      if (lastBatch) {
+        const parts = lastBatch.packingNumber.split('-');
+        if (parts.length >= 3) {
+          const lastSeq = parseInt(parts[2]);
+          if (!isNaN(lastSeq)) {
+            nextNumber = lastSeq + 1;
+          }
+        }
+      }
+
+      const formattedNumber = `${prefix}${String(nextNumber).padStart(3, '0')}`;
+      return res.status(200).json({ success: true, packingNumber: formattedNumber });
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to generate packing number');
+    }
+  };
+
+  generateDeliveryNumber = async (req: Request, res: Response) => {
+    try {
+      const year = new Date().getFullYear();
+      const prefix = `EN-${year}-`;
+      
+      const lastBatch = await prisma.deliveryBatch.findFirst({
+        where: {
+          deliveryNumber: { startsWith: prefix }
+        },
+        orderBy: {
+          deliveryNumber: 'desc'
+        }
+      });
+
+      let nextNumber = 1;
+      if (lastBatch) {
+        const parts = lastBatch.deliveryNumber.split('-');
+        if (parts.length >= 3) {
+          const lastSeq = parseInt(parts[2]);
+          if (!isNaN(lastSeq)) {
+            nextNumber = lastSeq + 1;
+          }
+        }
+      }
+
+      const formattedNumber = `${prefix}${String(nextNumber).padStart(3, '0')}`;
+      return res.status(200).json({ success: true, deliveryNumber: formattedNumber });
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to generate delivery number');
+    }
+  };
+
+  getDeliveryBatches = async (req: AuthRequest, res: Response) => {
+    try {
+      if (!this.getDeliveryBatchesUseCase) {
+        return HttpResponse.fail(res, 'GetDeliveryBatchesUseCase not initialized');
+      }
+
+      const filters = {
+        searchText: req.query.search as string,
+        startDate: req.query.startDate as string,
+        endDate: req.query.endDate as string,
+        page: req.query.page ? parseInt(req.query.page as string) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : 25
+      };
+
+      const result = await this.getDeliveryBatchesUseCase.execute(filters);
+      if (result.isFailure) return HttpResponse.fail(res, result.error!);
+
+      return HttpResponse.ok(res, result.getValue());
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to get delivery batches');
+    }
+  };
+
+  deleteDeliveryBatch = async (req: AuthRequest, res: Response) => {
+    try {
+      if (!this.deleteDeliveryBatchUseCase) {
+        return HttpResponse.fail(res, 'DeleteDeliveryBatchUseCase not initialized');
+      }
+
+      const { id } = req.params;
+      const result = await this.deleteDeliveryBatchUseCase.execute(id, req.user!.username);
+
+      if (result.isFailure) return HttpResponse.fail(res, result.error!);
+      return HttpResponse.ok(res, result.getValue());
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to delete delivery batch');
     }
   };
 
@@ -1258,7 +1356,9 @@ export class OrderController {
       });
 
       const dto = {
+        id: req.body.id,
         orderIds: req.body.orderIds || req.body.order_ids,
+        deliveryNumber: req.body.deliveryNumber || req.body.delivery_number,
         payments: req.body.payments ? req.body.payments.map((p: any) => ({
           amount: Number(p.amount),
           bankAccountId: p.bankAccountId || p.bank_account_id,
@@ -1274,6 +1374,7 @@ export class OrderController {
       };
 
       console.log('[BatchDeliverOrderController] Final DTO:', JSON.stringify(dto, null, 2));
+      // @ts-ignore
       const result = await this.batchDeliverOrdersUseCase.execute(dto, req.user!.username);
       return HttpResponse.ok(res, result);
     } catch (error) {
@@ -1309,6 +1410,62 @@ export class OrderController {
       return HttpResponse.ok(res, result);
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to reverse delivery');
+    }
+  };
+
+  renameReceipt = async (req: AuthRequest, res: Response) => {
+    try {
+      const { receiptNumber: oldReceiptNumber } = req.params;
+      const { newReceiptNumber } = req.body;
+
+      if (!newReceiptNumber) {
+        return HttpResponse.badRequest(res, 'El nuevo número de recibo es requerido');
+      }
+
+      // Check if the new receipt number already exists
+      const existing = await prisma.orderReceipt.findUnique({
+        where: { receiptNumber: newReceiptNumber }
+      });
+
+      if (existing) {
+        return HttpResponse.badRequest(res, `El número de recibo "${newReceiptNumber}" ya está en uso.`);
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        // Update OrderReceipt
+        const updatedReceipt = await tx.orderReceipt.update({
+          where: { receiptNumber: oldReceiptNumber },
+          data: { 
+            receiptNumber: newReceiptNumber,
+            version: { increment: 1 }
+          }
+        });
+
+        // Update all related Orders
+        await tx.order.updateMany({
+          where: { receiptNumber: oldReceiptNumber },
+          data: { 
+            receiptNumber: newReceiptNumber,
+            version: { increment: 1 }
+          }
+        });
+
+        // Update all related ExchangeBatchItems
+        // Check if the table exists/supported via prisma client first or just try to updateMany
+        await (tx as any).exchangeBatchItem.updateMany({
+          where: { receiptNumber: oldReceiptNumber },
+          data: { 
+            receiptNumber: newReceiptNumber
+          }
+        });
+
+        return updatedReceipt;
+      });
+
+      return HttpResponse.ok(res, { success: true, data: result });
+    } catch (error) {
+      console.error('[OrderController.renameReceipt] Error:', error);
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error al renombrar el recibo');
     }
   };
 }

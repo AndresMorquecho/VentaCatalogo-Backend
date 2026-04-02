@@ -314,22 +314,35 @@ export class PrismaOrderRepository implements IOrderRepository {
     const year = new Date().getFullYear();
     const searchPattern = `${prefix}-${year}-`;
 
+    // 1. Check in Order table
     const lastOrder = await prisma.order.findFirst({
-      where: {
-        OR: [
-          { receiptNumber: { startsWith: searchPattern } },
-          { orderNumber: { startsWith: searchPattern } }
-        ]
-      },
-      orderBy: { createdAt: 'desc' }
+      where: prefix === 'OR' 
+        ? { receiptNumber: { startsWith: searchPattern } }
+        : { orderNumber: { startsWith: searchPattern } },
+      orderBy: prefix === 'OR' 
+        ? { receiptNumber: 'desc' } 
+        : { orderNumber: 'desc' }
     });
 
-    let lastNumber = 0;
+    // 2. Extra check for receipts to avoid conflicts across different tables
+    let lastReceiptNumber = 0;
+    if (prefix === 'OR') {
+        const lastReceipt = await prisma.orderReceipt.findFirst({
+           where: { receiptNumber: { startsWith: searchPattern } },
+           orderBy: { receiptNumber: 'desc' }
+        });
+        if (lastReceipt) {
+           lastReceiptNumber = parseInt(lastReceipt.receiptNumber.split('-')[2]) || 0;
+        }
+    }
+
+    let lastNumber = lastReceiptNumber;
     if (lastOrder) {
       const matchTarget = prefix === 'OR' ? lastOrder.receiptNumber : (lastOrder.orderNumber || '');
       const parts = matchTarget.split('-');
       if (parts.length >= 3) {
-        lastNumber = parseInt(parts[2]) || 0;
+        const parsedOrderNum = parseInt(parts[2]) || 0;
+        if (parsedOrderNum > lastNumber) lastNumber = parsedOrderNum;
       }
     }
 

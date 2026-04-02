@@ -1,6 +1,7 @@
 import { prisma } from '../../../lib/prisma';
 import { ReceiveOrderUseCase, ReceiveOrderDTO } from './ReceiveOrder.usecase';
 import { Result } from '../../../shared/domain/Result';
+import { getNextSequence } from '../../../shared/utils/SequenceGenerator';
 
 export interface BatchReceptionDTO {
   id?: string; // Optional for updates
@@ -23,16 +24,26 @@ export class CreateReceptionBatchUseCase {
         
         if (dto.id) {
           // --- MODO EDICIÓN ---
-          batch = await tx.receptionBatch.findUnique({
+          const originalBatch = await tx.receptionBatch.findUnique({
             where: { id: dto.id },
             include: { orders: true }
           });
 
-          if (!batch) throw new Error('El lote a editar no existe');
+          if (!originalBatch) throw new Error('El lote a editar no existe');
 
-          // 1. Identificar pedidos ELIMINADOS del lote
+          // Ensure name change is reflected in the update
+          batch = await tx.receptionBatch.update({
+            where: { id: dto.id },
+            data: {
+              packingNumber: dto.packingNumber,
+              packingTotal: dto.packingTotal,
+              updatedAt: new Date()
+            }
+          });
+          
+          // Identify orders to remove completely from batch (not in new items)
           const newItemOrderIds = dto.items.map(i => i.orderId);
-          const ordersToRemove = batch.orders.filter(o => !newItemOrderIds.includes(o.id));
+          const ordersToRemove = originalBatch.orders.filter((o: any) => !newItemOrderIds.includes(o.id));
 
           for (const order of ordersToRemove) {
             // Revertir este pedido (usando la lógica de reversión pero adaptada aquí)
@@ -87,21 +98,15 @@ export class CreateReceptionBatchUseCase {
               }
             });
           }
-
-          // 2. Actualizar el registro del batch
-          batch = await tx.receptionBatch.update({
-            where: { id: dto.id },
-            data: {
-              packingNumber: dto.packingNumber,
-              packingTotal: dto.packingTotal,
-              updatedAt: new Date()
-            }
-          });
         } else {
-          // --- MODO CREACIÓN ---
+          // --- MODO CREACIÓN (con control de concurrencia) ---
+          const finalPackingNumber = await getNextSequence('PK-', 'PACKING');
+          console.log(`✅ Robust packing number generated: ${finalPackingNumber}`);
+          dto.packingNumber = finalPackingNumber;
+
           batch = await tx.receptionBatch.create({
             data: {
-              packingNumber: dto.packingNumber,
+              packingNumber: finalPackingNumber,
               packingTotal: dto.packingTotal,
               receivedByName: userId,
               receptionDate: new Date(),
