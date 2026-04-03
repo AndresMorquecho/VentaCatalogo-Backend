@@ -28,26 +28,6 @@ export class CreateWalletRechargeUseCase {
 
             if (!client) return Result.fail(`Client with ID ${dto.clientId} not found`);
             
-            // Duplicate reference check
-            if (dto.reference) {
-                const existingRef = await prisma.walletRecharge.findFirst({
-                    where: { reference: dto.reference }
-                });
-                if (existingRef) {
-                    return Result.fail(`El número de comprobante/referencia "${dto.reference}" ya ha sido utilizado en otra solicitud.`);
-                }
-            }
-
-            // Duplicate control_validation check
-            if (dto.controlValidation) {
-                const existingControl = await prisma.walletRecharge.findFirst({
-                    where: { controlValidation: dto.controlValidation }
-                });
-                if (existingControl) {
-                    return Result.fail(`El código de validación/control "${dto.controlValidation}" ya ha sido utilizado en otra solicitud.`);
-                }
-            }
-
             // For EFECTIVO, if no bankAccountId is provided, try to find a CASH account
             let finalBankAccountId = dto.bankAccountId;
             if (dto.paymentMethod === 'EFECTIVO' && !finalBankAccountId) {
@@ -74,6 +54,25 @@ export class CreateWalletRechargeUseCase {
             }
 
             const result = await prisma.$transaction(async (tx) => {
+                // --- 🔒 CONCURRENCY & DUPLICATE CHECK ---
+                if (dto.reference) {
+                    const existingRef = await tx.walletRecharge.findFirst({
+                        where: { reference: dto.reference }
+                    });
+                    if (existingRef) {
+                        throw new Error(`El número de comprobante/referencia "${dto.reference}" ya ha sido utilizado en otra solicitud.`);
+                    }
+                }
+
+                if (dto.controlValidation) {
+                    const existingControl = await tx.walletRecharge.findFirst({
+                        where: { controlValidation: dto.controlValidation }
+                    });
+                    if (existingControl) {
+                        throw new Error(`El código de validación/control "${dto.controlValidation}" ya ha sido utilizado en otra solicitud.`);
+                    }
+                }
+
                 const recharge = await tx.walletRecharge.create({
                     data: {
                         clientId: dto.clientId,

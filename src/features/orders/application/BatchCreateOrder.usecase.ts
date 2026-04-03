@@ -132,24 +132,6 @@ export class BatchCreateOrderUseCase {
         }
       }
 
-      // 2.5 Validate strict exchange source logic (Option B)
-      const sourceOrderIds = dto.orders.map(o => o.sourceOrderId).filter(id => id) as string[];
-      if (sourceOrderIds.length > 0) {
-        const existingExchanges = await prisma.order.findMany({
-          where: { sourceOrderId: { in: sourceOrderIds } },
-          select: { sourceOrderId: true, orderNumber: true }
-        });
-
-        if (existingExchanges.length > 0) {
-          const duplicatedSourceIds = existingExchanges.map(e => e.sourceOrderId) as string[];
-          const sourceOrders = await prisma.order.findMany({
-            where: { id: { in: duplicatedSourceIds } },
-            select: { orderNumber: true }
-          });
-          const conflictNames = sourceOrders.map(so => so.orderNumber).join(", ");
-          return Result.fail(`Doble devolución detectada: Las prendas de origen (${conflictNames}) ya fueron cambiadas anteriormente en otra guía.`);
-        }
-      }
 
       // If no receipt number provided, generate a unique "Sin Número" (S/N) guide so they can be grouped/edited later
       // But we show it as empty in the UI. We use a UUID to ensure uniqueness even if multiple are 'empty'
@@ -167,55 +149,64 @@ export class BatchCreateOrderUseCase {
         
         // 1. Crear/Verificar OrderReceipt
         let receiptId: string;
+        
+        // --- 🔒 CONCURRENCY & DUPLICATE CHECK ---
         const existingReceipt = await (tx as any).orderReceipt.findUnique({
           where: { receiptNumber }
         });
+
+        if (existingReceipt) {
+          throw new Error(`Conflicto de Concurrencia: El número de recibo o guía "${receiptNumber}" ya fue registrado por otro usuario. Por favor usa un número diferente.`);
+        }
+
+        // 1.2 Strict exchange source logic inside transaction to prevent race conditions
+        const sourceOrderIds = dto.orders.map(o => o.sourceOrderId).filter(id => id) as string[];
+        if (sourceOrderIds.length > 0) {
+          const existingExchanges = await tx.order.findMany({
+            where: { sourceOrderId: { in: sourceOrderIds } },
+            select: { sourceOrderId: true, orderNumber: true }
+          });
+
+          if (existingExchanges.length > 0) {
+            const duplicatedSourceIds = existingExchanges.map(e => e.sourceOrderId) as string[];
+            const sourceOrders = await tx.order.findMany({
+              where: { id: { in: duplicatedSourceIds } },
+              select: { orderNumber: true }
+            });
+            const conflictNames = sourceOrders.map(so => so.orderNumber).join(", ");
+            throw new Error(`Doble devolución detectada: Las prendas de origen (${conflictNames}) ya fueron procesadas en otra guía por otro usuario.`);
+          }
+        }
 
         const clientNameForReceipt = (mainClient as any).lastName 
           ? `${mainClient.firstName} ${(mainClient as any).lastName}`
           : mainClient.firstName;
 
-        if (existingReceipt) {
-          receiptId = existingReceipt.id;
-          // Update header info even if exists (e.g. updating a draft)
-          await (tx as any).orderReceipt.update({
-            where: { id: receiptId },
-            data: {
-              salesChannel: dto.salesChannel,
-              transactionDate: dto.transactionDate,
-              paymentMethod: dto.paymentMethod,
-              bankAccountId: dto.bankAccountId || null,
-              notes: dto.notes || existingReceipt.notes,
-              version: { increment: 1 }
-            }
-          });
-        } else {
-          receiptId = crypto.randomUUID();
-          
-          let receiptCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
-          const now = new Date();
-          if (receiptCreatedAt.getHours() === 0 && receiptCreatedAt.getMinutes() === 0 && receiptCreatedAt.toDateString() === now.toDateString()) {
-             receiptCreatedAt = now;
-          }
-
-          await (tx as any).orderReceipt.create({
-            data: {
-              id: receiptId,
-              receiptNumber,
-              clientId: dto.clientId,
-              clientName: clientNameForReceipt,
-              salesChannel: dto.salesChannel,
-              createdAt: receiptCreatedAt,
-              transactionDate: dto.transactionDate,
-              paymentMethod: dto.paymentMethod,
-              bankAccountId: dto.bankAccountId || null,
-              transactionReference: dto.initialPayment?.reference || null,
-              notes: dto.notes || null,
-              createdByName: dto.createdByName || createdBy,
-              version: 1
-            }
-          });
+        receiptId = crypto.randomUUID();
+        
+        let receiptCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
+        const now = new Date();
+        if (receiptCreatedAt.getHours() === 0 && receiptCreatedAt.getMinutes() === 0 && receiptCreatedAt.toDateString() === now.toDateString()) {
+            receiptCreatedAt = now;
         }
+
+        await (tx as any).orderReceipt.create({
+          data: {
+            id: receiptId,
+            receiptNumber,
+            clientId: dto.clientId,
+            clientName: clientNameForReceipt,
+            salesChannel: dto.salesChannel,
+            createdAt: receiptCreatedAt,
+            transactionDate: dto.transactionDate,
+            paymentMethod: dto.paymentMethod,
+            bankAccountId: dto.bankAccountId || null,
+            transactionReference: dto.initialPayment?.reference || null,
+            notes: dto.notes || null,
+            createdByName: dto.createdByName || createdBy,
+            version: 1
+          }
+        });
 
         // 2. Generar consecutivos de abonos (fuera del loop)
         const lastPayment = await prisma.orderPayment.findFirst({
@@ -242,7 +233,6 @@ export class BatchCreateOrderUseCase {
         let firstSplitPaymentId: string | undefined = undefined; // track first order's split payment for FR linkage
 
         let orderCreatedAt = dto.createdAt ? new Date(dto.createdAt) : new Date();
-        const now = new Date();
         if (orderCreatedAt.getHours() === 0 && orderCreatedAt.getMinutes() === 0 && orderCreatedAt.toDateString() === now.toDateString()) {
            orderCreatedAt = now;
         }

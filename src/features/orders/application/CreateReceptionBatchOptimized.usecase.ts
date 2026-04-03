@@ -1,6 +1,7 @@
 import { prisma } from '../../../lib/prisma';
 import { Result } from '../../../shared/domain/Result';
 import { chunkArray } from '../../../shared/utils/arrayHelpers';
+import { getNextSequence } from '../../../shared/utils/SequenceGenerator';
 
 export interface BatchReceptionItemDTO {
   orderId: string;
@@ -147,39 +148,10 @@ export class CreateReceptionBatchOptimizedUseCase {
         finalPackingNumber = batch.packingNumber; // Use the one from existing batch if name was not changed
       } else {
         // --- 🔒 CONCURRENCY CHECK: Ensure packingNumber is unique and sequential ---
-        let isTaken = await tx.receptionBatch.findFirst({ where: { packingNumber: finalPackingNumber } });
-        
-        if (isTaken) {
-          console.warn(`⚠️ Packing number ${finalPackingNumber} already exists. Finding next sequential...`);
-          const year = new Date().getFullYear();
-          const prefix = `PK-${year}-`;
-          
-          const lastBatch = await tx.receptionBatch.findFirst({
-            where: { packingNumber: { startsWith: prefix } },
-            orderBy: { packingNumber: 'desc' }
-          });
-
-          let nextSeq = 1;
-          if (lastBatch) {
-            const parts = lastBatch.packingNumber.split('-');
-            if (parts.length >= 3) {
-              const currentMax = parseInt(parts[2]);
-              if (!isNaN(currentMax)) nextSeq = currentMax + 1;
-            }
-          }
-          finalPackingNumber = `${prefix}${String(nextSeq).padStart(3, '0')}`;
-          
-          // Re-verify (extremely rare triple-race condition protection)
-          while (await tx.receptionBatch.findFirst({ where: { packingNumber: finalPackingNumber } })) {
-            const parts = finalPackingNumber.split('-');
-            nextSeq = parseInt(parts[2]) + 1;
-            finalPackingNumber = `${prefix}${String(nextSeq).padStart(3, '0')}`;
-          }
-          
-          console.log(`✅ Auto-corrected packing number to: ${finalPackingNumber}`);
-          // Propagate change to DTO for order-level updates
-          dto.packingNumber = finalPackingNumber;
-        }
+        finalPackingNumber = await getNextSequence('PK-', 'PACKING', tx);
+        console.log(`✅ Robust packing number generated: ${finalPackingNumber}`);
+        // Propagate change to DTO for order-level updates
+        dto.packingNumber = finalPackingNumber;
 
         batch = await tx.receptionBatch.create({
           data: {

@@ -70,7 +70,31 @@ export class CreateExchangeBatchUseCase {
     }
 
     return await prisma.$transaction(async (tx) => {
-      // Task 4.2: Create batch with status ENVIADO and sentAt timestamp
+      // --- 🔒 CONCURRENCY & DUPLICATE CHECK ---
+      
+      // 1. Validate Tracking Guide Uniqueness if provided
+      if (dto.trackingGuide) {
+        const existingBatch = await tx.exchangeBatch.findFirst({
+          where: { trackingGuide: dto.trackingGuide }
+        });
+        if (existingBatch) {
+          throw new Error(`La guía "${dto.trackingGuide}" ya existe y fue registrada por otro usuario en el lote ${existingBatch.batchNumber}. Por favor verifica el número.`);
+        }
+      }
+
+      // 2. Validate Orders status AGAIN inside transaction to prevent race conditions
+      const currentOrders = await tx.order.findMany({
+        where: { id: { in: orderIds } },
+        select: { id: true, receiptNumber: true, status: true }
+      });
+
+      for (const o of currentOrders) {
+        if (o.status !== 'ENTREGADO') {
+          throw new Error(`Conflicto de Concurrencia: El pedido ${o.receiptNumber} ya no está disponible para cambio (Estado actual: ${o.status}). Es posible que otro usuario ya lo haya procesado.`);
+        }
+      }
+
+      // Task 4.2: Create batch with status POR_ENVIAR
       const batch = await tx.exchangeBatch.create({
         data: {
           batchNumber,
@@ -78,7 +102,6 @@ export class CreateExchangeBatchUseCase {
           notes: dto.notes || null,
           createdByName: dto.createdByName || null,
           status: 'POR_ENVIAR',
-          // sentAt is now set only when status moves to EN_TRANSITO via UpdateExchangeBatchStatus
           items: {
             create: orders.map((order) => {
               const paid = calcPaid(order.payments);

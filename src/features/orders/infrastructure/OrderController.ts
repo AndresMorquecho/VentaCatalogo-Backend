@@ -17,6 +17,7 @@ import { BatchDeliverOrdersUseCase } from '../application/BatchDeliverOrders.use
 import { DeleteDeliveryBatchUseCase } from '../application/DeleteDeliveryBatch.usecase';
 import { GetDeliveryBatchesUseCase } from '../application/GetDeliveryBatches.usecase';
 import { PrismaOrderRepository } from './PrismaOrderRepository';
+import { peekNextSequence } from '../../../shared/utils/SequenceGenerator';
 
 export class OrderController {
   constructor(
@@ -1016,65 +1017,21 @@ export class OrderController {
 
   generatePackingNumber = async (req: Request, res: Response) => {
     try {
-      const year = new Date().getFullYear();
-      const prefix = `PK-${year}-`;
-      
-      const lastBatch = await prisma.receptionBatch.findFirst({
-        where: {
-          packingNumber: { startsWith: prefix }
-        },
-        orderBy: {
-          packingNumber: 'desc'
-        }
-      });
-
-      let nextNumber = 1;
-      if (lastBatch) {
-        const parts = lastBatch.packingNumber.split('-');
-        if (parts.length >= 3) {
-          const lastSeq = parseInt(parts[2]);
-          if (!isNaN(lastSeq)) {
-            nextNumber = lastSeq + 1;
-          }
-        }
-      }
-
-      const formattedNumber = `${prefix}${String(nextNumber).padStart(3, '0')}`;
-      return res.status(200).json({ success: true, packingNumber: formattedNumber });
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      const formattedNumber = await peekNextSequence('PK-', 'PACKING');
+      return HttpResponse.ok(res, { packingNumber: formattedNumber });
     } catch (error) {
-      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to generate packing number');
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error generating packing number');
     }
   };
 
   generateDeliveryNumber = async (req: Request, res: Response) => {
     try {
-      const year = new Date().getFullYear();
-      const prefix = `EN-${year}-`;
-      
-      const lastBatch = await prisma.deliveryBatch.findFirst({
-        where: {
-          deliveryNumber: { startsWith: prefix }
-        },
-        orderBy: {
-          deliveryNumber: 'desc'
-        }
-      });
-
-      let nextNumber = 1;
-      if (lastBatch) {
-        const parts = lastBatch.deliveryNumber.split('-');
-        if (parts.length >= 3) {
-          const lastSeq = parseInt(parts[2]);
-          if (!isNaN(lastSeq)) {
-            nextNumber = lastSeq + 1;
-          }
-        }
-      }
-
-      const formattedNumber = `${prefix}${String(nextNumber).padStart(3, '0')}`;
-      return res.status(200).json({ success: true, deliveryNumber: formattedNumber });
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      const formattedNumber = await peekNextSequence('EN-', 'DELIVERY');
+      return HttpResponse.ok(res, { deliveryNumber: formattedNumber });
     } catch (error) {
-      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to generate delivery number');
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Error generating delivery number');
     }
   };
 

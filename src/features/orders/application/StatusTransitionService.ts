@@ -126,6 +126,31 @@ export class StatusTransitionService {
 
     // Update the batch and its associated orders in a transaction
     return await prisma.$transaction(async (tx) => {
+      // --- 🔒 CONCURRENCY & UNIQUE GUIDE CHECK ---
+      if (trackingGuide) {
+        // Check if guide already exists in non-technical OrderReceipts
+        const existingReceipt = await (tx as any).orderReceipt.findUnique({
+          where: { receiptNumber: trackingGuide }
+        });
+
+        // If it exists, we must only allow it if it's ALREADY associated with this batch 
+        // (e.g. part of a partial update or the same batch being updated again)
+        // But since we are renaming technical IDs to this guide, if it exists, it means 
+        // another REAL guide or batch already has it.
+        if (existingReceipt && !existingReceipt.receiptNumber.startsWith('SN-') && !existingReceipt.receiptNumber.startsWith('S/N-')) {
+           // Check if any order with this receipt number belongs to a DIFFERENT batch
+           const otherOrder = await tx.order.findFirst({
+             where: { 
+               receiptNumber: trackingGuide,
+               NOT: { exchangeBatchItems: { some: { batchId: batchId } } }
+             }
+           });
+           if (otherOrder) {
+             throw new Error(`La guía "${trackingGuide}" ya existe y está asociada a otros pedidos (ej: ${otherOrder.orderNumber}). Por favor usa un número diferente.`);
+           }
+        }
+      }
+
       let batch: any = null;
       let orderIds: string[] = [];
       let receiptsToProcess: string[] = [];

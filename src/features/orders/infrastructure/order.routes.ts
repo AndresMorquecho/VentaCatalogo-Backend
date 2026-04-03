@@ -119,6 +119,7 @@ router.get('/generate-receipt-number', authenticate, requirePermission('orders.c
 router.get('/generate-order-number', authenticate, requirePermission('orders.create'), orderController.generateOrderNumber);
 router.get('/check-receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.checkReceiptExists);
 router.get('/generate-packing-number', authenticate, requirePermission('reception.confirm'), orderController.generatePackingNumber);
+router.post('/generate-packing-number', authenticate, requirePermission('reception.confirm'), orderController.generatePackingNumber);
 router.get('/generate-delivery-number', authenticate, requirePermission('delivery.confirm'), orderController.generateDeliveryNumber);
 router.get('/reception-batches', authenticate, requirePermission('reception.confirm'), orderController.getReceptionBatches);
 router.get('/delivery-batches', authenticate, requirePermission('delivery.confirm'), orderController.getDeliveryBatches);

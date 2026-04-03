@@ -57,7 +57,7 @@ export class BatchDeliverOrdersUseCase {
         finalDeliveryNumber = deliveryBatch.deliveryNumber;
       } else {
         // --- 🔒 CONCURRENCY CHECK ---
-        const finalDeliveryNumber = await getNextSequence('EN-', 'DELIVERY');
+        const finalDeliveryNumber = await getNextSequence('EN-', 'DELIVERY', tx);
         console.log(`✅ Robust delivery number generated: ${finalDeliveryNumber}`);
         data.deliveryNumber = finalDeliveryNumber;
 

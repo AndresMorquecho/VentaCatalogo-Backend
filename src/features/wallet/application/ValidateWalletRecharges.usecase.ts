@@ -18,7 +18,7 @@ export class ValidateWalletRechargesUseCase {
             console.log(`[ValidateWalletRecharges] Validating ${dto.rechargeIds?.length} recharges by ${validatedBy}`);
             
             if (!dto.rechargeIds || dto.rechargeIds.length === 0) {
-                return Result.fail('No recharge IDs provided');
+                return Result.fail('No se proporcionaron IDs de recarga para validar.');
             }
 
             const recharges = await prisma.walletRecharge.findMany({
@@ -34,8 +34,8 @@ export class ValidateWalletRechargesUseCase {
             });
 
             if (recharges.length === 0) {
-                console.warn(`[ValidateWalletRecharges] No recharges found in PENDIENTE_VALIDACION for IDs: ${dto.rechargeIds}`);
-                return Result.fail('No pending recharges found for the provided IDs. They might be already validated.');
+                console.warn(`[ValidateWalletRecharges] No se encontraron recargas pendientes para validar.`);
+                return Result.fail('Las recargas seleccionadas ya no están pendientes de validación o ya fueron procesadas por otro usuario.');
             }
 
             // Using transaction to ensure atomic updates
@@ -43,8 +43,23 @@ export class ValidateWalletRechargesUseCase {
                 const updatedRecharges = [];
 
                 for (let i = 0; i < recharges.length; i++) {
-                    const recharge = recharges[i];
+                    const rechargeId = recharges[i].id;
                     
+                    // --- 🔒 CONCURRENCY CHECK: Fetch latest state inside transaction ---
+                    const freshRecharge = await tx.walletRecharge.findUnique({
+                        where: { id: rechargeId },
+                        include: { client: { include: { clientAccount: true } } }
+                    });
+
+                    if (!freshRecharge) {
+                        throw new Error(`La recarga ${rechargeId} ya no existe.`);
+                    }
+
+                    if (freshRecharge.status !== 'PENDIENTE_VALIDACION') {
+                        throw new Error(`Conflicto de Concurrencia: La recarga de ${freshRecharge.client.firstName} por $${freshRecharge.amount} ya fue procesada por otro administrador.`);
+                    }
+
+                    const recharge = freshRecharge;
                     let finalBankAccountId = recharge.bankAccountId;
                     
                     // AUTO-REPAIR: If it's EFECTIVO and missing bankAccountId, try to find a CASH account
@@ -62,16 +77,29 @@ export class ValidateWalletRechargesUseCase {
                         throw new Error(`La recarga ${recharge.id} (${recharge.paymentMethod}) no tiene una cuenta bancaria asociada y no se encontró una cuenta de CAJA automática.`);
                     }
 
-                    // 1. Update recharge status
-                    const updatedRecharge = await tx.walletRecharge.update({
-                        where: { id: recharge.id },
+                    // 1. ATOMIC UPDATE: Only update if status is still PENDIENTE_VALIDACION
+                    // This prevents double validation at the database level
+                    const updateResult = await tx.walletRecharge.updateMany({
+                        where: { 
+                            id: rechargeId,
+                            status: 'PENDIENTE_VALIDACION'
+                        },
                         data: {
                             status: 'VALIDADO',
-                            bankAccountId: finalBankAccountId, // Ensure it's saved if auto-assigned
+                            bankAccountId: finalBankAccountId,
                             validatedByName: validatedBy,
                             validatedAt: new Date()
                         }
                     });
+
+                    if (updateResult.count === 0) {
+                        // This means someone else already validated it
+                        const someoneElse = await tx.walletRecharge.findUnique({
+                            where: { id: rechargeId },
+                            select: { validatedByName: true }
+                        });
+                        throw new Error(`Conflicto: La recarga de ${recharge.client.firstName} ($${recharge.amount}) ya fue procesada${someoneElse?.validatedByName ? ` por ${someoneElse.validatedByName}` : ''}.`);
+                    }
 
                     // 2. Ensure client account exists
                     let clientAccountId = recharge.client.clientAccount?.id;
@@ -106,9 +134,6 @@ export class ValidateWalletRechargesUseCase {
                     const internalRef = `${generatedRef}-INT`;
                     
                     const clientFullName = recharge.client.firstName;
-                    const methodLabel = recharge.paymentMethod === 'TRANSFERENCIA' ? 'Transferencia' :
-                                       recharge.paymentMethod === 'DEPOSITO' ? 'Depósito' : 
-                                       recharge.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Pago';
 
                     // 4. Create Financial Records (Audit Trail)
                     // 4a. INCOME: External -> Bank Account
@@ -207,7 +232,7 @@ export class ValidateWalletRechargesUseCase {
                         }
                     });
 
-                    updatedRecharges.push(updatedRecharge);
+                    updatedRecharges.push({ id: rechargeId, status: 'VALIDADO' });
                 }
 
                 return updatedRecharges;
@@ -217,8 +242,8 @@ export class ValidateWalletRechargesUseCase {
             return Result.ok(results);
 
         } catch (error) {
-            console.error('[ValidateWalletRecharges] Failed to validate recharges:', error);
-            return Result.fail(error instanceof Error ? error.message : 'Unknown error during validation');
+            console.error('[ValidateWalletRecharges] Error al validar recargas:', error);
+            return Result.fail(error instanceof Error ? error.message : 'Error desconocido durante la validación.');
         }
     }
 }
