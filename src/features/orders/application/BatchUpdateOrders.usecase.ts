@@ -145,7 +145,6 @@ export class BatchUpdateOrdersUseCase {
                             const updated: any = await tx.order.update({
                                 where: { id: orderItem.id },
                                 data: {
-                                    orderNumber: orderItem.orderNumber,
                                     type: orderItem.type,
                                     total: orderItem.total,
                                     possibleDeliveryDate: orderItem.possibleDeliveryDate ? new Date(orderItem.possibleDeliveryDate) : existing.possibleDeliveryDate,
@@ -189,8 +188,7 @@ export class BatchUpdateOrdersUseCase {
                                             where: { id: payment.id },
                                             data: { 
                                                 amount: orderItem.deposit,
-                                                method: dto.paymentMethod,
-                                                bankAccountId: dto.bankAccountId
+                                                method: dto.paymentMethod
                                             }
                                         });
 
