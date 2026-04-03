@@ -23,6 +23,7 @@ export interface BatchCreateOrderDTO {
   };
   creditAmount?: number;
   notes?: string;
+  trackingGuide?: string;
   paymentData?: {
     payments: Array<{
       method: string;
@@ -50,7 +51,13 @@ export interface BatchCreateOrderDTO {
     deposit?: number;
     orderNumber?: string;
     sourceOrderId?: string;
+    sourceOrderNumber?: string;
+    sourceBrandName?: string;
+    sourceQuantity?: number;
+    sourceDescription?: string;
+    description?: string;
     notes?: string;
+    status?: string;
   }>;
 }
 
@@ -148,7 +155,7 @@ export class BatchCreateOrderUseCase {
       // But we show it as empty in the UI. We use a UUID to ensure uniqueness even if multiple are 'empty'
       const receiptNumber = dto.receiptNumber && dto.receiptNumber.trim() 
         ? dto.receiptNumber 
-        : `S/N-${crypto.randomUUID().slice(0, 8)}`;
+        : `SN-${crypto.randomUUID().slice(0, 8)}`;
 
       // 3. Prepare all entities
       let parentId: string | undefined = undefined;
@@ -170,6 +177,18 @@ export class BatchCreateOrderUseCase {
 
         if (existingReceipt) {
           receiptId = existingReceipt.id;
+          // Update header info even if exists (e.g. updating a draft)
+          await (tx as any).orderReceipt.update({
+            where: { id: receiptId },
+            data: {
+              salesChannel: dto.salesChannel,
+              transactionDate: dto.transactionDate,
+              paymentMethod: dto.paymentMethod,
+              bankAccountId: dto.bankAccountId || null,
+              notes: dto.notes || existingReceipt.notes,
+              version: { increment: 1 }
+            }
+          });
         } else {
           receiptId = crypto.randomUUID();
           
@@ -242,30 +261,37 @@ export class BatchCreateOrderUseCase {
             ? `${currentClient.firstName} ${(currentClient as any).lastName}`
             : currentClient.firstName;
 
-          // Preparar Order
-          allOrders.push({
+          const firstItem = orderDto.items?.[0];
+            const orderData: any = {
             id: orderId,
-            receiptNumber,
-            receiptId,
+            receiptNumber: receiptNumber,
+            clientId: currentClientId,
+            clientName: currentClientName,
             salesChannel: dto.salesChannel,
             type: orderDto.type,
             brandId: orderDto.brandId,
-            total: orderDto.total,
+            total: Number(orderDto.total),
             paymentMethod: dto.paymentMethod,
             bankAccountId: dto.bankAccountId || null,
             transactionDate: dto.transactionDate,
             possibleDeliveryDate: orderDto.possibleDeliveryDate,
-            status: (orderDto as any).status || (orderDto.type === 'CAMBIO' ? OrderStatus.RECOLECTADO : OrderStatus.POR_RECIBIR),
+            status: orderDto.status || (orderDto.type === 'CAMBIO' ? OrderStatus.POR_ENVIAR : OrderStatus.POR_RECIBIR),
             parentOrderId: i > 0 ? parentId : null,
-            sourceOrderId: orderDto.sourceOrderId || null,
-            orderNumber: orderDto.actualOrderNumber || null,
-            clientId: currentClientId,
-            clientName: currentClientName,
-            notes: orderDto.notes || dto.notes || '',
-            createdByName: dto.createdByName || createdBy,
+            receiptId: receiptId,
+            notes: orderDto.notes || dto.notes,
+            orderNumber: orderDto.orderNumber || orderDto.actualOrderNumber, // Ensure orderNumber is saved
+            createdByName: createdBy,
             createdAt: orderCreatedAt,
-            version: 1
-          });
+            version: 1,
+            sourceOrderId: orderDto.sourceOrderId,
+            sourceOrderNumber: orderDto.sourceOrderNumber,
+            sourceBrandName: orderDto.sourceBrandName,
+            sourceQuantity: orderDto.sourceQuantity,
+            sourceDescription: orderDto.sourceDescription,
+            description: orderDto.description,
+            trackingGuide: dto.trackingGuide,
+          };
+          allOrders.push(orderData);
 
           // Preparar Items
           orderDto.items.forEach((item: any) => {
@@ -889,6 +915,7 @@ export class BatchCreateOrderUseCase {
           status: raw.status as any,
           parentOrderId: raw.parentOrderId || undefined,
           orderNumber: raw.orderNumber || undefined,
+          trackingGuide: raw.trackingGuide || undefined,
           clientId: raw.clientId,
           clientName: raw.clientName,
           notes: raw.notes || undefined,

@@ -73,12 +73,58 @@ export class StatusTransitionService {
     trackingGuide?: string
   ): Promise<any> {
     // Load the current batch
-    const batch = await prisma.exchangeBatch.findUnique({
+    let batch = await prisma.exchangeBatch.findUnique({
       where: { id: batchId }
     });
 
+    // Fallback: Search by batchNumber
     if (!batch) {
-      throw new Error(`ExchangeBatch with id ${batchId} not found`);
+      batch = await prisma.exchangeBatch.findUnique({
+        where: { batchNumber: batchId }
+      });
+    }
+
+    // Fallback: Search by receiptNumber in items
+    if (!batch) {
+      const itemWithBatch = await prisma.exchangeBatchItem.findFirst({
+        where: { receiptNumber: batchId },
+        include: { batch: true }
+      });
+      if (itemWithBatch) {
+        batch = itemWithBatch.batch;
+        batchId = batch.id;
+      }
+    }
+
+    if (!batch) {
+      // If still no batch, check if there are orders with this receiptNumber to update them directly
+      console.log(`[StatusTransition] No explicit batch found for ${batchId}, checking for orders with this receiptNumber...`);
+      const orders = await prisma.order.findMany({
+        where: { receiptNumber: batchId, type: 'CAMBIO' }
+      });
+      console.log(`[StatusTransition] Found ${orders.length} orders for receipt ${batchId}`);
+
+      if (orders.length > 0) {
+          // Manual update for unbatched orders
+          let orderStatus: any = null;
+          if (newStatus === 'EN_TRANSITO') orderStatus = 'EN_TRANSITO';
+          else if (newStatus === 'EN_BODEGA') orderStatus = 'RECIBIDO_EN_BODEGA';
+          else if (newStatus === 'ENTREGADO') orderStatus = 'ENTREGADO';
+
+          if (orderStatus) {
+              await prisma.order.updateMany({
+                  where: { receiptNumber: batchId, type: 'CAMBIO' },
+                  data: { 
+                      status: orderStatus,
+                      trackingGuide: trackingGuide || undefined,
+                      updatedAt: new Date()
+                  }
+              });
+              return { success: true, message: 'Orders updated by receipt number' };
+          }
+      }
+      
+      throw new Error(`ExchangeBatch o Guía with identifier ${batchId} not found`);
     }
 
     // Validate the transition
@@ -118,6 +164,65 @@ export class StatusTransitionService {
       if (newStatus === 'EN_TRANSITO') orderStatus = 'EN_TRANSITO';
       else if (newStatus === 'EN_BODEGA') orderStatus = 'RECIBIDO_EN_BODEGA';
       else if (newStatus === 'ENTREGADO') orderStatus = 'ENTREGADO';
+
+      // If we have a tracking guide, we might want to standardize the receipt numbers
+      // of all items in this batch to match the guide if they were technical IDs
+      // If we have a Tracking Guide, propagation of this number to all related fields is critical
+      // for the UI to stop showing "-" or "SIN GUÍA".
+      if (trackingGuide) {
+        const orderIds = batch.items.map(item => item.orderId);
+        
+        // 1. Update ALL orders in this batch to use the Guide as Receipt Number
+        await tx.order.updateMany({
+          where: { id: { in: orderIds } },
+          data: { 
+            receiptNumber: trackingGuide,
+            trackingGuide: trackingGuide,
+            version: { increment: 1 } 
+          }
+        });
+
+        // 2. Identify all UNIQUE old technical receipts to rename them in OrderReceipt table
+        const technicalReceipts = [...new Set(batch.items
+          .map(item => item.receiptNumber)
+          .filter(r => r.startsWith('S/N-') || r.startsWith('SN-')))];
+
+        for (const oldReceipt of technicalReceipts) {
+          const newReceipt = trackingGuide;
+          
+          // Rename OrderReceipt record to maintain referential integrity with other orders sharing it
+          try {
+            const exists = await tx.orderReceipt.findUnique({ where: { receiptNumber: newReceipt } });
+            if (!exists) {
+              await (tx as any).orderReceipt.update({
+                where: { receiptNumber: oldReceipt },
+                data: { receiptNumber: newReceipt, version: { increment: 1 } }
+              });
+            } else {
+              // If it already exists, just update remaining orders that weren't in this batch but share the old ID
+              await tx.order.updateMany({
+                where: { receiptNumber: oldReceipt },
+                data: { receiptNumber: newReceipt, version: { increment: 1 } }
+              });
+            }
+          } catch (e: any) {
+            console.log(`[StatusTransition] Optional rename of OrderReceipt ${oldReceipt} skipped: ${e.message}`);
+          }
+
+          // 3. Ensure ANY other ExchangeBatchItem sharing this technical ID is also updated
+          await (tx as any).exchangeBatchItem.updateMany({
+            where: { receiptNumber: oldReceipt },
+            data: { receiptNumber: newReceipt }
+          });
+        }
+        
+        // 4. Update THIS batch's item references in-memory for the returned object
+        batch.items.forEach(item => {
+          if (item.receiptNumber.startsWith('S/N-') || item.receiptNumber.startsWith('SN-')) {
+            item.receiptNumber = trackingGuide;
+          }
+        });
+      }
 
       if (orderStatus) {
         const orderIds = batch.items.map(item => item.orderId);

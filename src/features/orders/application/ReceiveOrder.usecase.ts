@@ -64,8 +64,8 @@ export class ReceiveOrderUseCase {
         throw new Error('Pedido no encontrado');
       }
 
-      if (order.status !== 'POR_RECIBIR') {
-        throw new Error('El pedido ya fue recibido anteriormente');
+      if (!['POR_RECIBIR', 'EN_TRANSITO'].includes(order.status)) {
+        throw new Error('El pedido ya fue recibido anteriormente o no tiene un estado válido para recepción.');
       }
 
       // 2. Actualizar pedido con datos de recepción

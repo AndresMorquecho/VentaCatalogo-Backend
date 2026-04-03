@@ -69,7 +69,7 @@ export class DeleteOrderUseCase {
                     // Si es un CAMBIO, permitimos borrar aunque esté RECIBIDO_EN_BODEGA, 
                     // a menos que el usuario lo prohíba explícitamente.
                     // Pero la regla general de hasRealMovement sigue aplicando para pedidos normales.
-                    const isExchange = order.sourceOrderId !== null || order.receiptNumber?.startsWith('CAM-');
+                    const isExchange = order.type === 'CAMBIO' || order.sourceOrderId !== null || order.receiptNumber?.includes('CAM');
                     
                     const hasRealMovement = !isExchange && (order.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some(p => p.method === 'CREDITO_CLIENTE')));
 

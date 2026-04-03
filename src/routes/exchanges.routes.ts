@@ -11,6 +11,7 @@ import { CreateExchangeBatchUseCase } from '../features/orders/application/Creat
 import { GetExchangeBatchesUseCase } from '../features/orders/application/GetExchangeBatches.usecase';
 import { ReceiveExchangeBatchUseCase } from '../features/orders/application/ReceiveExchangeBatch.usecase';
 import { UpdateExchangeBatchStatusUseCase } from '../features/orders/application/UpdateExchangeBatchStatus.usecase';
+import { GetActiveExchangeOrderIdsUseCase } from '../features/orders/application/GetActiveExchangeOrderIds.usecase';
 import { StatusTransitionService } from '../features/orders/application/StatusTransitionService';
 
 const router = Router();
@@ -28,8 +29,20 @@ const getExchangeDetail = new GetExchangeDetailUseCase();
 const createExchangeBatch = new CreateExchangeBatchUseCase();
 const getExchangeBatches = new GetExchangeBatchesUseCase();
 const receiveExchangeBatch = new ReceiveExchangeBatchUseCase();
+const getActiveExchangeOrderIds = new GetActiveExchangeOrderIdsUseCase();
 
 // ── Exchange Batches (grupos de cambio) — MUST be before /:id ───────────────
+
+// GET /api/exchanges/active-order-ids — obtener IDs de pedidos en exchanges activos
+router.get('/active-order-ids', authenticate, requirePermission('exchanges.view'), async (req, res, next): Promise<void> => {
+  try {
+    const { clientId } = req.query;
+    const data = await getActiveExchangeOrderIds.execute(clientId as string | undefined);
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // GET /api/exchanges/batches — listar lotes
 router.get('/batches', authenticate, requirePermission('exchanges.view'), async (req, res, next): Promise<void> => {

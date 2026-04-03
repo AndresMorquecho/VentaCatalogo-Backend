@@ -47,6 +47,14 @@ export interface CreateOrderDTO {
   creditAmount?: number;
   parentOrderId?: string;
   orderNumber?: string;
+  status?: string;
+  // Structured exchange fields
+  sourceOrderId?: string;
+  sourceOrderNumber?: string;
+  sourceBrandName?: string;
+  sourceQuantity?: number;
+  sourceDescription?: string;
+  description?: string;
 }
 
 
@@ -387,7 +395,7 @@ export class CreateOrderUseCase {
             bankAccountId: dto.bankAccountId || null,
             transactionDate: dto.transactionDate,
             possibleDeliveryDate: dto.possibleDeliveryDate,
-            status: OrderStatus.POR_RECIBIR,
+            status: (dto.status as OrderStatus) || OrderStatus.POR_RECIBIR,
             parentOrderId: dto.parentOrderId || null,
             orderNumber: actualOrderNumber,
             clientId: dto.clientId,
@@ -395,6 +403,12 @@ export class CreateOrderUseCase {
             notes: dto.notes || null,
             createdByName: dto.createdByName || createdBy || null,
             createdAt: dto.createdAt ? new Date(dto.createdAt) : new Date(),
+            sourceOrderId: dto.sourceOrderId,
+            sourceOrderNumber: dto.sourceOrderNumber,
+            sourceBrandName: dto.sourceBrandName,
+            sourceQuantity: dto.sourceQuantity,
+            sourceDescription: dto.sourceDescription,
+            description: dto.description,
             version: 1,
             items: { create: itemsItems.map(i => ({
                 id: i.id,
@@ -472,6 +486,12 @@ export class CreateOrderUseCase {
         clientId: savedOrder.clientId,
         clientName: savedOrder.clientName,
         notes: savedOrder.notes || undefined,
+        sourceOrderId: (savedOrder as any).sourceOrderId || undefined,
+        sourceOrderNumber: (savedOrder as any).sourceOrderNumber || undefined,
+        sourceBrandName: (savedOrder as any).sourceBrandName || undefined,
+        sourceQuantity: (savedOrder as any).sourceQuantity || undefined,
+        sourceDescription: (savedOrder as any).sourceDescription || undefined,
+        description: (savedOrder as any).description || undefined,
         items: savedOrder.items.map((i: any) => ({
           id: i.id,
           productName: i.productName,

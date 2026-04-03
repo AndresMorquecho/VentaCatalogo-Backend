@@ -15,7 +15,13 @@ export class PrismaOrderRepository implements IOrderRepository {
     }
 
     if (filters.status) {
-      where.status = filters.status;
+      if (Array.isArray(filters.status)) {
+        where.status = { in: filters.status as OrderStatus[] };
+      } else if (typeof filters.status === 'string' && filters.status.includes(',')) {
+        where.status = { in: filters.status.split(',') as OrderStatus[] };
+      } else {
+        where.status = filters.status as OrderStatus;
+      }
     }
     if (filters.clientId) where.clientId = filters.clientId;
     if (filters.brandId) where.brandId = filters.brandId;
@@ -128,6 +134,7 @@ export class PrismaOrderRepository implements IOrderRepository {
           },
           brand: true,
           client: { select: { identificationNumber: true } },
+          receipt: true,
           childOrders: {
             include: {
               items: true,
@@ -148,12 +155,13 @@ export class PrismaOrderRepository implements IOrderRepository {
                 }
               },
               brand: true,
-              client: { select: { identificationNumber: true } }
+              client: { select: { identificationNumber: true } },
+              receipt: true
             }
           },
           _count: {
             select: { childOrders: true }
-          }
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -226,9 +234,11 @@ export class PrismaOrderRepository implements IOrderRepository {
               }
             },
             brand: true,
-            client: { select: { identificationNumber: true } }
+            client: { select: { identificationNumber: true } },
+            receipt: true
           }
-        }
+        },
+        receipt: true
       }
     });
 
@@ -239,14 +249,16 @@ export class PrismaOrderRepository implements IOrderRepository {
     const order = await prisma.order.findFirst({
       where: { receiptNumber },
       include: {
-        items: true,
         payments: true,
         brand: true,
+        receipt: true,
+        items: true,
         childOrders: {
           include: {
             items: true,
             payments: true,
-            brand: true
+            brand: true,
+            receipt: true
           }
         }
       }
@@ -379,6 +391,12 @@ export class PrismaOrderRepository implements IOrderRepository {
         parentOrderId: raw.parentOrderId || undefined,
         orderNumber: raw.orderNumber || undefined,
         exchangeItemId: raw.exchangeItemId || undefined,
+        sourceOrderId: raw.sourceOrderId || undefined,
+        sourceOrderNumber: raw.sourceOrderNumber || undefined,
+        sourceBrandName: raw.sourceBrandName || undefined,
+        sourceQuantity: raw.sourceQuantity !== null ? Number(raw.sourceQuantity) : undefined,
+        sourceDescription: raw.sourceDescription || undefined,
+        description: raw.description || undefined,
         items: raw.items.map((item: any) => ({
           id: item.id,
           productName: item.productName,
@@ -516,6 +534,12 @@ export class PrismaOrderRepository implements IOrderRepository {
       parentOrderId: json.parentOrderId,
       orderNumber: json.orderNumber,
       exchangeItemId: json.exchangeItemId,
+      sourceOrderId: json.sourceOrderId,
+      sourceOrderNumber: json.sourceOrderNumber,
+      sourceBrandName: json.sourceBrandName,
+      sourceQuantity: json.sourceQuantity,
+      sourceDescription: json.sourceDescription,
+      description: json.description,
       createdAt: json.createdAt,
       updatedAt: json.updatedAt,
       version: json.version

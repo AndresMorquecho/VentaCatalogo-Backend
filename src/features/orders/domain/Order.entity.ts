@@ -34,6 +34,12 @@ export interface OrderProps {
   childOrders?: Order[];
   childOrdersCount?: number;
   exchangeItemId?: string;
+  sourceOrderId?: string;
+  sourceOrderNumber?: string;
+  sourceBrandName?: string;
+  sourceQuantity?: number;
+  sourceDescription?: string;
+  description?: string;
   createdAt: Date;
   updatedAt: Date;
   version: number;
@@ -150,7 +156,7 @@ export class Order extends Entity<OrderProps> {
   }
 
   canBeReceived(): boolean {
-    return this.props.status === OrderStatus.POR_RECIBIR;
+    return this.props.status === OrderStatus.POR_RECIBIR || this.props.status === OrderStatus.EN_TRANSITO;
   }
 
   canBeDelivered(): boolean {

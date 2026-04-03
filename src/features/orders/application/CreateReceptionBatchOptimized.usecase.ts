@@ -286,8 +286,8 @@ export class CreateReceptionBatchOptimizedUseCase {
           // Create mode: Allow POR_RECIBIR, or ENTREGADO if coming from exchange batch
           const itemDto = dto.items.find(i => i.orderId === order.id);
           const isFromExchange = itemDto?.fromExchangeBatch === true;
-          if (order.status !== 'POR_RECIBIR' && !(isFromExchange && order.status === 'ENTREGADO')) {
-            throw new Error(`El pedido ${order.receiptNumber} ya fue recibido anteriormente`);
+          if (order.status !== 'POR_RECIBIR' && order.status !== 'EN_TRANSITO' && !(isFromExchange && order.status === 'ENTREGADO')) {
+            throw new Error(`El pedido ${order.receiptNumber} tiene un estado (${order.status}) que no permite recepción.`);
           }
         }
       }

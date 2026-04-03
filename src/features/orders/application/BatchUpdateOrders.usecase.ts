@@ -24,6 +24,13 @@ export interface BatchUpdateOrdersDTO {
         possibleDeliveryDate: Date;
         orderNumber?: string;
         quantity: number; // For item update
+        sourceOrderId?: string;
+        sourceOrderNumber?: string;
+        sourceBrandName?: string;
+        sourceQuantity?: number;
+        sourceDescription?: string;
+        description?: string;
+        notes?: string;
     }>;
 }
 
@@ -43,6 +50,19 @@ export class BatchUpdateOrdersUseCase {
                 if (lastClosure && new Date(dto.transactionDate) <= lastClosure.toDate) {
                     throw new Error('No se puede procesar el recibo: El periodo de caja para esta fecha ya está cerrado.');
                 }
+
+                // Actualizar encabezado del recibo (OrderReceipt)
+                await (tx as any).orderReceipt.update({
+                    where: { receiptNumber: dto.receiptNumber },
+                    data: {
+                        salesChannel: dto.salesChannel,
+                        transactionDate: dto.transactionDate,
+                        paymentMethod: dto.paymentMethod,
+                        bankAccountId: dto.bankAccountId || null,
+                        notes: dto.notes,
+                        version: { increment: 1 }
+                    }
+                });
 
                 // Balance tracking maps to ensure sequentiality within the batch
                 const accountBalancesMap = new Map<string, number>();
@@ -109,14 +129,14 @@ export class BatchUpdateOrdersUseCase {
 
                     if (orderItem.id) {
                         // UPDATE EXISTING
-                        const existing = await tx.order.findUnique({
+                        const existing: any = await tx.order.findUnique({
                             where: { id: orderItem.id },
                             include: { items: true, payments: true, brand: true }
                         });
 
                         if (existing) {
                             const currentPayments = existing.payments || [];
-                            const hasRealMovement = existing.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some(p => p.method === 'CREDITO_CLIENTE'));
+                            const hasRealMovement = existing.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some((p: any) => p.method === 'CREDITO_CLIENTE'));
                             
                             if (hasRealMovement) {
                                 throw new Error(`No se puede editar la marca ${existing.brand.name}: Ya tiene movimientos procesados (recepción o abonos adicionales).`);
@@ -136,13 +156,22 @@ export class BatchUpdateOrdersUseCase {
                                     transactionDate: dto.transactionDate ? new Date(dto.transactionDate) : existing.transactionDate,
                                     createdAt: dto.createdAt ? new Date(dto.createdAt) : existing.createdAt,
                                     updatedAt: new Date(),
-                                    parentOrderId: i > 0 ? parentId : null
-                                }
+                                    parentOrderId: i > 0 ? parentId : null,
+                                    orderNumber: orderItem.orderNumber ?? existing.orderNumber, // Added to ensure CAM prefix is saved
+                                    sourceOrderId: orderItem.sourceOrderId ?? existing.sourceOrderId,
+                                    sourceOrderNumber: orderItem.sourceOrderNumber ?? existing.sourceOrderNumber,
+                                    sourceBrandName: orderItem.sourceBrandName ?? existing.sourceBrandName,
+                                    sourceQuantity: orderItem.sourceQuantity ?? existing.sourceQuantity,
+                                    sourceDescription: orderItem.sourceDescription ?? existing.sourceDescription,
+                                    description: orderItem.description ?? existing.description,
+                                    bankAccountId: dto.bankAccountId ?? existing.bankAccountId,
+                                    paymentMethod: dto.paymentMethod ?? existing.paymentMethod
+                                } as any
                             });
 
                             // Update payment if deposit changed and there is only one payment
                             if (orderItem.deposit !== undefined) {
-                                const currentSum = Number(existing.payments.reduce((sum, p) => sum + Number(p.amount), 0));
+                                const currentSum = Number(existing.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0));
                                 const diff = orderItem.deposit - currentSum;
 
                                 if (Math.abs(diff) > 0.01) {
@@ -152,22 +181,49 @@ export class BatchUpdateOrdersUseCase {
 
                                     if (existing.payments.length === 1) {
                                         const payment = existing.payments[0];
+                                        const oldBankId = existing.bankAccountId;
+                                        const newBankId = dto.bankAccountId;
+
+                                        // Update payment details
                                         await tx.orderPayment.update({
                                             where: { id: payment.id },
-                                            data: { amount: orderItem.deposit }
+                                            data: { 
+                                                amount: orderItem.deposit,
+                                                method: dto.paymentMethod,
+                                                bankAccountId: dto.bankAccountId
+                                            }
                                         });
 
-                                        if (existing.bankAccountId) {
+                                        // Balance correction if bank changed
+                                        if (oldBankId !== newBankId) {
+                                            if (oldBankId) {
+                                                await tx.bankAccount.update({
+                                                    where: { id: oldBankId },
+                                                    data: { currentBalance: { decrement: Number(payment.amount) } }
+                                                });
+                                            }
+                                            if (newBankId) {
+                                                await tx.bankAccount.update({
+                                                    where: { id: newBankId },
+                                                    data: { currentBalance: { increment: orderItem.deposit } }
+                                                });
+                                            }
+                                        } else if (newBankId && Math.abs(diff) > 0.01) {
+                                            // Same bank, just amount changed
                                             await tx.bankAccount.update({
-                                                where: { id: existing.bankAccountId },
+                                                where: { id: newBankId },
                                                 data: { currentBalance: { increment: diff } }
                                             });
                                         }
 
                                         // Update Financial Record
                                         await tx.financialRecord.updateMany({
-                                            where: { orderId: existing.id, amount: payment.amount, type: 'PAYMENT' },
-                                            data: { amount: orderItem.deposit }
+                                            where: { orderId: existing.id, orderPaymentId: payment.id, type: 'PAYMENT' },
+                                            data: { 
+                                                amount: orderItem.deposit,
+                                                bankAccountId: dto.bankAccountId,
+                                                paymentMethod: dto.paymentMethod
+                                            }
                                         });
                                     } else if (orderItem.deposit > 0) {
                                         // Case where it had 0 deposit and now it has one
@@ -271,8 +327,15 @@ export class BatchUpdateOrdersUseCase {
                                 parentOrderId: i > 0 ? parentId : null,
                                 notes: dto.notes,
                                 createdByName: updatedBy,
+                                orderNumber: orderItem.orderNumber,
                                 createdAt: dto.createdAt,
                                 version: 1,
+                                sourceOrderId: orderItem.sourceOrderId,
+                                sourceOrderNumber: orderItem.sourceOrderNumber,
+                                sourceBrandName: orderItem.sourceBrandName,
+                                sourceQuantity: orderItem.sourceQuantity,
+                                sourceDescription: orderItem.sourceDescription,
+                                description: orderItem.description,
                                 items: {
                                     create: [{
                                         id: crypto.randomUUID(),
@@ -283,7 +346,7 @@ export class BatchUpdateOrdersUseCase {
                                         brandName: orderItem.brandName
                                     }]
                                 }
-                            }
+                            } as any
                         });
 
                         if (orderItem.deposit > 0) {

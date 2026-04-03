@@ -24,6 +24,7 @@ export class UpdateExchangeBatchStatusUseCase {
    * @throws StateTransitionError if the transition is invalid
    */
   async execute(batchId: string, newStatus: ExchangeBatchStatus, trackingGuide?: string) {
+    console.log(`[UpdateExchangeBatchStatus] Request for batchId: ${batchId}, newStatus: ${newStatus}`);
     return await this.statusTransitionService.transitionBatchStatus(
       batchId,
       newStatus,

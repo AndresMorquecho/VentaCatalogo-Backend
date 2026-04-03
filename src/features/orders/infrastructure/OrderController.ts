@@ -176,6 +176,7 @@ export class OrderController {
         creditAmount: creditAmount,
         notes: req.body.notes,
         paymentData: paymentData, // Agregar datos de múltiples pagos
+        trackingGuide: req.body.tracking_guide || req.body.trackingGuide || null,
         orders: req.body.orders.map((o: any) => ({
           brandId: o.brand_id,
           brandName: o.brand_name,
@@ -190,6 +191,11 @@ export class OrderController {
           deposit: Number(o.deposit || 0),
           orderNumber: o.orderNumber || o.order_number,
           sourceOrderId: o.sourceOrderId || o.source_order_id,
+          sourceOrderNumber: o.sourceOrderNumber || o.source_order_number,
+          sourceBrandName: o.sourceBrandName || o.source_brand_name,
+          sourceQuantity: o.sourceQuantity || o.source_quantity,
+          sourceDescription: o.sourceDescription || o.source_description,
+          description: o.description,
           notes: o.notes
         }))
       };
@@ -264,7 +270,8 @@ export class OrderController {
           notes: p.notes
         })),
         parentOrderId: req.body.parentOrderId || req.body.parent_order_id,
-        orderNumber: req.body.orderNumber || req.body.order_number
+        orderNumber: req.body.orderNumber || req.body.order_number,
+        status: req.body.status || req.body.state
       };
 
       const result = await this.createOrderUseCase.execute(dto, req.user!.username);
@@ -303,6 +310,7 @@ export class OrderController {
           items: true,
           payments: true,
           brand: true,
+          receipt: true,
           exchangeBatchItems: {
             include: {
               batch: true
@@ -345,11 +353,12 @@ export class OrderController {
         return HttpResponse.notFound(res, 'Order not found');
       }
 
-      // 1. BUSINESS RULE: Only 'POR_RECIBIR' orders without additional movements can be edited
+      // 1. BUSINESS RULE: Only orders in initial states without extra payments can be fully edited
+      const canEditStatus = ['POR_RECIBIR', 'POR_ENVIAR', 'EN_TRANSITO'].includes(order.status);
       const orderPayments = order.payments || [];
       const hasExtraPayments = orderPayments.length > 2 || (orderPayments.length > 1 && !orderPayments.some((p: any) => p.method === 'CREDITO_CLIENTE'));
 
-      if (order.status !== 'POR_RECIBIR' || hasExtraPayments) {
+      if (!canEditStatus || hasExtraPayments) {
         let reason = 'No se puede editar este pedido porque ya tiene movimientos (recepción o abonos adicionales).';
         if (order.status === 'ENTREGADO') reason = 'No se puede editar un pedido que ya ha sido entregado.';
         if (order.status === 'RECIBIDO_EN_BODEGA') reason = 'No se puede editar un pedido que ya ha sido receptado en bodega.';
@@ -380,6 +389,7 @@ export class OrderController {
       const updateData: any = {
         receiptNumber: req.body.receipt_number || req.body.receiptNumber,
         salesChannel: req.body.sales_channel || req.body.salesChannel,
+        status: req.body.status, // Add status to allow manual transitions if rules allow
         type: req.body.type,
         brandId: req.body.brand_id || req.body.brandId,
         total: req.body.total !== undefined ? Number(req.body.total) : undefined,
@@ -680,7 +690,13 @@ export class OrderController {
           type: o.type,
           possibleDeliveryDate: new Date(o.possibleDeliveryDate || o.possible_delivery_date),
           orderNumber: o.orderNumber || o.order_number,
-          quantity: Number(o.quantity || 1)
+          quantity: Number(o.quantity || 1),
+          sourceOrderId: o.sourceOrderId || o.source_order_id,
+          sourceOrderNumber: o.sourceOrderNumber || o.source_order_number,
+          sourceBrandName: o.sourceBrandName || o.source_brand_name,
+          sourceQuantity: o.sourceQuantity || o.source_quantity,
+          sourceDescription: o.sourceDescription || o.source_description,
+          description: o.description
         }))
       };
 
