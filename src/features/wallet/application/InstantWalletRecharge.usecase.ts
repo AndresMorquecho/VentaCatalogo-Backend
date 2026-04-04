@@ -237,8 +237,14 @@ export class InstantWalletRechargeUseCase {
 
             return Result.ok(result);
 
-        } catch (error) {
+        } catch (error: any) {
             console.error('InstantWalletRechargeUseCase Error:', error);
+            
+            // Check for Prisma unique constraint violation code
+            if (error.code === 'P2002') {
+                return Result.fail('Conflicto: El N° TRANSACCIÓN o CONTROL ya fueron registrados en otra ventana o por otro usuario.');
+            }
+
             return Result.fail(error instanceof Error ? error.message : 'Failed to process instant recharge');
         }
     }

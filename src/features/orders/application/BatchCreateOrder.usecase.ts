@@ -162,19 +162,27 @@ export class BatchCreateOrderUseCase {
         // 1.2 Strict exchange source logic inside transaction to prevent race conditions
         const sourceOrderIds = dto.orders.map(o => o.sourceOrderId).filter(id => id) as string[];
         if (sourceOrderIds.length > 0) {
+          // Check if any of these source orders are already being used in another exchange
           const existingExchanges = await tx.order.findMany({
             where: { sourceOrderId: { in: sourceOrderIds } },
-            select: { sourceOrderId: true, orderNumber: true }
+            select: { sourceOrderId: true, orderNumber: true, receiptNumber: true }
           });
 
           if (existingExchanges.length > 0) {
-            const duplicatedSourceIds = existingExchanges.map(e => e.sourceOrderId) as string[];
-            const sourceOrders = await tx.order.findMany({
-              where: { id: { in: duplicatedSourceIds } },
-              select: { orderNumber: true }
-            });
-            const conflictNames = sourceOrders.map(so => so.orderNumber).join(", ");
-            throw new Error(`Doble devolución detectada: Las prendas de origen (${conflictNames}) ya fueron procesadas en otra guía por otro usuario.`);
+            const conflictInfo = existingExchanges.map(e => `Pedido ${e.orderNumber}`).join(", ");
+            throw new Error(`Doble devolución detectada: Las prendas de origen (${conflictInfo}) ya han sido procesadas en otra guía de cambio por otro usuario. Por favor verifica los datos.`);
+          }
+
+          // Also check that all source orders are currently in 'ENTREGADO' status
+          const sourceOrdersCurrentStatus = await tx.order.findMany({
+            where: { id: { in: sourceOrderIds } },
+            select: { id: true, orderNumber: true, status: true, receiptNumber: true }
+          });
+
+          for (const so of sourceOrdersCurrentStatus) {
+             if (so.status !== 'ENTREGADO') {
+               throw new Error(`Conflicto de Estado: El pedido origen ${so.orderNumber} (Guía: ${so.receiptNumber || '—'}) no está disponible para cambio porque su estado actual es "${so.status}". Es posible que ya esté siendo procesado.`);
+             }
           }
         }
 
@@ -190,23 +198,30 @@ export class BatchCreateOrderUseCase {
             receiptCreatedAt = now;
         }
 
-        await (tx as any).orderReceipt.create({
-          data: {
-            id: receiptId,
-            receiptNumber,
-            clientId: dto.clientId,
-            clientName: clientNameForReceipt,
-            salesChannel: dto.salesChannel,
-            createdAt: receiptCreatedAt,
-            transactionDate: dto.transactionDate,
-            paymentMethod: dto.paymentMethod,
-            bankAccountId: dto.bankAccountId || null,
-            transactionReference: dto.initialPayment?.reference || null,
-            notes: dto.notes || null,
-            createdByName: dto.createdByName || createdBy,
-            version: 1
+        try {
+          await (tx as any).orderReceipt.create({
+            data: {
+              id: receiptId,
+              receiptNumber,
+              clientId: dto.clientId,
+              clientName: clientNameForReceipt,
+              salesChannel: dto.salesChannel,
+              createdAt: receiptCreatedAt,
+              transactionDate: dto.transactionDate,
+              paymentMethod: dto.paymentMethod,
+              bankAccountId: dto.bankAccountId || null,
+              transactionReference: dto.initialPayment?.reference || null,
+              notes: dto.notes || null,
+              createdByName: dto.createdByName || createdBy,
+              version: 1
+            }
+          });
+        } catch (err: any) {
+          if (err.code === 'P2002' && err.meta?.target?.includes('receipt_number')) {
+            throw new Error(`Doble envío detectado: El número de recibo o guía "${receiptNumber}" ya fue registrado por otro usuario.`);
           }
-        });
+          throw err;
+        }
 
         // 2. Generar consecutivos de abonos (fuera del loop)
         const lastPayment = await prisma.orderPayment.findFirst({
@@ -702,7 +717,14 @@ export class BatchCreateOrderUseCase {
         // ============================================================================
         
         // 3. Crear todos los Orders de una vez
-        await tx.order.createMany({ data: allOrders });
+        try {
+          await tx.order.createMany({ data: allOrders });
+        } catch (err: any) {
+          if (err.code === 'P2002' && err.meta?.target?.includes('source_order_id')) {
+            throw new Error(`Doble cambio detectado: Uno de los pedidos originales ya ha sido procesado por otro usuario en un cambio diferente. Por favor verifica tu tabla.`);
+          }
+          throw err;
+        }
 
         // 4. Crear todos los Items de una vez
         if (allItems.length > 0) {
@@ -938,6 +960,9 @@ export class BatchCreateOrderUseCase {
       // Manage Prisma unique constraint errors (P2002)
       if (error.code === 'P2002') {
         const target = (error.meta?.target as string[]) || [];
+        if (target.includes('source_order_id')) {
+          return Result.fail('Doble cambio detectado: Uno de los pedidos originales ya ha sido procesado por otro usuario en un cambio diferente. Por favor verifica tu tabla.');
+        }
         if (target.includes('receipt_number')) {
           return Result.fail(`El número de guía ${dto.receiptNumber} ya existe en el sistema.`);
         }

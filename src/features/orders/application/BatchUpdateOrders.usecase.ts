@@ -417,6 +417,9 @@ export class BatchUpdateOrdersUseCase {
             return Result.ok(result);
         } catch (error: any) {
             console.error('[BatchUpdateOrdersUseCase] Error:', error);
+            if (error.code === 'P2002' && error.meta?.target?.includes('source_order_id')) {
+                return Result.fail('Doble cambio detectado: Uno de los pedidos originales ya ha sido procesado por otro usuario en un cambio diferente. Por favor verifica tu tabla.');
+            }
             return Result.fail(error.message || 'Error al actualizar el recibo.');
         }
     }

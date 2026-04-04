@@ -191,7 +191,7 @@ model Order {
   exchangeItemId       String?             @unique @map("exchange_item_id")
   creditNoteNumber     String?             @map("credit_note_number")
   creditNoteTotal      Decimal?            @map("credit_note_total") @db.Decimal(10, 2)
-  sourceOrderId        String?             @map("source_order_id")
+  sourceOrderId        String?             @unique @map("source_order_id")
   sourceOrderNumber    String?             @map("source_order_number")
   sourceBrandName      String?             @map("source_brand_name")
   sourceQuantity       Int?                @map("source_quantity")
@@ -358,8 +358,8 @@ model WalletRecharge {
   amount          Decimal      @db.Decimal(10, 2)
   paymentMethod   String       @map("payment_method")
   bankAccountId   String?      @map("bank_account_id")
-  reference       String?
-  controlValidation String?    @map("control_validation")
+  reference       String?    @unique
+  controlValidation String?    @unique @map("control_validation")
   notes           String?
   status          String       @default("PENDIENTE_VALIDACION")
   createdByName   String?      @map("created_by_name")

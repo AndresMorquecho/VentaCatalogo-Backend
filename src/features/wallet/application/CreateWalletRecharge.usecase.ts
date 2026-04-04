@@ -56,20 +56,30 @@ export class CreateWalletRechargeUseCase {
             const result = await prisma.$transaction(async (tx) => {
                 // --- 🔒 CONCURRENCY & DUPLICATE CHECK ---
                 if (dto.reference) {
+                    const trimmedRef = dto.reference.trim();
                     const existingRef = await tx.walletRecharge.findFirst({
-                        where: { reference: dto.reference }
+                        where: { reference: { equals: trimmedRef, mode: 'insensitive' } }
                     });
                     if (existingRef) {
-                        throw new Error(`El número de comprobante/referencia "${dto.reference}" ya ha sido utilizado en otra solicitud.`);
+                        throw new Error(`El número de TRANSACCIÓN / DOC "${trimmedRef}" ya ha sido utilizado en otra solicitud.`);
+                    }
+
+                    // Check in FinancialRecord too (using userReference)
+                    const existingFin = await tx.financialRecord.findFirst({
+                        where: { userReference: { equals: trimmedRef, mode: 'insensitive' } }
+                    });
+                    if (existingFin) {
+                        throw new Error(`El comprobante "${trimmedRef}" ya existe en los registros financieros globales.`);
                     }
                 }
 
                 if (dto.controlValidation) {
+                    const trimmedControl = dto.controlValidation.trim();
                     const existingControl = await tx.walletRecharge.findFirst({
-                        where: { controlValidation: dto.controlValidation }
+                        where: { controlValidation: { equals: trimmedControl, mode: 'insensitive' } }
                     });
                     if (existingControl) {
-                        throw new Error(`El código de validación/control "${dto.controlValidation}" ya ha sido utilizado en otra solicitud.`);
+                        throw new Error(`El código de CONTROL / VALIDACIÓN "${trimmedControl}" ya ha sido utilizado en otra solicitud.`);
                     }
                 }
 
@@ -216,8 +226,14 @@ export class CreateWalletRechargeUseCase {
 
             return Result.ok(result);
 
-        } catch (error) {
+        } catch (error: any) {
             console.error('CreateWalletRechargeUseCase Error:', error);
+            
+            // Catch database unique constraint violation
+            if (error.code === 'P2002') {
+                return Result.fail('Error de duplicidad: El número de TRANSACCIÓN o código de CONTROL ya ha sido registrado por otro administrador. Por favor verifique el historial.');
+            }
+
             return Result.fail(error instanceof Error ? error.message : 'Failed to create wallet recharge');
         }
     }
