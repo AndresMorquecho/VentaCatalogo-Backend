@@ -8,10 +8,10 @@ export class SystemSettingsController {
     async getSettings(_req: Request, res: Response) {
         try {
             const settings = await prisma.systemSettings.findMany();
-            res.json(settings);
+            return res.json(settings);
         } catch (error) {
             console.error('Error fetching settings:', error);
-            res.status(500).json({ error: 'Error al obtener configuraciones' });
+            return res.status(500).json({ error: 'Error al obtener configuraciones' });
         }
     }
 
@@ -34,10 +34,10 @@ export class SystemSettingsController {
                     updatedByName: updatedBy
                 }
             });
-            res.json(setting);
+            return res.json(setting);
         } catch (error) {
             console.error('Error updating setting:', error);
-            res.status(500).json({ error: 'Error al actualizar configuración' });
+            return res.status(500).json({ error: 'Error al actualizar configuración' });
         }
     }
 
@@ -46,10 +46,10 @@ export class SystemSettingsController {
             const notes = await prisma.noteTemplate.findMany({
                 orderBy: { createdAt: 'desc' }
             });
-            res.json(notes);
+            return res.json(notes);
         } catch (error) {
             console.error('Error fetching notes:', error);
-            res.status(500).json({ error: 'Error al obtener plantillas de notas' });
+            return res.status(500).json({ error: 'Error al obtener plantillas de notas' });
         }
     }
 
@@ -58,10 +58,10 @@ export class SystemSettingsController {
             const note = await prisma.noteTemplate.findFirst({
                 where: { isDefault: true, isActive: true }
             });
-            res.json(note || { content: '' });
+            return res.json(note || { content: '' });
         } catch (error) {
             console.error('Error fetching default note:', error);
-            res.status(500).json({ error: 'Error al obtener nota predeterminada' });
+            return res.status(500).json({ error: 'Error al obtener nota predeterminada' });
         }
     }
 
@@ -96,10 +96,10 @@ export class SystemSettingsController {
                     createdByName: createdBy
                 }
             });
-            res.json(note);
+            return res.json(note);
         } catch (error) {
             console.error('Error upserting note:', error);
-            res.status(500).json({ error: 'Error al guardar plantilla de nota' });
+            return res.status(500).json({ error: 'Error al guardar plantilla de nota' });
         }
     }
 
@@ -109,10 +109,93 @@ export class SystemSettingsController {
             await prisma.noteTemplate.delete({
                 where: { id }
             });
-            res.json({ success: true });
+            return res.json({ success: true });
         } catch (error) {
             console.error('Error deleting note:', error);
-            res.status(500).json({ error: 'Error al eliminar plantilla' });
+            return res.status(500).json({ error: 'Error al eliminar plantilla' });
+        }
+    }
+
+    // Order Types
+    async getOrderTypes(_req: Request, res: Response) {
+        try {
+            const types = await prisma.orderType.findMany({
+                orderBy: { name: 'asc' }
+            });
+            return res.json(types);
+        } catch (error) {
+            console.error('Error fetching order types:', error);
+            return res.status(500).json({ error: 'Error al obtener tipos de pedido' });
+        }
+    }
+
+    async upsertOrderType(req: Request, res: Response) {
+        const { id, name, description, isActive, isSystem } = req.body;
+        try {
+            const type = await prisma.orderType.upsert({
+                where: { id: id || '00000000-0000-0000-0000-000000000000' }, // Use a valid UUID format for dummy
+                update: { name, description, isActive, isSystem: isSystem || false },
+                create: { name, description, isActive: isActive ?? true, isSystem: isSystem || false }
+            });
+            return res.json(type);
+        } catch (error) {
+            console.error('Error upserting order type:', error);
+            return res.status(500).json({ error: 'Error al guardar tipo de pedido' });
+        }
+    }
+
+    async deleteOrderType(req: Request, res: Response) {
+        const { id } = req.params;
+        try {
+            // Check if it's a system type
+            const type = await prisma.orderType.findUnique({ where: { id } });
+            if (type?.isSystem) {
+                return res.status(400).json({ error: 'No se puede eliminar un tipo de sistema' });
+            }
+            await prisma.orderType.delete({ where: { id } });
+            return res.json({ success: true });
+        } catch (error) {
+            console.error('Error deleting order type:', error);
+            return res.status(500).json({ error: 'Error al eliminar tipo de pedido' });
+        }
+    }
+
+    // Sales Channels
+    async getSalesChannels(_req: Request, res: Response) {
+        try {
+            const channels = await prisma.salesChannel.findMany({
+                orderBy: { name: 'asc' }
+            });
+            return res.json(channels);
+        } catch (error) {
+            console.error('Error fetching sales channels:', error);
+            return res.status(500).json({ error: 'Error al obtener canales de venta' });
+        }
+    }
+
+    async upsertSalesChannel(req: Request, res: Response) {
+        const { id, name, description, isActive } = req.body;
+        try {
+            const channel = await prisma.salesChannel.upsert({
+                where: { id: id || '00000000-0000-0000-0000-000000000000' },
+                update: { name, description, isActive },
+                create: { name, description, isActive: isActive ?? true }
+            });
+            return res.json(channel);
+        } catch (error) {
+            console.error('Error upserting sales channel:', error);
+            return res.status(500).json({ error: 'Error al guardar canal de venta' });
+        }
+    }
+
+    async deleteSalesChannel(req: Request, res: Response) {
+        const { id } = req.params;
+        try {
+            await prisma.salesChannel.delete({ where: { id } });
+            return res.json({ success: true });
+        } catch (error) {
+            console.error('Error deleting sales channel:', error);
+            return res.status(500).json({ error: 'Error al eliminar canal de venta' });
         }
     }
 }
