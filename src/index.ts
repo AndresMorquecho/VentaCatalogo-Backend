@@ -21,6 +21,7 @@ import portfolioRecoveryRoutes from './features/portfolio-recovery/infrastructur
 import walletRoutes from './routes/wallet.routes';
 import systemSettingsRoutes from './routes/system-settings.routes';
 import catalogRoutes from './features/catalogs/infrastructure/catalogs.routes';
+import locksRoutes from './features/locks/infrastructure/locks.routes';
 
 // Legacy routes (pending hexagonal migration)
 import authRouter from './routes/auth.routes';
@@ -95,6 +96,7 @@ app.use('/api/portfolio', portfolioRecoveryRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/catalogs', catalogRoutes);
 app.use('/api/system-settings', systemSettingsRoutes);
+app.use('/api/locks', locksRoutes);
 
 // API Routes - Legacy (to be migrated)
 app.use('/api/auth', authRouter);

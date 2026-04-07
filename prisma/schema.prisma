@@ -732,6 +732,7 @@ model OrderType {
   @@map("order_types")
 }
 
+
 model SalesChannel {
   id             String   @id @default(uuid())
   name           String   @unique
@@ -741,4 +742,19 @@ model SalesChannel {
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   @@map("sales_channels")
+}
+
+model SystemLock {
+  id          String   @id @default(uuid())
+  resourceId  String   @map("resource_id")
+  resourceType String  @map("resource_type")
+  userId      String   @map("user_id")
+  userName    String   @map("user_name")
+  expiresAt   DateTime @map("expires_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([resourceId, resourceType])
+  @@index([resourceId, resourceType])
+  @@index([expiresAt])
+  @@map("system_locks")
 }
