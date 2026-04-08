@@ -179,17 +179,17 @@ export class OrderController {
         paymentData: paymentData, // Agregar datos de múltiples pagos
         trackingGuide: req.body.tracking_guide || req.body.trackingGuide || null,
         orders: req.body.orders.map((o: any) => ({
-          brandId: o.brand_id,
-          brandName: o.brand_name,
+          brandId: o.brandId || o.brand_id,
+          brandName: o.brandName || o.brand_name,
           total: Number(o.total),
           type: o.type,
-          possibleDeliveryDate: o.possible_delivery_date ? new Date(o.possible_delivery_date) : new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
+          possibleDeliveryDate: (o.possibleDeliveryDate || o.possible_delivery_date) ? new Date(o.possibleDeliveryDate || o.possible_delivery_date) : new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
           items: o.items.map((i: any) => ({
-            productName: i.product_name,
+            productName: i.productName || i.product_name,
             quantity: Number(i.quantity),
-            unitPrice: Number(i.unit_price)
+            unitPrice: Number(i.unitPrice || i.unit_price)
           })),
-          deposit: Number(o.deposit || 0),
+          deposit: Number(o.deposit || o.abono || 0),
           orderNumber: o.orderNumber || o.order_number,
           sourceOrderId: o.sourceOrderId || o.source_order_id,
           sourceOrderNumber: o.sourceOrderNumber || o.source_order_number,

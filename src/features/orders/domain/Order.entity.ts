@@ -54,7 +54,7 @@ export enum OrderStatus {
   ANULADO = 'ANULADO',
   ENVIADO_A_CAMBIO = 'ENVIADO_A_CAMBIO',
   DESMANTELADO = 'DESMANTELADO',
-  RECOLECTADO = 'RECOLECTADO'
+  CAMBIADO = 'CAMBIADO'
 }
 
 export interface OrderItem {

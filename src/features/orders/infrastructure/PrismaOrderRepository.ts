@@ -14,6 +14,15 @@ export class PrismaOrderRepository implements IOrderRepository {
       where.type = { not: 'CATALOGO' };
     }
 
+    // REGLA DE NEGOCIO: Las órdenes tipo CAMBIO en estado POR_ENVIAR
+    // no deben aparecer en la lista general de pedidos hasta que se emita guía (POR_RECIBIR)
+    if (!filters.status && (!filters.type || filters.type !== 'CAMBIO')) {
+      where.NOT = [
+        ...(Array.isArray(where.NOT) ? where.NOT : (where.NOT ? [where.NOT] : [])),
+        { type: 'CAMBIO', status: 'POR_ENVIAR' }
+      ];
+    }
+
     if (filters.status) {
       if (Array.isArray(filters.status)) {
         where.status = { in: filters.status as OrderStatus[] };
@@ -327,13 +336,20 @@ export class PrismaOrderRepository implements IOrderRepository {
     const searchPattern = `${prefix}-${year}-`;
 
     // 1. Check in Order table
+    // For order numbers, we must check both PD- (standard) and CAM- (exchange) prefixes
+    // as they share the same sequential counter.
     const lastOrder = await prisma.order.findFirst({
       where: prefix === 'OR' 
         ? { receiptNumber: { startsWith: searchPattern } }
-        : { orderNumber: { startsWith: searchPattern } },
+        : { 
+            OR: [
+              { orderNumber: { startsWith: `PD-${year}-` } },
+              { orderNumber: { startsWith: `CAM-${year}-` } }
+            ]
+          },
       orderBy: prefix === 'OR' 
-        ? { receiptNumber: 'desc' } 
-        : { orderNumber: 'desc' }
+        ? [ { receiptNumber: 'desc' } ] 
+        : [ { orderNumber: 'desc' } ]
     });
 
     // 2. Extra check for receipts to avoid conflicts across different tables

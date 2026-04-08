@@ -120,15 +120,18 @@ export class BatchCreateOrderUseCase {
       }
 
       // 2. Validate all brands
-      const brandIds = [...new Set(dto.orders.map(o => o.brandId))];
-      const brands = await prisma.brand.findMany({
-        where: { id: { in: brandIds } }
-      });
+      const brandIds = [...new Set(dto.orders.map(o => o.brandId).filter(id => id && typeof id === 'string'))];
+      const brands = brandIds.length > 0 
+        ? await prisma.brand.findMany({ where: { id: { in: brandIds } } })
+        : [];
 
-      for (const brandId of brandIds) {
-        const brand = brands.find(b => b.id === brandId);
+      for (const orderDto of dto.orders) {
+        if (!orderDto.brandId) {
+          return Result.fail(`ID de marca no proporcionado para uno de los pedidos`);
+        }
+        const brand = brands.find(b => b.id === orderDto.brandId);
         if (!brand || !brand.isActive) {
-          return Result.fail(`La marca ${brand?.name || brandId} no está activa`);
+          return Result.fail(`La marca ${brand?.name || orderDto.brandId} no encontrada o no está activa`);
         }
       }
 
@@ -931,6 +934,12 @@ export class BatchCreateOrderUseCase {
           clientId: raw.clientId,
           clientName: raw.clientName,
           notes: raw.notes || undefined,
+          sourceOrderId: raw.sourceOrderId || undefined,
+          sourceOrderNumber: raw.sourceOrderNumber || undefined,
+          sourceBrandName: raw.sourceBrandName || undefined,
+          sourceQuantity: raw.sourceQuantity !== null ? Number(raw.sourceQuantity) : undefined,
+          sourceDescription: raw.sourceDescription || undefined,
+          description: raw.description || undefined,
           items: raw.items.map((i: any) => ({
             id: i.id,
             productName: i.productName,
