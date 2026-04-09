@@ -96,13 +96,15 @@ export async function computeCashClosureData(
         const mainRecord = baseMovements.find(r => card.rawRecordIds.includes(r.id));
         const username = userIdMap[card.createdBy] || card.createdBy || 'Sistema';
         
+        const isBankPayment = ['TRANSFERENCIA', 'DEPOSITO', 'CHEQUE'].includes(mainRecord?.paymentMethod || '');
+
         const baseRow = {
             date: new Date(card.date),
             label: card.titleLabel,
-            reference: card.reference || '—',
-            code: card.orders.map(o => o.receiptNumber).join(', ') || card.reference,
-            description: card.orders.map(o => o.orderNumber ?? 'Abono').join(', ') || card.titleLabel,
-            identification: card.clientDocument || '',
+            reference: isBankPayment ? (card.reference || '—') : '-',
+            code: card.orders.map(o => o.receiptNumber + (o.orderNumber ? ` / ${o.orderNumber}` : '')).join(', ') || card.reference,
+            description: card.notes || '',
+            identification: isBankPayment ? (card.extra?.startsWith('Control: ') ? card.extra.replace('Control: ', '') : '') : '-',
             client: card.clientName || '',
         };
 

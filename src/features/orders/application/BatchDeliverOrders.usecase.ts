@@ -131,7 +131,6 @@ export class BatchDeliverOrdersUseCase {
         const effectiveTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
         const hasSplitPayment = order.payments.some(p => p.method === 'SPLIT_PAYMENT');
         const paidAmount = order.payments
-          .filter(p => !(hasSplitPayment && p.method === 'CREDITO_CLIENTE'))
           .reduce((sum, p) => sum + Number(p.amount), 0);
         let pending = effectiveTotal - paidAmount;
         
@@ -423,7 +422,7 @@ export class BatchDeliverOrdersUseCase {
         const targetOrderIds = data.creditDistributions.flatMap(ds => ds.distributions.map(d => d.targetOrderId)).filter(Boolean) as string[];
         const targetOrdersFromDB = await tx.order.findMany({
           where: { id: { in: targetOrderIds } },
-          include: { brand: true }
+          include: { brand: true, payments: true }
         });
         const targetOrderMap = new Map(targetOrdersFromDB.map(o => [o.id, o]));
 
@@ -433,7 +432,7 @@ export class BatchDeliverOrdersUseCase {
           
           if (!sourceOrder) {
              console.log('[BatchDeliverOrders] Source order not in current batch, fetching from DB:', sourceOrderId);
-             sourceOrder = await tx.order.findUnique({ where: { id: sourceOrderId }, include: { brand: true } }) as any;
+             sourceOrder = await tx.order.findUnique({ where: { id: sourceOrderId }, include: { brand: true, payments: true } }) as any;
           }
 
           if (!sourceOrder) {
@@ -450,18 +449,18 @@ export class BatchDeliverOrdersUseCase {
               const refundAccount = await tx.bankAccount.findUnique({ where: { id: refundAccountId }, select: { currentBalance: true, version: true, name: true, type: true } });
 
               const isBank = refundAccount?.type !== 'CASH';
-              const balanceBefore = refundAccount ? Number(refundAccount.currentBalance) : 0;
-              const balanceAfter = balanceBefore - dist.amount;
+              const refundBalanceBefore = refundAccount ? Number(refundAccount.currentBalance) : 0;
+              const refundBalanceAfter = refundBalanceBefore - dist.amount;
 
               // Validate that we are not refunding more than what is in the account
               validateBankAccountBalance(
-                balanceBefore,
+                refundBalanceBefore,
                 -dist.amount,
                 refundAccountId,
                 refundAccount?.name || 'Cuenta'
               );
 
-              const distGroupId = `REFUND-BATCH-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+              const refundGroupId = `REFUND-BATCH-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
               const refundNotesJson = buildNotesJSON({
                 title: 'DEVOLUCION',
@@ -475,7 +474,7 @@ export class BatchDeliverOrdersUseCase {
               console.log('[BatchDeliverOrder] Creating refund financial record', { 
                 amount: dist.amount, 
                 bankAccountId: refundAccountId,
-                groupId: distGroupId
+                groupId: refundGroupId
               });
 
               // @ts-ignore
@@ -496,7 +495,7 @@ export class BatchDeliverOrdersUseCase {
                   toAccountType: 'EXTERNAL',
                   createdBy: userId,
                   clientDocument: firstClientDoc,
-                  transactionGroupId: distGroupId,
+                  transactionGroupId: refundGroupId,
                   notes: refundNotesJson,
                   deliveryBatch: { connect: { id: deliveryBatch.id } },
                   version: 1
@@ -511,9 +510,28 @@ export class BatchDeliverOrdersUseCase {
                 });
               }
             } else if (dist.targetOrderId) {
+              // --- 🔒 OVERPAYMENT PROTECTION ---
+              // Calculate real current pending balance for the target order
+              const targetFromOrders = orders.find(o => o.id === dist.targetOrderId);
+              const targetObj = targetFromOrders || targetOrderMap.get(dist.targetOrderId || '');
+              
+              if (targetObj) {
+                const effectiveTotal = targetObj.realInvoiceTotal ? Number(targetObj.realInvoiceTotal) : Number(targetObj.total);
+                const currentPaid = targetObj.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
+                const alreadyAppliedInThisBatch = appliedAmounts[targetObj.id] || 0;
+                const realPendingNow = effectiveTotal - currentPaid - alreadyAppliedInThisBatch;
+
+                if (dist.amount > realPendingNow + 0.01) {
+                  console.warn(`[BatchDeliverOrders] Clamping distribution to ${targetObj.receiptNumber}. Requested: ${dist.amount}, Max allowed: ${realPendingNow}`);
+                  (dist as any).amount = Math.max(0, realPendingNow);
+                }
+              }
+
+              if (dist.amount <= 0.005) continue;
+
               // Apply credit to another order → create a payment for that order
               // @ts-ignore
-              await tx.orderPayment.create({
+              const payment = await tx.orderPayment.create({
                 data: {
                   orderId: dist.targetOrderId,
                   amount: dist.amount,
@@ -559,9 +577,6 @@ export class BatchDeliverOrdersUseCase {
               const balanceAfter: number = balanceBefore - Number(dist.amount);
               clientWalletRunningBal = balanceAfter;
 
-              // Update Client Account in DB (Important for correctness!)
-              // Intermediate balance tracking happens in currentWalletBalance only
-
               // Create expense leg (source order losing credit)
               // @ts-ignore
               await tx.financialRecord.create({
@@ -598,6 +613,7 @@ export class BatchDeliverOrdersUseCase {
                   client: { connect: { id: clientId } },
                   clientName: clientName,
                   order: { connect: { id: dist.targetOrderId! } },
+                  orderPayment: { connect: { id: payment.id } },
                   bankAccount: { connect: { id: cashAccountId } },
                   source: 'CREDIT_DISTRIBUTION',
                   paymentMethod: 'CREDITO_CLIENTE',

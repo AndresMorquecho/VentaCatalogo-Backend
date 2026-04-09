@@ -1,0 +1,41 @@
+[
+  {
+    "id": "c5f96d03-1189-40db-b458-2fa7898a6835",
+    "orderId": "44bdd5c6-76c7-4147-a724-0b71f786ee21",
+    "amount": "10",
+    "method": "CREDITO_CLIENTE",
+    "reference": null,
+    "description": "Aplicación de saldo a favor - Origen: Pedido OR-2026-001, Destino: Pedido OR-2026-001",
+    "createdAt": "2026-04-09T18:12:41.116Z",
+    "receiptNumber": null,
+    "processingRequestId": null,
+    "isAdjustment": false,
+    "deliveryBatchId": "25d7c852-8531-467f-b164-e146b3475037"
+  },
+  {
+    "id": "ba044e5c-0afa-4abb-9dd4-b34435c7811c",
+    "orderId": "bdba5186-1de4-4332-a92a-bacad7420a8d",
+    "amount": "10",
+    "method": "CREDITO_CLIENTE",
+    "reference": null,
+    "description": "Aplicación de saldo a favor - Origen: Pedido OR-2026-001, Destino: Pedido OR-2026-001",
+    "createdAt": "2026-04-09T18:12:42.983Z",
+    "receiptNumber": null,
+    "processingRequestId": null,
+    "isAdjustment": false,
+    "deliveryBatchId": "25d7c852-8531-467f-b164-e146b3475037"
+  },
+  {
+    "id": "6d3434de-b6bb-4b81-9c21-ab54715b9b3e",
+    "orderId": "6d58af1f-2486-4638-bc4b-fce37dd20060",
+    "amount": "10",
+    "method": "CREDITO_CLIENTE",
+    "reference": null,
+    "description": "Aplicación de saldo a favor - Origen: Pedido OR-2026-001, Destino: Pedido OR-2026-001",
+    "createdAt": "2026-04-09T18:12:44.190Z",
+    "receiptNumber": null,
+    "processingRequestId": null,
+    "isAdjustment": false,
+    "deliveryBatchId": "25d7c852-8531-467f-b164-e146b3475037"
+  }
+]

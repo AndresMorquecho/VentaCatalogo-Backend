@@ -164,7 +164,7 @@ export class DeliverOrderUseCase {
                        payment.paymentMethod === 'DEPOSITO' ? 'DEPOSITO_BANCARIO' :
                        payment.paymentMethod === 'CHEQUE' ? 'PAGO_CHEQUE' : 'PAGO_EFECTIVO'),
                 module: 'ORDERS',
-                description: isCredit ? 'Uso de Billetera Virtual (Entrega)' : 'Abono en entrega',
+                description: data.notes || "",
                 orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null, type: order.type }]
               }),
               balanceBefore: balanceBefore != null ? Number(balanceBefore) : null,
@@ -507,6 +507,27 @@ export class DeliverOrderUseCase {
               });
             }
           } else if (dist.targetOrderId) {
+            // --- 🔒 OVERPAYMENT PROTECTION ---
+            if (dist.targetOrderId) {
+              const targetOrderObj = await tx.order.findUnique({
+                where: { id: dist.targetOrderId },
+                select: { id: true, total: true, realInvoiceTotal: true, receiptNumber: true, payments: { select: { amount: true } } }
+              });
+
+              if (targetOrderObj) {
+                const effectiveTotal = targetOrderObj.realInvoiceTotal ? Number(targetOrderObj.realInvoiceTotal) : Number(targetOrderObj.total);
+                const currentPaid = targetOrderObj.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
+                const realPendingNow = effectiveTotal - currentPaid;
+
+                if (dist.amount > realPendingNow + 0.01) {
+                  console.warn(`[DeliverOrder] Clamping distribution to ${targetOrderObj.receiptNumber}. Requested: ${dist.amount}, Max allowed: ${realPendingNow}`);
+                  (dist as any).amount = Math.max(0, realPendingNow);
+                }
+              }
+            }
+
+            if (dist.amount <= 0.005) continue;
+
             // Apply credit to another order → create a payment for that order
             await tx.orderPayment.create({
               data: {
@@ -626,7 +647,7 @@ export class DeliverOrderUseCase {
                   v: 2,
                   title: 'RECARGA_BILLETERA',
                   module: 'DELIVERY',
-                  description: 'Saldo a favor enviado a billetera virtual desde orden',
+                  description: "",
                   orders: [{ receiptNumber: order.receiptNumber, orderNumber: order.orderNumber, brandName: order.brand?.name ?? null, type: order.type }]
                 }),
                 version: 1

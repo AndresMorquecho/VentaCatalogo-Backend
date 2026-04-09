@@ -152,7 +152,6 @@ export class ReceiveOrderUseCase {
       // 4. Calcular saldo actual y validaciones de seguridad
       const hasSplitPayment = order.payments.some((p: any) => p.method === 'SPLIT_PAYMENT');
       const paidAmount = order.payments
-        .filter((p: any) => !(hasSplitPayment && p.method === 'CREDITO_CLIENTE'))
         .reduce((sum: number, p: any) => sum + Number(p.amount), 0);
       const pendingBeforeAbono = Number(data.finalTotal) - paidAmount;
       let newPaidAmount = paidAmount;

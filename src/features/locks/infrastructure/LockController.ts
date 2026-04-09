@@ -31,6 +31,7 @@ export class LockController {
             return HttpResponse.ok(res, result.getValue());
         } catch (error) {
             next(error);
+            return;
         }
     }
 
@@ -52,6 +53,7 @@ export class LockController {
             return HttpResponse.ok(res, { message: 'Bloqueo liberado' });
         } catch (error) {
             next(error);
+            return;
         }
     }
 
@@ -73,6 +75,7 @@ export class LockController {
             return HttpResponse.ok(res, { message: 'Heartbeat exitoso' });
         } catch (error) {
             next(error);
+            return;
         }
     }
 }

@@ -168,7 +168,6 @@ export class BatchUpdateOrdersUseCase {
                                 clientName,
                                 salesChannel: dto.salesChannel,
                                 brandId: orderDto.brandId,
-                                brandName: orderDto.brandName,
                                 total: Number(orderDto.total),
                                 paymentMethod: dto.paymentMethod,
                                 bankAccountId: bankId,
@@ -194,7 +193,7 @@ export class BatchUpdateOrdersUseCase {
                         await tx.orderPayment.create({
                             data: {
                                 id: paymentId,
-                                orderId,
+                                orderId: orderId!,
                                 amount: wantedDeposit,
                                 method: payMethod,
                                 receiptNumber: `AB-${crypto.randomUUID().slice(0, 8)}`,
