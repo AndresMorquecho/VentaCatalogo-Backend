@@ -29,7 +29,6 @@ export class DeleteOrderUseCase {
                         }
                         ordersToDeleteIds = relatedOrders.map(o => o.id);
                     } else if (mainOrder.receiptNumber) {
-                        // Para cambios que a veces no tienen receiptId formal pero sí receiptNumber agrupado
                         const relatedOrders = await tx.order.findMany({
                             where: { receiptNumber: mainOrder.receiptNumber },
                             select: { id: true, status: true }
@@ -41,7 +40,6 @@ export class DeleteOrderUseCase {
                     }
                 }
 
-                // REGLA: No borrar pedidos de periodos cerrados (aplicar a todos)
                 const lastClosure = await tx.cashClosure.findFirst({
                     orderBy: { toDate: 'desc' }
                 });
@@ -52,6 +50,7 @@ export class DeleteOrderUseCase {
                         where: { id: idToDelete },
                         include: {
                             payments: true,
+                            // FIXED: must include financialRecords to revert bank balances
                             financialRecords: true,
                             client: {
                                 include: {
@@ -63,25 +62,17 @@ export class DeleteOrderUseCase {
 
                     if (!order) continue;
 
-                    // Validar estado e integridad de cada pedido
                     const currentPayments = order.payments || [];
-                    
-                    // Si es un CAMBIO, permitimos borrar aunque esté RECIBIDO_EN_BODEGA, 
-                    // a menos que el usuario lo prohíba explícitamente.
-                    // Pero la regla general de hasRealMovement sigue aplicando para pedidos normales.
                     const isExchange = order.type === 'CAMBIO' || order.sourceOrderId !== null || order.receiptNumber?.includes('CAM');
-                    
                     const hasRealMovement = !isExchange && (order.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some(p => p.method === 'CREDITO_CLIENTE')));
 
                     if (hasRealMovement) {
                         let reason = `No se puede eliminar el pedido ${order.orderNumber || order.id} porque ya tiene movimientos procesados.`;
                         if (order.status === 'ENTREGADO') reason = `No se puede eliminar el pedido de ${order.brandId} que ya fue entregado.`;
                         if (order.status === 'RECIBIDO_EN_BODEGA') reason = `No se puede eliminar el pedido de ${order.brandId} que ya fue receptado.`;
-                        
                         throw new Error(reason);
                     }
                     
-                    // Si es un cambio ENTREGADO, bloqueamos siempre
                     if (order.status === 'ENTREGADO') {
                         throw new Error(`No se puede eliminar el cambio ${order.orderNumber} porque ya fue entregado.`);
                     }
@@ -98,16 +89,22 @@ export class DeleteOrderUseCase {
                         });
                     }
 
-                    // --- REVERSIÓN FINANCIERA (Bancos) ---
-                    const financialRecords = order.financialRecords;
-                    for (const fr of financialRecords) {
+                    // --- REVERSIÓN FINANCIERA BANCARIA ---
+                    // Iterate over the actual financial records to know which bank account to revert
+                    for (const fr of order.financialRecords) {
+                        // Skip wallet-type movements (handled separately via clientAccount)
+                        if (fr.source === 'WALLET' || fr.movementType === 'INTERNAL') continue;
+
                         if (fr.bankAccountId) {
                             if (fr.movementType === 'INCOME') {
+                                // Money came IN → revert by decrementing
                                 await tx.bankAccount.update({
                                     where: { id: fr.bankAccountId },
                                     data: { currentBalance: { decrement: fr.amount }, version: { increment: 1 } }
                                 });
+                                console.log(`[DeleteOrder] Reverted bank INCOME: -${fr.amount} from ${fr.bankAccountId}`);
                             } else if (fr.movementType === 'EXPENSE') {
+                                // Money went OUT → revert by incrementing
                                 await tx.bankAccount.update({
                                     where: { id: fr.bankAccountId },
                                     data: { currentBalance: { increment: fr.amount }, version: { increment: 1 } }
@@ -116,16 +113,45 @@ export class DeleteOrderUseCase {
                         }
                     }
 
-                    // --- REVERSIÓN DE SALDOS A FAVOR (GENERADOS) ---
+                    // --- REVERSIÓN DE PAGOS CON BILLETERA VIRTUAL ---
+                    // For each wallet payment, refund the exact amount paid
+                    for (const payment of order.payments) {
+                        if (payment.method === 'BILLETERA_VIRTUAL') {
+                            const clientAcc = order.client.clientAccount;
+                            if (clientAcc) {
+                                const refundAmount = Number(payment.amount);
+                                console.log(`[DeleteOrder] Refunding wallet payment: +${refundAmount} to client ${order.clientId}`);
+                                
+                                // Create a usable credit record for the refunded amount
+                                await tx.clientCredit.create({
+                                    data: {
+                                        clientAccountId: clientAcc.id,
+                                        amount: refundAmount,
+                                        remainingAmount: refundAmount,
+                                        originTransactionId: `REV-DEL-${payment.id}-${new Date().getTime()}`,
+                                        status: 'AVAILABLE',
+                                        createdAt: new Date()
+                                    }
+                                });
+
+                                await tx.clientAccount.update({
+                                    where: { id: clientAcc.id },
+                                    data: { totalCreditAvailable: { increment: refundAmount }, version: { increment: 1 } }
+                                });
+                            }
+                        }
+                    }
+
+                    // --- REVERSIÓN DE SALDOS A FAVOR GENERADOS POR ESTE PEDIDO ---
+                    // If this order generated credits (e.g. overpayment), remove them
                     const generatedCredits = await tx.clientCredit.findMany({
                         where: { originOrderId: idToDelete, status: 'AVAILABLE' }
                     });
 
                     for (const credit of generatedCredits) {
                         if (Number(credit.remainingAmount) < Number(credit.amount) - 0.01) {
-                            throw new Error(`Saldo a favor del pedido ${order.orderNumber} ya fue utilizado.`);
+                            throw new Error(`Saldo a favor del pedido ${order.orderNumber} ya fue utilizado parcialmente y no se puede eliminar.`);
                         }
-
                         if (order.client.clientAccount) {
                             await tx.clientAccount.update({
                                 where: { id: order.client.clientAccount.id },
@@ -133,18 +159,6 @@ export class DeleteOrderUseCase {
                             });
                         }
                         await tx.clientCredit.delete({ where: { id: credit.id } });
-                    }
-
-                    // --- REVERSIÓN DE PAGOS (RECIBIDOS/CONSUMIDOS) ---
-                    for (const payment of order.payments) {
-                        if (payment.method === 'BILLETERA_VIRTUAL') {
-                            if (order.client.clientAccount) {
-                                await tx.clientAccount.update({
-                                    where: { id: order.client.clientAccount.id },
-                                    data: { totalCreditAvailable: { increment: payment.amount }, version: { increment: 1 } }
-                                });
-                            }
-                        }
                     }
 
                     // --- REVERSIÓN DE PUNTOS ---
@@ -168,7 +182,7 @@ export class DeleteOrderUseCase {
                     await tx.order.delete({ where: { id: idToDelete } });
                 }
 
-                // Si borramos todos los pedidos de un recibo, opcionalmente borrar el OrderReceipt
+                // Si borramos todos los pedidos de un recibo, borrar el OrderReceipt
                 if (cascadeReceipt && mainOrder.receiptId) {
                     const remaining = await tx.order.count({ where: { receiptId: mainOrder.receiptId } });
                     if (remaining === 0) {
@@ -178,7 +192,7 @@ export class DeleteOrderUseCase {
 
                 return Result.ok();
             }, {
-                timeout: 30000 // Aumentar timeout para borrados masivos
+                timeout: 30000
             });
         } catch (error) {
             console.error('DeleteOrderUseCase Error:', error);

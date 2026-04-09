@@ -226,22 +226,19 @@ export class BatchDeliverOrdersUseCase {
               referenceNumber,
               amount: payment.amount,
               date: new Date(),
-              clientId,
+              client: { connect: { id: clientId } },
               clientName,
-              bankAccountId: bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
-              source: 'ORDER_PAYMENT',
+              bankAccount: { connect: { id: bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH', isActive: true } }))?.id || 'cash-account-1' } },
+              source: isCredit ? 'WALLET' : 'ORDER_PAYMENT',
               paymentMethod: payment.paymentMethod,
               movementType: isCredit ? 'INTERNAL' : 'INCOME',
               fromAccountType: isCredit ? 'WALLET' : 'EXTERNAL',
               toAccountType: isCredit ? 'ORDER' : 'CASH',
               createdBy: userId,
               notes: paymentNotesJson,
-              balanceBefore,
-              balanceAfter,
-              // @ts-ignore
-              deliveryBatchId: deliveryBatch.id,
+              deliveryBatch: { connect: { id: deliveryBatch.id } },
               version: 1
-            }
+            } as any
           });
 
           // Actualizar saldos bancarios o créditos
@@ -485,10 +482,10 @@ export class BatchDeliverOrdersUseCase {
                   referenceNumber: `REFUND-BATCH-${Date.now()}`,
                   amount: dist.amount,
                   date: new Date(),
-                  clientId: clientId,
+                  client: { connect: { id: clientId } },
                   clientName: clientName,
-                  orderId: sourceOrderId,
-                  bankAccountId: refundAccountId,
+                  order: { connect: { id: sourceOrderId } },
+                  bankAccount: { connect: { id: refundAccountId } },
                   source: 'CASH_RETURN',
                   paymentMethod: isBank ? 'TRANSFERENCIA' : 'EFECTIVO',
                   movementType: 'EXPENSE',
@@ -497,13 +494,10 @@ export class BatchDeliverOrdersUseCase {
                   createdBy: userId,
                   clientDocument: firstClientDoc,
                   transactionGroupId: distGroupId,
-                  balanceBefore: balanceBefore,
-                  balanceAfter: balanceAfter,
                   notes: refundNotesJson,
-                  // @ts-ignore
-                  deliveryBatchId: deliveryBatch.id,
+                  deliveryBatch: { connect: { id: deliveryBatch.id } },
                   version: 1
-                }
+                } as any
               });
 
               if (refundAccount) {
@@ -571,10 +565,10 @@ export class BatchDeliverOrdersUseCase {
                   referenceNumber: `DIST-B-FROM-${Date.now()}`,
                   amount: dist.amount,
                   date: new Date(),
-                  clientId: clientId,
+                  client: { connect: { id: clientId } },
                   clientName: clientName,
-                  orderId: sourceOrderId,
-                  bankAccountId: cashAccountId,
+                  order: { connect: { id: sourceOrderId } },
+                  bankAccount: { connect: { id: cashAccountId } },
                   source: 'CREDIT_DISTRIBUTION',
                   paymentMethod: 'CREDITO_CLIENTE',
                   movementType: 'EXPENSE',
@@ -583,12 +577,9 @@ export class BatchDeliverOrdersUseCase {
                   createdBy: userId,
                   notes: sourceNotes,
                   transactionGroupId: distGroupId,
-                  balanceBefore,
-                  balanceAfter,
-                  // @ts-ignore
-                  deliveryBatchId: deliveryBatch.id,
+                  deliveryBatch: { connect: { id: deliveryBatch.id } },
                   version: 1
-                }
+                } as any
               });
 
               // Create income leg (target order receiving credit)
@@ -599,10 +590,10 @@ export class BatchDeliverOrdersUseCase {
                   referenceNumber: `DIST-B-TO-${Date.now()}`,
                   amount: dist.amount,
                   date: new Date(),
-                  clientId: clientId,
+                  client: { connect: { id: clientId } },
                   clientName: clientName,
-                  orderId: dist.targetOrderId,
-                  bankAccountId: cashAccountId,
+                  order: { connect: { id: dist.targetOrderId! } },
+                  bankAccount: { connect: { id: cashAccountId } },
                   source: 'CREDIT_DISTRIBUTION',
                   paymentMethod: 'CREDITO_CLIENTE',
                   movementType: 'INCOME',
@@ -611,12 +602,9 @@ export class BatchDeliverOrdersUseCase {
                   createdBy: userId,
                   notes: targetNotes,
                   transactionGroupId: distGroupId,
-                  balanceBefore,
-                  balanceAfter,
-                  // @ts-ignore
-                  deliveryBatchId: deliveryBatch.id,
+                  deliveryBatch: { connect: { id: deliveryBatch.id } },
                   version: 1
-                }
+                } as any
               });
             } else {
               // Move to wallet → create ClientCredit
@@ -661,10 +649,10 @@ export class BatchDeliverOrdersUseCase {
                   referenceNumber: `WALLET-B-${Date.now()}`,
                   amount: dist.amount,
                   date: new Date(),
-                  clientId: clientId,
+                  client: { connect: { id: clientId } },
                   clientName: clientName,
-                  orderId: sourceOrderId,
-                  bankAccountId: cashAccountId,
+                  order: { connect: { id: sourceOrderId } },
+                  bankAccount: { connect: { id: cashAccountId } },
                   source: 'CREDIT_DISTRIBUTION',
                   paymentMethod: 'CREDITO_CLIENTE',
                   movementType: 'INTERNAL',
@@ -672,12 +660,9 @@ export class BatchDeliverOrdersUseCase {
                   toAccountType: 'WALLET',
                   createdBy: userId,
                   notes: walletNotesJson,
-                  balanceBefore: walletBefore,
-                  balanceAfter: walletAfter,
-                  // @ts-ignore
-                  deliveryBatchId: deliveryBatch.id,
+                  deliveryBatch: { connect: { id: deliveryBatch.id } },
                   version: 1
-                }
+                } as any
               });
           }
         }

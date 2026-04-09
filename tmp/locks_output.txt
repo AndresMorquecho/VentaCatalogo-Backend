@@ -1,0 +1,11 @@
+﻿System Locks: [
+  {
+    "id": "ac5aaabc-111c-401f-9072-f17bb346f0fe",
+    "resourceId": "OR-2026-007",
+    "resourceType": "ORDER_RECEIPT",
+    "userId": "18aca8cd-74cd-4809-ad00-0a0e71584e82",
+    "userName": "admin",
+    "expiresAt": "2026-04-08T23:04:27.715Z",
+    "createdAt": "2026-04-08T23:00:27.512Z"
+  }
+]

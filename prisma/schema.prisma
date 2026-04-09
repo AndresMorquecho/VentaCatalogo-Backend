@@ -256,6 +256,8 @@ model OrderPayment {
   createdAt           DateTime           @default(now()) @map("created_at")
   receiptNumber       String?            @map("receipt_number")
   processingRequestId String?            @map("processing_request_id")
+  // Phase 5 Fix #3: Delta-based payment history — isAdjustment=true records are deltas, not full amounts
+  isAdjustment        Boolean            @default(false) @map("is_adjustment")
   financialRecords    FinancialRecord[]
   order               Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
   deliveryBatchId     String?            @map("delivery_batch_id")
@@ -293,6 +295,12 @@ model FinancialRecord {
   balanceAfter       Decimal?      @map("balance_after") @db.Decimal(10, 2)
   clientDocument     String?       @map("client_document")
   deliveryBatchId    String?       @map("delivery_batch_id")
+  // Phase 4.2: Reversal flag for cash closure — isReversal=true records are EXCLUDED from period totals
+  isReversal         Boolean       @default(false) @map("is_reversal")
+  // Phase 2.3: Audit trail — logical reference to the original record this adjusts
+  adjustmentOf       String?       @map("adjustment_of")
+  // Phase 5 Fix #5: Idempotency — unique per operation group to prevent duplicate processing on retries
+  idempotencyKey     String?       @unique @map("idempotency_key")
   bankAccount        BankAccount   @relation(fields: [bankAccountId], references: [id])
   client             Client        @relation(fields: [clientId], references: [id])
   order              Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
@@ -307,6 +315,7 @@ model FinancialRecord {
   @@index([referenceNumber])
   @@index([date, movementType])
   @@index([createdAt, movementType])
+  @@index([isReversal])
   @@map("financial_records")
 }
 

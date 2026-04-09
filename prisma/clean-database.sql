@@ -8,8 +8,7 @@
 
 BEGIN;
 
--- Deshabilitar triggers temporalmente para mejorar performance
-SET session_replication_role = 'replica';
+-- SET session_replication_role = 'replica';
 
 -- ============================================================================
 -- 1. ELIMINAR TABLAS SIN DEPENDENCIAS EXTERNAS
@@ -24,6 +23,12 @@ TRUNCATE TABLE loyalty_prizes CASCADE;
 
 -- Cierres de caja (no tiene dependencias)
 TRUNCATE TABLE cash_closures CASCADE;
+
+-- Configuración del sistema (contadores de consecutivos)
+TRUNCATE TABLE system_settings CASCADE;
+
+-- Bloqueos de sistema (evitar errores de concurrencia tras limpieza)
+TRUNCATE TABLE system_locks CASCADE;
 
 -- ============================================================================
 -- 2. ELIMINAR LLAMADAS (depende de clientes y órdenes)
@@ -80,7 +85,19 @@ TRUNCATE TABLE order_payments CASCADE;
 TRUNCATE TABLE order_items CASCADE;
 
 -- ============================================================================
--- 10. ELIMINAR ÓRDENES (tabla principal del agregado)
+-- 10. ELIMINAR LOTES Y AGRUPADORES
+-- ============================================================================
+
+TRUNCATE TABLE delivery_batches CASCADE;
+TRUNCATE TABLE reception_batches CASCADE;
+TRUNCATE TABLE exchange_batches CASCADE;
+TRUNCATE TABLE exchange_batch_items CASCADE;
+TRUNCATE TABLE order_exchanges CASCADE;
+TRUNCATE TABLE order_exchange_items CASCADE;
+TRUNCATE TABLE order_receipts CASCADE;
+
+-- ============================================================================
+-- 11. ELIMINAR ÓRDENES (tabla principal del agregado)
 -- ============================================================================
 
 TRUNCATE TABLE orders CASCADE;
@@ -127,7 +144,7 @@ BEGIN
 END $$;
 
 -- Rehabilitar triggers
-SET session_replication_role = 'origin';
+-- SET session_replication_role = 'origin';
 
 COMMIT;
 
@@ -165,4 +182,5 @@ COMMIT;
 -- ✗ calls (Llamadas)
 -- ✗ loyalty_rules (Reglas de lealtad)
 -- ✗ loyalty_prizes (Premios de lealtad)
+-- ✗ system_locks (Bloqueos de sistema)
 -- ============================================================================

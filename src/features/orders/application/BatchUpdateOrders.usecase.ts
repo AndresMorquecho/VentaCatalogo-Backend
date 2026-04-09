@@ -1,6 +1,8 @@
 import { prisma } from '../../../lib/prisma';
 import { Result } from '../../../shared/domain/Result';
-import { OrderStatus } from '../domain/Order.entity';
+import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
+import { validateBankAccountBalance, validateClientAccountCredit } from '../../../shared/utils/financialValidations';
+import { buildNotesJSON, cardTitleFromMethod, generateGroupId } from '../../../shared/utils/transactionNotes';
 import crypto from 'crypto';
 
 export interface BatchUpdateOrdersDTO {
@@ -11,9 +13,10 @@ export interface BatchUpdateOrdersDTO {
     paymentMethod: string;
     bankAccountId?: string;
     transactionDate: Date;
+    createdByName?: string;
     notes?: string;
     toDelete: string[];
-    creditAmount?: number;
+    idempotencyKey?: string;
     orders: Array<{
         id?: string;
         brandId: string;
@@ -23,7 +26,7 @@ export interface BatchUpdateOrdersDTO {
         type: string;
         possibleDeliveryDate: Date;
         orderNumber?: string;
-        quantity: number; // For item update
+        quantity: number;
         sourceOrderId?: string;
         sourceOrderNumber?: string;
         sourceBrandName?: string;
@@ -31,396 +34,325 @@ export interface BatchUpdateOrdersDTO {
         sourceDescription?: string;
         description?: string;
         notes?: string;
+        status?: string;
     }>;
 }
 
 export class BatchUpdateOrdersUseCase {
     async execute(dto: BatchUpdateOrdersDTO, updatedBy: string): Promise<Result<any>> {
-        console.log('[BatchUpdateOrdersUseCase] Starting execution with dto:', JSON.stringify(dto, null, 2));
-        
+        const receiptNumber = (dto.receiptNumber || '').trim();
+        if (!receiptNumber) return Result.fail('Receipt number is required');
+
         try {
-            const result = await prisma.$transaction(async (tx) => {
-                console.log('[BatchUpdateOrdersUseCase] Transaction started');
-                
-                // 0. Pre-check Cash Closure
-                const lastClosure = await tx.cashClosure.findFirst({
-                    orderBy: { toDate: 'desc' }
+            return await prisma.$transaction(async (tx) => {
+                // 1. CONCURRENCY LOCK & CONTEXT
+                const receipt = await (tx as any).orderReceipt.findUnique({
+                    where: { receiptNumber },
+                    select: { id: true, version: true, clientId: true }
                 });
+                if (!receipt) throw new Error(`El recibo ${receiptNumber} no existe`);
 
-                if (lastClosure && new Date(dto.transactionDate) <= lastClosure.toDate) {
-                    throw new Error('No se puede procesar el recibo: El periodo de caja para esta fecha ya está cerrado.');
-                }
-
-                // Actualizar encabezado del recibo (OrderReceipt)
                 await (tx as any).orderReceipt.update({
-                    where: { receiptNumber: dto.receiptNumber },
-                    data: {
-                        salesChannel: dto.salesChannel,
-                        transactionDate: dto.transactionDate,
-                        paymentMethod: dto.paymentMethod,
-                        bankAccountId: dto.bankAccountId || null,
-                        notes: dto.notes,
-                        version: { increment: 1 }
+                    where: { id: receipt.id },
+                    data: { 
+                        version: { increment: 1 },
+                        updatedAt: new Date()
                     }
                 });
 
-                // Balance tracking maps to ensure sequentiality within the batch
-                const accountBalancesMap = new Map<string, number>();
-                let clientWalletRunningBal: number | null = null;
+                const allCurrentOrdersInReceipt = await tx.order.findMany({
+                    where: { receiptNumber },
+                    include: { 
+                        payments: { include: { financialRecords: true } },
+                        brand: { select: { name: true } }
+                    }
+                });
 
-                // Obtener el cliente una sola vez al inicio
-                const client = await tx.client.findUnique({ where: { id: dto.clientId } });
-                const clientDoc = client?.identificationNumber || '—';
-                const clientName = client?.firstName || 'Desconocido';
+                const clientAccount = await tx.clientAccount.findUnique({ where: { clientId: dto.clientId } });
+                if (!clientAccount) throw new Error('Cuenta de cliente no encontrada');
+                
+                const mainClient = await tx.client.findUnique({ where: { id: dto.clientId } });
+                const clientDoc = mainClient?.identificationNumber || 'S/N';
+                const clientName = mainClient?.firstName.trim() || 'Cliente';
 
-                // 1. Handle Deletions
-                for (const idToDelete of dto.toDelete) {
-                    const order = await tx.order.findUnique({
-                        where: { id: idToDelete },
-                        include: { payments: true, brand: true, childOrders: true }
-                    });
+                const transactionGroupId = generateGroupId();
+                const bankId = dto.bankAccountId || (await tx.bankAccount.findFirst({ where: { type: 'CASH', isActive: true } }))?.id;
 
-                    if (order) {
-                        const currentPayments = order.payments || [];
-                        const hasRealMovement = order.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some(p => p.method === 'CREDITO_CLIENTE'));
-                        
-                        if (hasRealMovement) {
-                            throw new Error(`No se puede eliminar la marca ${order.brand.name}: Ya tiene movimientos procesados (recepción o abonos adicionales).`);
-                        }
+                // 2. REVERSAL LOGIC: Clean Slate for the entire receipt
+                let totalWalletRefund = 0;
 
-                        // Revert payments for this specific order item
-                        for (const payment of order.payments) {
-                            if (Number(payment.amount) > 0) {
-                                // Revert bank balance
-                                if (order.bankAccountId) {
+                for (const order of allCurrentOrdersInReceipt) {
+                    for (const payment of order.payments) {
+                        // a. Accumulate Wallet Refund total (to be applied as net at the end)
+                        if (payment.method === 'BILLETERA_VIRTUAL') {
+                            totalWalletRefund += Number(payment.amount);
+                            console.log(`[BatchUpdate] Accumulating old wallet payment: ${payment.amount}, current total: ${totalWalletRefund}`);
+                        } else {
+                            // Revert from bank accounts immediately
+                            const records = await tx.financialRecord.findMany({ where: { orderPaymentId: payment.id } });
+                            for (const fr of records) {
+                                if (fr.bankAccountId) {
                                     await tx.bankAccount.update({
-                                        where: { id: order.bankAccountId },
-                                        data: { currentBalance: { decrement: payment.amount } }
+                                        where: { id: fr.bankAccountId },
+                                        data: { currentBalance: { decrement: fr.amount }, version: { increment: 1 } }
                                     });
                                 }
-                                // Delete FinancialRecord
-                                await tx.financialRecord.deleteMany({
-                                    where: { orderId: order.id, amount: payment.amount, type: 'PAYMENT' }
-                                });
                             }
                         }
-
-                        // Delete relationships and the order itself
-                        await tx.orderItem.deleteMany({ where: { orderId: idToDelete } });
-                        await tx.orderPayment.deleteMany({ where: { orderId: idToDelete } });
-                        await tx.rewardApplication.deleteMany({ where: { orderId: idToDelete } });
-                        await tx.inventoryMovement.deleteMany({ where: { orderId: idToDelete } });
-
-                        await tx.order.updateMany({
-                            where: { parentOrderId: idToDelete },
-                            data: { parentOrderId: null }
-                        });
-
-                        await tx.order.delete({ where: { id: idToDelete } });
+                        // b. Delete Financial Records & Payments
+                        await tx.financialRecord.deleteMany({ where: { orderPaymentId: payment.id } });
+                        await tx.orderPayment.delete({ where: { id: payment.id } });
                     }
                 }
 
-                // 2. Handle Upserts (Update or Create)
-                let parentId: string | null = null;
-                const processedOrders = [];
+                // 3. APPLY DELETIONS
+                if (dto.toDelete.length > 0) {
+                    await tx.orderItem.deleteMany({ where: { orderId: { in: dto.toDelete } } });
+                    await tx.order.deleteMany({ where: { id: { in: dto.toDelete } } });
+                }
 
-                for (let i = 0; i < dto.orders.length; i++) {
-                    const orderItem = dto.orders[i];
+                // Identify effective parent for grouping
+                const remainingOrders = await tx.order.findMany({ where: { receiptNumber } });
+                let effectiveParentId = remainingOrders.find(o => !o.parentOrderId)?.id || remainingOrders[0]?.id;
 
-                    if (orderItem.id) {
-                        // UPDATE EXISTING
-                        const existing: any = await tx.order.findUnique({
-                            where: { id: orderItem.id },
-                            include: { items: true, payments: true, brand: true }
+                // 4. APPLY UPDATES AND NEW PAYMENTS (One per order as requested)
+                // Prepare Order Number Sequence for new items
+                let nextOrderNumber = 0;
+                let orderPrefix = `PD-${new Date().getFullYear()}-`;
+                
+                const lastOrder = await tx.order.findFirst({ orderBy: { createdAt: 'desc' } });
+                if (lastOrder && lastOrder.orderNumber && lastOrder.orderNumber.includes('-')) {
+                    const lastParts = lastOrder.orderNumber.split('-');
+                    const lastNum = parseInt(lastParts[lastParts.length - 1]);
+                    if (!isNaN(lastNum)) nextOrderNumber = lastNum + 1;
+                } else {
+                    nextOrderNumber = 1;
+                }
+
+                for (const orderDto of dto.orders) {
+                    let orderId = orderDto.id;
+                    const isNew = !orderId;
+                    const wantedDeposit = Number(orderDto.deposit || 0);
+
+                    if (!isNew) {
+                        // Pre-verify existence
+                        const existing = await tx.order.findUnique({ where: { id: orderId } });
+                        if (!existing) throw new Error(`Pedido ${orderId} no existe para actualizar.`);
+                        
+                        await tx.order.update({
+                            where: { id: orderId },
+                            data: {
+                                brandId: orderDto.brandId,
+                                total: Number(orderDto.total),
+                                paymentMethod: dto.paymentMethod,
+                                bankAccountId: bankId,
+                                status: orderDto.status as any,
+                                updatedAt: new Date(),
+                                version: { increment: 1 }
+                            }
                         });
-
-                        if (existing) {
-                            const currentPayments = existing.payments || [];
-                            const hasRealMovement = existing.status !== 'POR_RECIBIR' || currentPayments.length > 2 || (currentPayments.length > 1 && !currentPayments.some((p: any) => p.method === 'CREDITO_CLIENTE'));
-                            
-                            if (hasRealMovement) {
-                                throw new Error(`No se puede editar la marca ${existing.brand.name}: Ya tiene movimientos procesados (recepción o abonos adicionales).`);
-                            }
-
-                            const updated: any = await tx.order.update({
-                                where: { id: orderItem.id },
-                                data: {
-                                    type: orderItem.type,
-                                    total: orderItem.total,
-                                    possibleDeliveryDate: orderItem.possibleDeliveryDate ? new Date(orderItem.possibleDeliveryDate) : existing.possibleDeliveryDate,
-                                    receiptNumber: dto.receiptNumber,
-                                    clientId: dto.clientId,
-                                    salesChannel: dto.salesChannel,
-                                    notes: dto.notes,
-                                    transactionDate: dto.transactionDate ? new Date(dto.transactionDate) : existing.transactionDate,
-                                    createdAt: dto.createdAt ? new Date(dto.createdAt) : existing.createdAt,
-                                    updatedAt: new Date(),
-                                    parentOrderId: i > 0 ? parentId : null,
-                                    orderNumber: orderItem.orderNumber ?? existing.orderNumber, // Added to ensure CAM prefix is saved
-                                    sourceOrderId: orderItem.sourceOrderId ?? existing.sourceOrderId,
-                                    sourceOrderNumber: orderItem.sourceOrderNumber ?? existing.sourceOrderNumber,
-                                    sourceBrandName: orderItem.sourceBrandName ?? existing.sourceBrandName,
-                                    sourceQuantity: orderItem.sourceQuantity ?? existing.sourceQuantity,
-                                    sourceDescription: orderItem.sourceDescription ?? existing.sourceDescription,
-                                    description: orderItem.description ?? existing.description,
-                                    bankAccountId: dto.bankAccountId ?? existing.bankAccountId,
-                                    paymentMethod: dto.paymentMethod ?? existing.paymentMethod
-                                } as any
-                            });
-
-                            // Update payment if deposit changed and there is only one payment
-                            if (orderItem.deposit !== undefined) {
-                                const currentSum = Number(existing.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0));
-                                const diff = orderItem.deposit - currentSum;
-
-                                if (Math.abs(diff) > 0.01) {
-                                    if (existing.payments.length > 1) {
-                                        throw new Error(`No se puede ajustar el abono de ${existing.brand.name}: Ya existen abonos posteriores.`);
-                                    }
-
-                                    if (existing.payments.length === 1) {
-                                        const payment = existing.payments[0];
-                                        const oldBankId = existing.bankAccountId;
-                                        const newBankId = dto.bankAccountId;
-
-                                        // Update payment details
-                                        await tx.orderPayment.update({
-                                            where: { id: payment.id },
-                                            data: { 
-                                                amount: orderItem.deposit,
-                                                method: dto.paymentMethod
-                                            }
-                                        });
-
-                                        // Balance correction if bank changed
-                                        if (oldBankId !== newBankId) {
-                                            if (oldBankId) {
-                                                await tx.bankAccount.update({
-                                                    where: { id: oldBankId },
-                                                    data: { currentBalance: { decrement: Number(payment.amount) } }
-                                                });
-                                            }
-                                            if (newBankId) {
-                                                await tx.bankAccount.update({
-                                                    where: { id: newBankId },
-                                                    data: { currentBalance: { increment: orderItem.deposit } }
-                                                });
-                                            }
-                                        } else if (newBankId && Math.abs(diff) > 0.01) {
-                                            // Same bank, just amount changed
-                                            await tx.bankAccount.update({
-                                                where: { id: newBankId },
-                                                data: { currentBalance: { increment: diff } }
-                                            });
-                                        }
-
-                                        // Update Financial Record
-                                        await tx.financialRecord.updateMany({
-                                            where: { orderId: existing.id, orderPaymentId: payment.id, type: 'PAYMENT' },
-                                            data: { 
-                                                amount: orderItem.deposit,
-                                                bankAccountId: dto.bankAccountId,
-                                                paymentMethod: dto.paymentMethod
-                                            }
-                                        });
-                                    } else if (orderItem.deposit > 0) {
-                                        // Case where it had 0 deposit and now it has one
-                                        const paymentId = crypto.randomUUID();
-                                        await tx.orderPayment.create({
-                                            data: {
-                                                id: paymentId,
-                                                orderId: existing.id,
-                                                amount: orderItem.deposit,
-                                                method: dto.paymentMethod,
-                                                receiptNumber: `REC-ABO-${Date.now().toString().slice(-6)}`,
-                                                description: 'Abono inicial (Edit)'
-                                            }
-                                        });
-
-                                        if (dto.bankAccountId) {
-                                            if (!accountBalancesMap.has(dto.bankAccountId)) {
-                                                const acc = await tx.bankAccount.findUnique({
-                                                    where: { id: dto.bankAccountId },
-                                                    select: { currentBalance: true }
-                                                });
-                                                accountBalancesMap.set(dto.bankAccountId, Number(acc?.currentBalance || 0));
-                                            }
-
-                                            const balanceBefore = accountBalancesMap.get(dto.bankAccountId)!;
-                                            const balanceAfter = balanceBefore + orderItem.deposit;
-                                            accountBalancesMap.set(dto.bankAccountId, balanceAfter);
-
-                                            await tx.bankAccount.update({
-                                                where: { id: dto.bankAccountId },
-                                                data: { currentBalance: { increment: orderItem.deposit } }
-                                            });
-
-                                            await tx.financialRecord.create({
-                                                data: {
-                                                    type: 'PAYMENT',
-                                                    source: 'ORDER_PAYMENT',
-                                                    movementType: 'INCOME',
-                                                    fromAccountType: 'EXTERNAL',
-                                                    toAccountType: 'CASH',
-                                                    referenceNumber: `REF-EDIT-${Date.now()}-${i}`,
-                                                    amount: orderItem.deposit,
-                                                    date: new Date(),
-                                                    clientId: dto.clientId,
-                                                    clientName: clientName,
-                                                    clientDocument: clientDoc,
-                                                    orderId: existing.id,
-                                                    orderPaymentId: paymentId,
-                                                    createdBy: updatedBy,
-                                                    notes: `Abono inicial editado | Orden: ${dto.receiptNumber} | Pedido: ${existing.orderNumber || '—'} | Marca: ${existing.brand?.name || '—'} | Tipo: ${existing.type?.toUpperCase()}`,
-                                                    bankAccountId: dto.bankAccountId,
-                                                    paymentMethod: dto.paymentMethod,
-                                                    balanceBefore,
-                                                    balanceAfter,
-                                                    version: 1,
-                                                    createdAt: new Date()
-                                                }
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Sync OrderItems
-                            await tx.orderItem.deleteMany({ where: { orderId: orderItem.id } });
-                            await tx.orderItem.create({
-                                data: {
-                                    id: crypto.randomUUID(),
-                                    orderId: orderItem.id,
-                                    productName: orderItem.brandName,
-                                    quantity: orderItem.quantity || 1,
-                                    unitPrice: orderItem.quantity > 0 ? (orderItem.total / orderItem.quantity) : orderItem.total,
-                                    brandId: orderItem.brandId,
-                                    brandName: orderItem.brandName
-                                }
-                            });
-
-                            if (i === 0) parentId = updated.id;
-                            processedOrders.push(updated);
-                        }
                     } else {
-                        // CREATE NEW
-                        const orderId = crypto.randomUUID();
-                        if (i === 0) parentId = orderId;
+                        orderId = crypto.randomUUID();
+                        let actualOrderNumber = orderDto.orderNumber;
+                        if (!actualOrderNumber) {
+                            actualOrderNumber = `${orderPrefix}${String(nextOrderNumber).padStart(3, '0')}`;
+                            nextOrderNumber++;
+                        }
 
-                        const created = await tx.order.create({
+                        await tx.order.create({
                             data: {
                                 id: orderId,
-                                receiptNumber: dto.receiptNumber,
+                                receiptId: receipt.id,
+                                receiptNumber,
                                 clientId: dto.clientId,
-                                clientName: clientName,
+                                clientName,
                                 salesChannel: dto.salesChannel,
-                                type: orderItem.type,
-                                brandId: orderItem.brandId,
-                                total: orderItem.total,
+                                brandId: orderDto.brandId,
+                                brandName: orderDto.brandName,
+                                total: Number(orderDto.total),
                                 paymentMethod: dto.paymentMethod,
-                                bankAccountId: dto.bankAccountId || null,
+                                bankAccountId: bankId,
+                                type: orderDto.type,
+                                orderNumber: actualOrderNumber,
+                                parentOrderId: effectiveParentId || undefined,
+                                status: orderDto.status || 'POR_RECIBIR',
+                                possibleDeliveryDate: orderDto.possibleDeliveryDate,
                                 transactionDate: dto.transactionDate,
-                                possibleDeliveryDate: orderItem.possibleDeliveryDate,
-                                status: OrderStatus.POR_RECIBIR,
-                                parentOrderId: i > 0 ? parentId : null,
-                                notes: dto.notes,
-                                createdByName: updatedBy,
-                                orderNumber: orderItem.orderNumber,
-                                createdAt: dto.createdAt,
-                                version: 1,
-                                sourceOrderId: orderItem.sourceOrderId,
-                                sourceOrderNumber: orderItem.sourceOrderNumber,
-                                sourceBrandName: orderItem.sourceBrandName,
-                                sourceQuantity: orderItem.sourceQuantity,
-                                sourceDescription: orderItem.sourceDescription,
-                                description: orderItem.description,
-                                items: {
-                                    create: [{
-                                        id: crypto.randomUUID(),
-                                        productName: orderItem.brandName,
-                                        quantity: orderItem.quantity || 1,
-                                        unitPrice: orderItem.quantity > 0 ? (orderItem.total / orderItem.quantity) : orderItem.total,
-                                        brandId: orderItem.brandId,
-                                        brandName: orderItem.brandName
-                                    }]
-                                }
-                            } as any
+                                createdAt: new Date(),
+                                createdByName: updatedBy
+                            }
+                        });
+                        if (!effectiveParentId) effectiveParentId = orderId;
+                    }
+
+                    // Register NEW Payment for this order
+                    if (wantedDeposit > 0) {
+                        const paymentId = crypto.randomUUID();
+                        const payMethod = dto.paymentMethod;
+
+                        // Create Payment Record
+                        await tx.orderPayment.create({
+                            data: {
+                                id: paymentId,
+                                orderId,
+                                amount: wantedDeposit,
+                                method: payMethod,
+                                receiptNumber: `AB-${crypto.randomUUID().slice(0, 8)}`,
+                                createdAt: new Date()
+                            }
                         });
 
-                        if (orderItem.deposit > 0) {
-                            const paymentId = crypto.randomUUID();
-                            await tx.orderPayment.create({
+                        // Calculate Running Balances for Financial Record
+                        const updatedClientAccount = await tx.clientAccount.findUnique({ where: { id: clientAccount.id } });
+                        const walletBalBefore = Number(updatedClientAccount?.totalCreditAvailable || 0);
+                        
+                        const orderSummary = { receiptNumber, orderNumber: orderDto.orderNumber, brandName: orderDto.brandName };
+                        const description = `Abono corregido | Marca: ${orderDto.brandName || '—'} | Orden: ${receiptNumber} | Pedido: ${orderDto.orderNumber || '—'}`;
+
+                        if (payMethod === 'BILLETERA_VIRTUAL') {
+                            // Accumulate wallet expense
+                            totalWalletRefund -= wantedDeposit;
+                            console.log(`[BatchUpdate] Deducting new wallet payment: ${wantedDeposit}, current total: ${totalWalletRefund}`);
+                            
+                            const bankAcc = await tx.bankAccount.findFirst({ where: { type: 'CASH', isActive: true } });
+                            const bankIdUsed = bankAcc?.id || bankId;
+
+                            // @ts-ignore
+                            await tx.financialRecord.create({
                                 data: {
-                                    id: paymentId,
-                                    orderId,
-                                    amount: orderItem.deposit,
-                                    method: dto.paymentMethod,
-                                    receiptNumber: `REC-ABO-${Date.now().toString().slice(-6)}`,
-                                    description: 'Abono inicial (Nuevo pedido en recibo)'
-                                }
+                                    id: crypto.randomUUID(),
+                                    type: 'PAYMENT',
+                                    source: 'WALLET',
+                                    movementType: 'INTERNAL',
+                                    fromAccountType: 'WALLET',
+                                    toAccountType: 'INTERNAL',
+                                    amount: wantedDeposit,
+                                    date: new Date(),
+                                    client: { connect: { id: dto.clientId } },
+                                    clientName,
+                                    clientDocument: clientDoc,
+                                    bankAccount: { connect: { id: bankIdUsed || 'cash-account-1' } },
+                                    referenceNumber: `WAL-UPD-${crypto.randomUUID().slice(0, 12)}`,
+                                    transactionGroupId,
+                                    order: { connect: { id: orderId } },
+                                    orderPayment: { connect: { id: paymentId } },
+                                    createdBy: updatedBy,
+                                    notes: buildNotesJSON({
+                                        title: 'USO_BILLETERA',
+                                        module: 'ORDERS',
+                                        clientDoc,
+                                        orders: [orderSummary],
+                                        description
+                                    })
+                                } as any
+                            });
+                        } else {
+                            // Cash / Bank
+                            if (!bankId) throw new Error('Cuenta de caja no encontrada');
+                            const bankAcc = await tx.bankAccount.findUnique({ where: { id: bankId } });
+                            const bankBalBefore = Number(bankAcc?.currentBalance || 0);
+
+                            await tx.bankAccount.update({
+                                where: { id: bankId },
+                                data: { currentBalance: { increment: wantedDeposit }, version: { increment: 1 } }
                             });
 
-                            if (dto.bankAccountId) {
-                                if (!accountBalancesMap.has(dto.bankAccountId)) {
-                                    const acc = await tx.bankAccount.findUnique({
-                                        where: { id: dto.bankAccountId },
-                                        select: { currentBalance: true }
-                                    });
-                                    accountBalancesMap.set(dto.bankAccountId, Number(acc?.currentBalance || 0));
-                                }
-
-                                const balanceBefore = accountBalancesMap.get(dto.bankAccountId)!;
-                                const balanceAfter = balanceBefore + orderItem.deposit;
-                                accountBalancesMap.set(dto.bankAccountId, balanceAfter);
-
-                                await tx.bankAccount.update({
-                                    where: { id: dto.bankAccountId },
-                                    data: { currentBalance: { increment: orderItem.deposit } }
-                                });
-
-                                await tx.financialRecord.create({
-                                    data: {
-                                        type: 'PAYMENT',
-                                        source: 'ORDER_PAYMENT',
-                                        movementType: 'INCOME',
-                                        fromAccountType: 'EXTERNAL',
-                                        toAccountType: 'CASH',
-                                        referenceNumber: `REF-ADD-${Date.now()}-${i}`,
-                                        amount: orderItem.deposit,
-                                        date: new Date(),
-                                        clientId: dto.clientId,
-                                        clientName: clientName,
-                                        clientDocument: clientDoc,
-                                        orderId,
-                                        orderPaymentId: paymentId,
-                                        createdBy: updatedBy,
-                                        notes: `Pedido inicial agregado | Orden: ${dto.receiptNumber} | Pedido: ${orderItem.orderNumber || '—'} | Marca: ${orderItem.brandName} | Tipo: ${orderItem.type?.toUpperCase()}`,
-                                        bankAccountId: dto.bankAccountId,
-                                        paymentMethod: dto.paymentMethod,
-                                        balanceBefore,
-                                        balanceAfter,
-                                        version: 1,
-                                        createdAt: new Date()
-                                    }
-                                });
-                            }
+                            // @ts-ignore
+                            await tx.financialRecord.create({
+                                data: {
+                                    id: crypto.randomUUID(),
+                                    type: 'PAYMENT',
+                                    source: 'ORDER_PAYMENT',
+                                    movementType: 'INCOME',
+                                    fromAccountType: 'EXTERNAL',
+                                    toAccountType: 'CASH',
+                                    amount: wantedDeposit,
+                                    date: new Date(),
+                                    client: { connect: { id: dto.clientId } },
+                                    clientName,
+                                    clientDocument: clientDoc,
+                                    bankAccount: { connect: { id: bankId } },
+                                    referenceNumber: `FIN-UPD-${crypto.randomUUID().slice(0, 12)}`,
+                                    transactionGroupId,
+                                    order: { connect: { id: orderId } },
+                                    orderPayment: { connect: { id: paymentId } },
+                                    createdBy: updatedBy,
+                                    notes: buildNotesJSON({
+                                        title: cardTitleFromMethod(payMethod),
+                                        module: 'ORDERS',
+                                        clientDoc,
+                                        orders: [orderSummary],
+                                        description
+                                    })
+                                } as any
+                            });
                         }
-                        processedOrders.push(created);
                     }
                 }
 
-                return processedOrders;
-            }, {
-                timeout: 30000
-            });
+                // 5. APPLY NET WALLET DELTA
+                console.log(`[BatchUpdate] FINAL WALLET DELTA: ${totalWalletRefund}`);
+                if (Math.abs(totalWalletRefund) > 0.001) {
+                    const currentAcc = await tx.clientAccount.findUnique({ where: { clientId: dto.clientId } });
+                    if (!currentAcc) throw new Error('Cuenta de cliente no encontrada para sincronización final');
 
-            return Result.ok(result);
-        } catch (error: any) {
-            console.error('[BatchUpdateOrdersUseCase] Error:', error);
-            if (error.code === 'P2002' && error.meta?.target?.includes('source_order_id')) {
-                return Result.fail('Doble cambio detectado: Uno de los pedidos originales ya ha sido procesado por otro usuario en un cambio diferente. Por favor verifica tu tabla.');
-            }
-            return Result.fail(error.message || 'Error al actualizar el recibo.');
+                    if (totalWalletRefund > 0) {
+                        // NET REFUND: Create a single credit record
+                        await tx.clientCredit.create({
+                            data: {
+                                clientAccountId: currentAcc.id,
+                                amount: totalWalletRefund,
+                                remainingAmount: totalWalletRefund,
+                                originTransactionId: `REF-BATCH-${receiptNumber}-${crypto.randomUUID().slice(0, 4)}`,
+                                status: 'AVAILABLE',
+                                createdAt: new Date()
+                            }
+                        });
+                        await tx.clientAccount.update({
+                            where: { id: currentAcc.id },
+                            data: { totalCreditAvailable: { increment: totalWalletRefund }, version: { increment: 1 } }
+                        });
+                    } else {
+                        // NET EXPENSE: Deduct from balance and consume credits FIFO
+                        const expenseAmount = Math.abs(totalWalletRefund);
+                        
+                        if (Number(currentAcc.totalCreditAvailable) < expenseAmount) {
+                            throw new Error(`Saldo insuficiente en billetera para cubrir el ajuste del recibo. Necesario: $${expenseAmount}, Disponible: $${currentAcc.totalCreditAvailable}`);
+                        }
+
+                        const availableCredits = await tx.clientCredit.findMany({
+                            where: { clientAccountId: currentAcc.id, status: 'AVAILABLE' },
+                            orderBy: { createdAt: 'asc' }
+                        });
+
+                        let remaining = expenseAmount;
+                        for (const credit of availableCredits) {
+                            if (remaining <= 0) break;
+                            const subtract = Math.min(Number(credit.remainingAmount), remaining);
+                            const newRemaining = Number(credit.remainingAmount) - subtract;
+                            await tx.clientCredit.update({
+                                where: { id: credit.id },
+                                data: {
+                                    remainingAmount: newRemaining,
+                                    status: newRemaining <= 0.01 ? 'USED' : 'AVAILABLE',
+                                    usedAt: newRemaining <= 0.01 ? new Date() : undefined
+                                }
+                            });
+                            remaining -= subtract;
+                        }
+
+                        await tx.clientAccount.update({
+                            where: { id: currentAcc.id },
+                            data: { totalCreditAvailable: { decrement: expenseAmount }, version: { increment: 1 } }
+                        });
+                    }
+                }
+
+                return Result.ok({ success: true });
+            });
+        } catch (err: any) {
+            console.error('[BatchUpdateOrders] Error:', err);
+            return Result.fail(err.message || 'Error al actualizar el lote de pedidos');
         }
     }
 }

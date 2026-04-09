@@ -14,6 +14,8 @@ export interface OrderFilters {
   invoiceNumber?: string;
   creditNoteNumber?: string;
   hasPendingPayment?: boolean; // Filter orders where total > sum(payments)
+  sortBy?: string;
+  order?: 'asc' | 'desc';
 }
 
 export interface IOrderRepository {

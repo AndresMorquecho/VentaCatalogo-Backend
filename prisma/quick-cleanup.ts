@@ -57,8 +57,9 @@ async function main() {
       data: { currentBalance: 0 }
     });
 
-    console.log('🗑️  Borrando logs de auditoría...');
+    console.log('🗑️  Borrando logs de auditoría y bloqueos...');
     await prisma.auditLog.deleteMany();
+    await prisma.systemLock.deleteMany();
 
     console.log('🧹 Reseteando fechas de última actividad en clientes...');
     await prisma.client.updateMany({

@@ -83,7 +83,7 @@ router.get('/cards', authenticate, async (req: Request, res: Response, next: Nex
       where,
       include: {
         bankAccount: { select: { name: true, type: true } },
-        order: { select: { receiptNumber: true, orderNumber: true, type: true } },
+        order: { select: { receiptNumber: true, orderNumber: true, type: true, brand: { select: { name: true } } } },
       },
       orderBy: { date: 'desc' },
       skip,

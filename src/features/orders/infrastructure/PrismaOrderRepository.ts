@@ -105,9 +105,14 @@ export class PrismaOrderRepository implements IOrderRepository {
     const skip = page && limit ? (page - 1) * limit : undefined;
     const take = limit || undefined;
 
+    const orderBy: any = filters.sortBy 
+      ? { [filters.sortBy]: filters.order || 'desc' }
+      : { createdAt: 'desc' };
+
     const [orders, total] = await Promise.all([
       prisma.order.findMany({
         where,
+        orderBy,
         include: {
           items: true,
           payments: {
@@ -172,7 +177,6 @@ export class PrismaOrderRepository implements IOrderRepository {
             select: { childOrders: true }
           },
         },
-        orderBy: { createdAt: 'desc' },
         skip,
         take
       }),
@@ -333,48 +337,54 @@ export class PrismaOrderRepository implements IOrderRepository {
 
   async generateSequence(prefix: string): Promise<string> {
     const year = new Date().getFullYear();
-    const searchPattern = `${prefix}-${year}-`;
-
-    // 1. Check in Order table
-    // For order numbers, we must check both PD- (standard) and CAM- (exchange) prefixes
-    // as they share the same sequential counter.
-    const lastOrder = await prisma.order.findFirst({
-      where: prefix === 'OR' 
-        ? { receiptNumber: { startsWith: searchPattern } }
-        : { 
-            OR: [
-              { orderNumber: { startsWith: `PD-${year}-` } },
-              { orderNumber: { startsWith: `CAM-${year}-` } }
-            ]
-          },
-      orderBy: prefix === 'OR' 
-        ? [ { receiptNumber: 'desc' } ] 
-        : [ { orderNumber: 'desc' } ]
+    
+    // 1. Get the max PD number
+    const lastPD = await prisma.order.findFirst({
+      where: { orderNumber: { startsWith: `PD-${year}-` } },
+      orderBy: { orderNumber: 'desc' },
+      select: { orderNumber: true }
     });
 
-    // 2. Extra check for receipts to avoid conflicts across different tables
-    let lastReceiptNumber = 0;
+    // 2. Get the max CAM number
+    const lastCAM = await prisma.order.findFirst({
+      where: { orderNumber: { startsWith: `CAM-${year}-` } },
+      orderBy: { orderNumber: 'desc' },
+      select: { orderNumber: true }
+    });
+
+    // 3. Get the max OR receipt number (only if prefix is OR)
+    let lastORValue = 0;
     if (prefix === 'OR') {
-        const lastReceipt = await prisma.orderReceipt.findFirst({
-           where: { receiptNumber: { startsWith: searchPattern } },
-           orderBy: { receiptNumber: 'desc' }
-        });
-        if (lastReceipt) {
-           lastReceiptNumber = parseInt(lastReceipt.receiptNumber.split('-')[2]) || 0;
-        }
+      const lastOROrder = await prisma.order.findFirst({
+        where: { receiptNumber: { startsWith: `OR-${year}-` } },
+        orderBy: { receiptNumber: 'desc' },
+        select: { receiptNumber: true }
+      });
+      const lastORReceipt = await prisma.orderReceipt.findFirst({
+        where: { receiptNumber: { startsWith: `OR-${year}-` } },
+        orderBy: { receiptNumber: 'desc' },
+        select: { receiptNumber: true }
+      });
+      
+      const v1 = lastOROrder?.receiptNumber ? (parseInt(lastOROrder.receiptNumber.split('-')[2]) || 0) : 0;
+      const v2 = lastORReceipt?.receiptNumber ? (parseInt(lastORReceipt.receiptNumber.split('-')[2]) || 0) : 0;
+      lastORValue = Math.max(v1, v2);
     }
 
-    let lastNumber = lastReceiptNumber;
-    if (lastOrder) {
-      const matchTarget = prefix === 'OR' ? lastOrder.receiptNumber : (lastOrder.orderNumber || '');
-      const parts = matchTarget.split('-');
-      if (parts.length >= 3) {
-        const parsedOrderNum = parseInt(parts[2]) || 0;
-        if (parsedOrderNum > lastNumber) lastNumber = parsedOrderNum;
-      }
-    }
+    // Extraction function
+    const getNum = (val?: string | null) => {
+      if (!val) return 0;
+      const parts = val.split('-');
+      return parts.length >= 3 ? (parseInt(parts[2]) || 0) : 0;
+    };
 
-    return `${prefix}-${year}-${String(lastNumber + 1).padStart(3, '0')}`;
+    const maxPD = getNum(lastPD?.orderNumber);
+    const maxCAM = getNum(lastCAM?.orderNumber);
+    
+    let finalMax = Math.max(maxPD, maxCAM);
+    if (prefix === 'OR') finalMax = lastORValue;
+
+    return `${prefix}-${year}-${String(finalMax + 1).padStart(3, '0')}`;
   }
 
   private toDomain(raw: any): Order {
@@ -406,6 +416,7 @@ export class PrismaOrderRepository implements IOrderRepository {
         deliveredByName: raw.deliveredByName || undefined,
         parentOrderId: raw.parentOrderId || undefined,
         orderNumber: raw.orderNumber || undefined,
+        trackingGuide: raw.trackingGuide || undefined,
         exchangeItemId: raw.exchangeItemId || undefined,
         sourceOrderId: raw.sourceOrderId || undefined,
         sourceOrderNumber: raw.sourceOrderNumber || undefined,
@@ -413,6 +424,12 @@ export class PrismaOrderRepository implements IOrderRepository {
         sourceQuantity: raw.sourceQuantity !== null ? Number(raw.sourceQuantity) : undefined,
         sourceDescription: raw.sourceDescription || undefined,
         description: raw.description || undefined,
+        changeStatus: raw.changeStatus || undefined,
+        receptionBatchId: raw.receptionBatchId || undefined,
+        deliveryBatchId: raw.deliveryBatchId || undefined,
+        packingNumber: raw.packingNumber || undefined,
+        packingTotal: raw.packingTotal !== null ? Number(raw.packingTotal) : undefined,
+        deliveryNumber: raw.deliveryNumber || undefined,
         items: raw.items.map((item: any) => ({
           id: item.id,
           productName: item.productName,
@@ -549,6 +566,7 @@ export class PrismaOrderRepository implements IOrderRepository {
       deliveredByName: json.deliveredByName,
       parentOrderId: json.parentOrderId,
       orderNumber: json.orderNumber,
+      trackingGuide: json.trackingGuide,
       exchangeItemId: json.exchangeItemId,
       sourceOrderId: json.sourceOrderId,
       sourceOrderNumber: json.sourceOrderNumber,
@@ -556,6 +574,12 @@ export class PrismaOrderRepository implements IOrderRepository {
       sourceQuantity: json.sourceQuantity,
       sourceDescription: json.sourceDescription,
       description: json.description,
+      changeStatus: json.changeStatus,
+      receptionBatchId: json.receptionBatchId,
+      deliveryBatchId: json.deliveryBatchId,
+      packingNumber: json.packingNumber,
+      packingTotal: json.packingTotal,
+      deliveryNumber: json.deliveryNumber,
       createdAt: json.createdAt,
       updatedAt: json.updatedAt,
       version: json.version

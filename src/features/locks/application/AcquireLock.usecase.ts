@@ -15,15 +15,22 @@ export class AcquireLockUseCase {
         try {
             const now = new Date();
 
-            // 1. Cleanup ONLY expired locks globally
+            if (!dto.resourceId || !dto.resourceType) {
+                console.warn('AcquireLock: resourceId o resourceType ausentes');
+                return Result.fail('ID de recurso no válido para bloqueo');
+            }
+
+            // 1. Cleanup expired locks
             await prisma.systemLock.deleteMany({
                 where: {
                     expiresAt: { lt: now }
                 }
-            });
+            }).catch(err => console.error('AcquireLock cleanup error:', err));
 
-            // 2. Check if a valid (non-expired) lock exists for this resource
-            const existingLock = await prisma.systemLock.findUnique({
+            const getExpiry = () => new Date(Date.now() + LOCK_DURATION_MINUTES * 60000);
+
+            // 2. Check if a valid lock exists
+            let existingLock = await prisma.systemLock.findUnique({
                 where: {
                     resourceId_resourceType: {
                         resourceId: dto.resourceId,
@@ -36,29 +43,59 @@ export class AcquireLockUseCase {
                 if (existingLock.userId !== dto.userId) {
                     return Result.fail(`El recurso está siendo editado por ${existingLock.userName}`);
                 }
-                // It's the same user, update expiry
+                // Same user, update expiry
                 const updated = await prisma.systemLock.update({
                     where: { id: existingLock.id },
-                    data: { expiresAt: new Date(now.getTime() + LOCK_DURATION_MINUTES * 60000) }
+                    data: { expiresAt: getExpiry() }
                 });
                 return Result.ok(updated);
             }
 
-            // 3. Create NEW lock
-            const newLock = await prisma.systemLock.create({
-                data: {
-                    resourceId: dto.resourceId,
-                    resourceType: dto.resourceType,
-                    userId: dto.userId,
-                    userName: dto.userName,
-                    expiresAt: new Date(now.getTime() + LOCK_DURATION_MINUTES * 60000)
-                }
-            });
+            // 3. Create NEW lock with race condition handling
+            try {
+                const newLock = await prisma.systemLock.create({
+                    data: {
+                        resourceId: dto.resourceId,
+                        resourceType: dto.resourceType,
+                        userId: dto.userId,
+                        userName: dto.userName,
+                        expiresAt: getExpiry()
+                    }
+                });
 
-            return Result.ok(newLock);
-        } catch (error) {
-            console.error('AcquireLock Error:', error);
-            return Result.fail('Error al adquirir bloqueo del sistema');
+                return Result.ok(newLock);
+            } catch (error: any) {
+                // P2002 is Prisma's code for unique constraint violation
+                if (error.code === 'P2002') {
+                    // Someone else won the race between findUnique and create.
+                    // Re-check the lock to see if it's the same user or someone else.
+                    const lockAfterRace = await prisma.systemLock.findUnique({
+                        where: {
+                            resourceId_resourceType: {
+                                resourceId: dto.resourceId,
+                                resourceType: dto.resourceType
+                            }
+                        }
+                    });
+
+                    if (lockAfterRace) {
+                        if (lockAfterRace.userId === dto.userId) {
+                            // Match! It was likely another parallel request from the same user.
+                            const updated = await prisma.systemLock.update({
+                                where: { id: lockAfterRace.id },
+                                data: { expiresAt: getExpiry() }
+                            });
+                            return Result.ok(updated);
+                        }
+                        return Result.fail(`El recurso está siendo editado por ${lockAfterRace.userName}`);
+                    }
+                }
+                throw error; // Re-throw other errors
+            }
+        } catch (error: any) {
+            console.error('AcquireLock CRITICAL Error:', error);
+            // Avoid showing technical Prisma errors in the UI
+            return Result.fail(`No se pudo establecer el bloqueo de edición. Por favor, intente recargar la página.`);
         }
     }
 }

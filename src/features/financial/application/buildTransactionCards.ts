@@ -70,6 +70,8 @@ export interface TransactionCardDTO {
   affectsBank: boolean;
   affectsWallet: boolean;
   isInternal: boolean;
+  // Phase 4.2: Reversal flag — true = excluded from cash closure net totals
+  isReversal: boolean;
   notes: string | null;
   extra: string | null;
 }
@@ -98,9 +100,18 @@ interface RawRecord {
   transactionGroupId?: string | null;
   balanceBefore?: number | null;
   balanceAfter?: number | null;
+  // Phase 4.2
+  isReversal?: boolean | null;
+  adjustmentOf?: string | null;
   // Relations (when included)
   bankAccount?: { name: string; type: string } | null;
-  order?: { receiptNumber: string; orderNumber: string | null; brandName?: string | null; type?: string | null } | null;
+  order?: { 
+    receiptNumber: string; 
+    orderNumber: string | null; 
+    brandName?: string | null; 
+    type?: string | null;
+    brand?: { name: string } | null;
+  } | null;
 }
 
 // ─── Helper: normalize Decimal → number ──────────────────────────────────────
@@ -143,6 +154,20 @@ function selectPrimary(records: RawRecord[]): RawRecord {
 function resolveTitle(records: RawRecord[]): CardTitle {
   const primary = selectPrimary(records);
 
+  // 0. Detect cancellation (Phase 3.3) — highest priority
+  if (records.some(r => r.source === 'ORDER_CANCELLATION')) return 'CANCELACION_PEDIDO';
+
+  // 1. Detect method change (Phase 3.3)
+  if (records.some(r => r.source === 'METHOD_CHANGE_REVERSAL') || records.some(r => r.source === 'METHOD_CHANGE_NEW')) return 'CAMBIO_METODO_PAGO';
+
+  // 2. Detect edit adjustments (Phase 2.4)
+  if (records.some(r => r.source === 'ORDER_EDIT' && r.movementType === 'EXPENSE')) return 'REDUCCION_ABONO';
+  if (records.some(r => r.type === 'ADJUSTMENT' && r.source === 'ORDER_PAYMENT' && r.movementType === 'INCOME')) return 'AJUSTE_ABONO';
+
+  // 3. Detect Mixed Payment
+  const uniqueMethods = new Set(records.filter(r => r.movementType !== 'INTERNAL').map(r => r.paymentMethod).filter(pm => !!pm));
+  if (uniqueMethods.size > 1) return 'PAGO_MIXTO';
+
   // Parse notes for v2 JSON
   const parsed = parseNotesJSON(primary.notes);
   if (parsed?.v === 2 && parsed.title) return parsed.title;
@@ -177,6 +202,12 @@ function resolveTitle(records: RawRecord[]): CardTitle {
 function resolveOperationType(records: RawRecord[], title: CardTitle): OperationType {
   const primary = selectPrimary(records);
   const parsed = parseNotesJSON(primary.notes);
+
+  // New adjustment types
+  if (title === 'CANCELACION_PEDIDO') return 'REEMBOLSO';
+  if (title === 'AJUSTE_ABONO') return 'ABONO';
+  if (title === 'REDUCCION_ABONO') return 'REEMBOLSO';
+  if (title === 'CAMBIO_METODO_PAGO') return 'ABONO';
 
   // Use module from v2 notes if available
   if (parsed?.v === 2) {
@@ -252,14 +283,22 @@ function buildMovements(records: RawRecord[], title: CardTitle): CardMovement[] 
     const balanceAfter = r.balanceAfter != null ? toNum(r.balanceAfter) : null;
 
     // WALLET movements are always informative (except wallet-use which deducts real credit)
-    const isWalletInformative = accountType === 'WALLET' && r.movementType === 'INTERNAL';
+    // BUT if we have both USE (EXPENSE) and APPLY (INCOME), we make the USE informative 
+    // to show the total applied in the card balance.
+    const isWalletUse = r.source === 'WALLET' && r.movementType === 'EXPENSE';
+    const isWalletApply = r.source === 'CREDIT_APPLICATION' && r.movementType === 'INCOME';
+    
+    let isInformativeWallet = accountType === 'WALLET' && r.movementType === 'INTERNAL';
+    if (isWalletUse && records.some(rec => rec.source === 'CREDIT_APPLICATION' && rec.movementType === 'INCOME')) {
+        isInformativeWallet = true; // Hide deduction from total if we show application
+    }
 
     // DISTRIBUTION legs: 
     // - EXPENSE (debt reduction) is REAL for the card amount
     // - INCOME (payment added) is INFORMATIVE to avoid double counting
     const isDistributionIncome = r.source === 'CREDIT_DISTRIBUTION' && r.movementType === 'INCOME';
 
-    const informative = isWalletInformative || isDistributionIncome;
+    const informative = isInformativeWallet || isDistributionIncome;
 
     // Direction: INCOME → IN, EXPENSE → OUT, INTERNAL → interpret from account types
     let direction: MovementDirection;
@@ -323,7 +362,7 @@ function extractOrders(records: RawRecord[]): CardOrderContext[] {
           orderId: r.orderId ?? null,
           receiptNumber: r.order.receiptNumber,
           orderNumber: r.order.orderNumber ?? null,
-          brandName: r.order.brandName ?? null,
+          brandName: r.order.brandName ?? r.order.brand?.name ?? null,
           type: r.order.type ?? null,
         });
       }
@@ -416,6 +455,8 @@ function buildDTO(records: RawRecord[]): TransactionCardDTO {
     affectsBank,
     affectsWallet,
     isInternal,
+    // Phase 4.2: A card is a reversal if ALL its raw records are marked as reversals
+    isReversal: records.every(r => r.isReversal === true),
     notes,
     extra,
   };

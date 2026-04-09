@@ -31,45 +31,79 @@ export class DeleteDeliveryBatchUseCase {
         console.log(`[DeleteDeliveryBatch] Found ${batch.orders.length} orders and ${batch.payments.length} payments in batch`);
 
         // 2. Revert Financial Records (Bank Accounts and Client Wallet)
-        // We iterate through financial records created by this batch
         for (const record of batch.financialRecords) {
           const amount = Number(record.amount);
-          
-          if (record.movementType === 'INCOME') {
-            // It was income (e.g. cash payment), so we subtract from bank account
-            await tx.bankAccount.update({
-              where: { id: record.bankAccountId },
-              data: { currentBalance: { decrement: amount }, version: { increment: 1 } }
-            });
-          } else if (record.movementType === 'EXPENSE') {
-            // It was expense (e.g. cash refund), so we add back to bank account
-            await tx.bankAccount.update({
-              where: { id: record.bankAccountId },
-              data: { currentBalance: { increment: amount }, version: { increment: 1 } }
-            });
-          } else if (record.movementType === 'INTERNAL' || record.type === 'CREDIT') {
-             // Handle wallet (Internal moves between order/wallet)
-             // If movement was from WALLET to ORDER (PAYMENT leg), increment wallet
-             if (record.fromAccountType === 'WALLET') {
-                await tx.clientAccount.update({
-                  where: { clientId: record.clientId },
-                  data: { totalCreditAvailable: { increment: amount }, version: { increment: 1 } }
-                });
-             }
-             // If movement was from ORDER to WALLET (CREDIT leg), decrement wallet
-             if (record.toAccountType === 'WALLET') {
-                await tx.clientAccount.update({
-                  where: { clientId: record.clientId },
-                  data: { totalCreditAvailable: { decrement: amount }, version: { increment: 1 } }
-                });
-             }
+
+          // Skip wallet-origin payments — handled via the payment loop below
+          if (record.source === 'WALLET' || record.movementType === 'INTERNAL') {
+            // Only handle toAccountType=WALLET (credits moved to wallet during distribution)
+            if (record.toAccountType === 'WALLET') {
+              // This was a wallet top-up from order surplus — reverse it
+              await tx.clientAccount.update({
+                where: { clientId: record.clientId },
+                data: { totalCreditAvailable: { decrement: amount }, version: { increment: 1 } }
+              });
+            }
+            continue;
+          }
+
+          if (record.bankAccountId) {
+            if (record.movementType === 'INCOME') {
+              // It was income (e.g. cash/bank payment received), revert by decrementing
+              await tx.bankAccount.update({
+                where: { id: record.bankAccountId },
+                data: { currentBalance: { decrement: amount }, version: { increment: 1 } }
+              });
+            } else if (record.movementType === 'EXPENSE') {
+              // It was an expense (e.g. cash refund given to client), revert by incrementing
+              await tx.bankAccount.update({
+                where: { id: record.bankAccountId },
+                data: { currentBalance: { increment: amount }, version: { increment: 1 } }
+              });
+            }
           }
         }
 
-        // 3. Revert Client Credits (Wallet specific records)
-        // We delete credits created by this batch and their wallet impact was handled above
+        // 2b. Revert BILLETERA_VIRTUAL delivery payments → refund to wallet
+        // @ts-ignore
+        const batchPayments = await tx.orderPayment.findMany({
+          where: { deliveryBatchId: batchId },
+          include: { order: { include: { client: { include: { clientAccount: true } } } } }
+        });
+
+        for (const payment of batchPayments as any[]) {
+          if (payment.method === 'CREDITO_CLIENTE' || payment.method === 'BILLETERA_VIRTUAL') {
+            const clientAcc = payment.order?.client?.clientAccount;
+            if (clientAcc) {
+              const refundAmount = Number(payment.amount);
+              // Restore wallet balance
+              await tx.clientAccount.update({
+                where: { id: clientAcc.id },
+                data: { totalCreditAvailable: { increment: refundAmount }, version: { increment: 1 } }
+              });
+              // Create usable credit record
+              await tx.clientCredit.create({
+                data: {
+                  clientAccountId: clientAcc.id,
+                  amount: refundAmount,
+                  remainingAmount: refundAmount,
+                  originTransactionId: `REV-DEL-BATCH-${payment.id}-${Date.now()}`,
+                  status: 'AVAILABLE',
+                  createdAt: new Date()
+                }
+              });
+              console.log(`[DeleteDeliveryBatch] Restored wallet: +${refundAmount} for client ${clientAcc.id}`);
+            }
+          }
+        }
+
+        // 3. Remove credits that were created by distributions to wallet in this batch
         await tx.clientCredit.deleteMany({
-          where: { originOrderId: { in: batch.orders.map((o: any) => o.id) }, createdAt: { gte: batch.createdAt } }
+          where: { 
+            originOrderId: { in: batch.orders.map((o: any) => o.id) }, 
+            createdAt: { gte: batch.createdAt },
+            originTransactionId: { startsWith: 'BATCH-CREDIT-' }
+          }
         });
 
         // 4. Delete Payments and Financial Records linked to the batch

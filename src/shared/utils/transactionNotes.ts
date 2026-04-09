@@ -34,7 +34,14 @@ export type CardTitle =
   | 'CAMBIO_MISMO_VALOR'
   | 'CAMBIO_CARGO_ADICIONAL'
   | 'CAMBIO_CREDITO'
-  | 'VENTA_CATALOGO';
+  | 'VENTA_CATALOGO'
+  | 'PAGO_MIXTO'
+  // Phase 2.4 — Edit adjustment cards
+  | 'AJUSTE_ABONO'         // Delta positivo (+) al editar
+  | 'REDUCCION_ABONO'      // Delta negativo (-) al editar
+  // Phase 3.3 — Method change & cancellation cards
+  | 'CAMBIO_METODO_PAGO'   // Reversión + nuevo método
+  | 'CANCELACION_PEDIDO';  // Eliminación de pedido con abono
 
 export interface NotesOrderContext {
   receiptNumber: string;
@@ -70,6 +77,13 @@ export const CARD_TITLE_LABELS: Record<CardTitle, string> = {
   CAMBIO_CARGO_ADICIONAL: 'Cargo Adicional por Cambio',
   CAMBIO_CREDITO: 'Crédito por Cambio',
   VENTA_CATALOGO: 'VENTAS - CATÁLOGO',
+  PAGO_MIXTO: 'Pago Mixto',
+  // Phase 2.4
+  AJUSTE_ABONO: 'Ajuste de Abono (+)',
+  REDUCCION_ABONO: 'Reducción de Abono (-)',
+  // Phase 3.3
+  CAMBIO_METODO_PAGO: 'Cambio de Método de Pago',
+  CANCELACION_PEDIDO: 'Cancelación de Pedido',
 };
 
 // ─── Derive CardTitle from payment method ────────────────────────────────────

@@ -29,6 +29,11 @@ export interface OrderProps {
   orderNumber?: string;
   trackingGuide?: string;
   changeStatus?: string;
+  receptionBatchId?: string;
+  deliveryBatchId?: string;
+  packingNumber?: string;
+  packingTotal?: number;
+  deliveryNumber?: string;
   items: OrderItem[];
   payments: OrderPayment[];
   childOrders?: Order[];
@@ -145,7 +150,7 @@ export class Order extends Entity<OrderProps> {
   }
 
   getPaidAmount(): number {
-    return this.props.payments
+    return (this.props.payments || [])
       .reduce((sum, p) => sum + Number(p.amount), 0);
   }
 

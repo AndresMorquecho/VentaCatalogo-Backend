@@ -1,0 +1,10 @@
+﻿{
+  "id": "92031732-7ff6-4ef9-97ec-246fb86d4794",
+  "username": "admin",
+  "password": "$2a$10$sRnKLTBcwO0DTHRpZ8VA.O9NInewEdjnFoho/.T68XXFPkWxPrJzO",
+  "role": "ADMIN",
+  "isActive": true,
+  "createdAt": "2026-04-03T02:12:18.041Z",
+  "updatedAt": "2026-04-08T04:05:51.186Z",
+  "lastAccessAt": "2026-04-08T04:05:51.185Z"
+}
