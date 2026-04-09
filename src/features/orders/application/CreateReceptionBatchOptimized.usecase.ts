@@ -783,7 +783,6 @@ export class CreateReceptionBatchOptimizedUseCase {
           receptionBatchId: null,
           packingNumber: null,
           packingTotal: null,
-          orderNumber: null,
           version: { increment: 1 }
         }
       });

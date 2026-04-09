@@ -127,7 +127,6 @@ export class DeleteReceptionBatchUseCase {
             receptionBatchId: null,
             packingNumber: null,
             packingTotal: null,
-            orderNumber: null,
             version: { increment: 1 }
           }
         });
