@@ -147,11 +147,6 @@ export class SystemSettingsController {
     async deleteOrderType(req: Request, res: Response) {
         const { id } = req.params;
         try {
-            // Check if it's a system type
-            const type = await prisma.orderType.findUnique({ where: { id } });
-            if (type?.isSystem) {
-                return res.status(400).json({ error: 'No se puede eliminar un tipo de sistema' });
-            }
             await prisma.orderType.delete({ where: { id } });
             return res.json({ success: true });
         } catch (error) {

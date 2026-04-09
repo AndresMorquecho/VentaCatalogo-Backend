@@ -250,11 +250,11 @@ export class OrderController {
         clientId: req.body.client_id || req.body.clientId,
         clientName: req.body.client_name || req.body.clientName,
         items: req.body.items?.map((item: any) => ({
-          productName: item.product_name,
+          productName: item.productName || item.product_name,
           quantity: Number(item.quantity),
-          unitPrice: Number(item.unit_price),
-          brandId: item.brand_id || orderBrandId, // CRITICAL: Use item's brandId or order's brandId as fallback
-          brandName: item.brand_name || req.body.brand_name,
+          unitPrice: Number(item.unitPrice || item.unit_price),
+          brandId: item.brandId || item.brand_id || orderBrandId,
+          brandName: item.brandName || item.brand_name || req.body.brandName || req.body.brand_name,
           link: item.link
         })) || [],
         notes: req.body.notes,
@@ -275,8 +275,16 @@ export class OrderController {
         })),
         parentOrderId: req.body.parentOrderId || req.body.parent_order_id,
         orderNumber: req.body.orderNumber || req.body.order_number,
-        status: req.body.status || req.body.state
+        status: req.body.status || req.body.state,
+        sourceOrderId: req.body.sourceOrderId || req.body.source_order_id,
+        sourceOrderNumber: req.body.sourceOrderNumber || req.body.source_order_number,
+        sourceBrandName: req.body.sourceBrandName || req.body.source_brand_name,
+        sourceQuantity: req.body.sourceQuantity !== undefined ? Number(req.body.sourceQuantity) : (req.body.source_quantity !== undefined ? Number(req.body.source_quantity) : undefined),
+        sourceDescription: req.body.sourceDescription || req.body.source_description,
+        description: req.body.description,
       };
+
+      console.log("[OrderController] Creating order with DTO:", JSON.stringify(dto, null, 2));
 
       const result = await this.createOrderUseCase.execute(dto, req.user!.username);
 
@@ -412,11 +420,17 @@ export class OrderController {
         packingTotal: req.body.packingTotal !== undefined ? Number(req.body.packingTotal) : (req.body.packing_total !== undefined ? Number(req.body.packing_total) : undefined),
         deliveryNumber: req.body.deliveryNumber || req.body.delivery_number,
         changeStatus: req.body.changeStatus || req.body.change_status,
+        sourceOrderId: req.body.sourceOrderId || req.body.source_order_id,
+        sourceOrderNumber: req.body.sourceOrderNumber || req.body.source_order_number,
+        sourceBrandName: req.body.sourceBrandName || req.body.source_brand_name,
+        sourceQuantity: req.body.sourceQuantity !== undefined ? Number(req.body.sourceQuantity) : (req.body.source_quantity !== undefined ? Number(req.body.source_quantity) : undefined),
         sourceDescription: req.body.sourceDescription || req.body.source_description,
         description: req.body.description,
         createdAt: (req.body.created_at || req.body.createdAt) ? new Date(req.body.created_at || req.body.createdAt) : undefined,
         updatedAt: new Date()
       };
+
+      console.log("[OrderController] Updating order with data:", JSON.stringify(updateData, null, 2));
 
       // Remove undefined fields
       Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);

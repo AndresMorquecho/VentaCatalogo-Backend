@@ -412,9 +412,12 @@ function buildDTO(records: RawRecord[]): TransactionCardDTO {
 
   // Notes extraction: v2 description > v1 raw notes (only if not JSON)
   let notes: string | null = null;
+  const isV2 = parsedNotes.some(p => p.v === 2);
+
   if (firstWithDescription) {
     notes = firstWithDescription.description!;
-  } else {
+  } else if (!isV2) {
+    // ONLY fall back to raw notes IF it's not a v2 JSON record
     const rawNotes = primary.notes;
     if (rawNotes && !rawNotes.trim().startsWith('{')) {
       notes = rawNotes;

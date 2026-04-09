@@ -220,7 +220,10 @@ export class BatchCreateOrderUseCase {
         const order = allOrders.find(o => o.id === payment.orderId);
         const bName = orderBrandNames.get(payment.orderId) || (dto.orders.find(do_ => do_.brandId === order?.brandId)?.brandName) || '—';
         const orderSummary = { receiptNumber, orderNumber: order?.orderNumber, brandName: bName };
-        const description = `Abono inicial | Marca: ${bName} | Orden: ${receiptNumber} | Pedido: ${order?.orderNumber || '—'}`;
+        
+        // PRIORIDADES: 1. Nota del pago (split), 2. Nota global, 3. Vacío
+        const finalUserNote = (payment as any).notes || dto.notes || "";
+        const finalSystemNote = `Abono inicial | Marca: ${bName} | Orden: ${receiptNumber} | Pedido: ${order?.orderNumber || '—'}`;
 
         if (payment.method === 'BILLETERA_VIRTUAL') {
           // 1. Validate Balance
@@ -293,7 +296,8 @@ export class BatchCreateOrderUseCase {
               module: 'ORDERS',
               clientDoc,
               orders: [orderSummary],
-              description: description
+              description: finalUserNote,
+              extra: finalSystemNote
             })
           });
         } else {
@@ -333,7 +337,8 @@ export class BatchCreateOrderUseCase {
                 module: 'ORDERS',
                 clientDoc,
                 orders: [orderSummary],
-                description: description
+                description: finalUserNote,
+                extra: finalSystemNote
               })
             });
 

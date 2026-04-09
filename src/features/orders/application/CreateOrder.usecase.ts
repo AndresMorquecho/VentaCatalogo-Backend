@@ -1,5 +1,6 @@
 import { IOrderRepository } from '../domain/IOrderRepository';
 import { Order, OrderStatus } from '../domain/Order.entity';
+import { buildNotesJSON, cardTitleFromMethod } from '../../../shared/utils/transactionNotes';
 import { Result } from '../../../shared/domain/Result';
 import { IFinancialRecordRepository } from '../../financial/domain/IFinancialRecordRepository';
 import { IBankAccountRepository } from '../../financial/domain/IBankAccountRepository';
@@ -237,6 +238,11 @@ export class CreateOrderUseCase {
                throw new Error('No se pudo determinar una cuenta bancaria para el movimiento de billetera virtual');
             }
 
+            const userNotes = ((p as any).notes || dto.notes || "");
+            const systemDetail = dto.type === 'CATALOGO' 
+                ? `Venta de catálogo | Marca: ${dto.brandName} | Orden: ${orderReceiptNumber}`
+                : `Abono inicial | Marca: ${dto.brandName} | Orden: ${orderReceiptNumber}`;
+
             financialRecordsPending.push({
               type: 'PAYMENT',
               source: 'ORDER_PAYMENT',
@@ -248,12 +254,13 @@ export class CreateOrderUseCase {
               clientId: dto.clientId,
               clientName: dto.clientName,
               createdBy,
-              notes: JSON.stringify({
-                v: 2,
+              notes: buildNotesJSON({
                 title: dto.type === 'CATALOGO' ? 'VENTA_CATALOGO' : 'ABONO',
-                module: 'ORDER',
-                description: ((p as any).notes ? (p as any).notes : `Pedido inicial`),
-                orders: [{ receiptNumber: orderReceiptNumber, orderNumber: actualOrderNumber, brandName: dto.brandName, type: dto.type }]
+                module: 'ORDERS',
+                clientDoc,
+                orders: [{ receiptNumber: orderReceiptNumber, orderNumber: actualOrderNumber, brandName: dto.brandName, type: dto.type }],
+                description: userNotes,
+                extra: systemDetail
               }),
               userReference: pReceiptNumber,
               bankAccountId: walletBankId,
@@ -293,6 +300,11 @@ export class CreateOrderUseCase {
               }
             });
 
+            const userNotes = ((p as any).notes || dto.notes || "");
+            const systemDetail = dto.type === 'CATALOGO' 
+                ? `Venta de catálogo | Marca: ${dto.brandName} | Orden: ${orderReceiptNumber}`
+                : `Abono inicial | Marca: ${dto.brandName} | Orden: ${orderReceiptNumber}`;
+
             financialRecordsPending.push({
               type: 'PAYMENT',
               source: 'ORDER_PAYMENT',
@@ -305,12 +317,13 @@ export class CreateOrderUseCase {
               clientName: dto.clientName,
               clientDocument: clientDoc,
               createdBy,
-              notes: JSON.stringify({
-                v: 2,
+              notes: buildNotesJSON({
                 title: dto.type === 'CATALOGO' ? 'VENTA_CATALOGO' : 'ABONO',
-                module: 'ORDER',
-                description: ((p as any).notes ? (p as any).notes : `Pedido inicial`),
-                orders: [{ receiptNumber: orderReceiptNumber, orderNumber: actualOrderNumber, brandName: dto.brandName, type: dto.type }]
+                module: 'ORDERS',
+                clientDoc,
+                orders: [{ receiptNumber: orderReceiptNumber, orderNumber: actualOrderNumber, brandName: dto.brandName, type: dto.type }],
+                description: userNotes,
+                extra: systemDetail
               }),
               userReference: pReceiptNumber,
               bankAccountId: pBankId,

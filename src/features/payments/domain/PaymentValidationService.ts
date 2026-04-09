@@ -10,6 +10,7 @@ export interface PaymentMethodAllocation {
   method: 'EFECTIVO' | 'TRANSFERENCIA' | 'DEPOSITO' | 'CHEQUE' | 'BILLETERA_VIRTUAL';
   amount: number;
   bankAccountId?: string;
+  notes?: string;
 }
 
 export interface ValidationResult {

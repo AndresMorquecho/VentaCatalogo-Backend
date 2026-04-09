@@ -202,13 +202,10 @@ export class BatchUpdateOrdersUseCase {
                             }
                         });
 
-                        // Calculate Running Balances for Financial Record
-                        const updatedClientAccount = await tx.clientAccount.findUnique({ where: { id: clientAccount.id } });
-                        const walletBalBefore = Number(updatedClientAccount?.totalCreditAvailable || 0);
-                        
+                        const userNotes = dto.notes || orderDto.notes || "";
+                        const systemDetail = `Abono corregido | Marca: ${orderDto.brandName || '—'} | Orden: ${receiptNumber} | Pedido: ${orderDto.orderNumber || '—'}`;
                         const orderSummary = { receiptNumber, orderNumber: orderDto.orderNumber, brandName: orderDto.brandName };
-                        const description = `Abono corregido | Marca: ${orderDto.brandName || '—'} | Orden: ${receiptNumber} | Pedido: ${orderDto.orderNumber || '—'}`;
-
+                        
                         if (payMethod === 'BILLETERA_VIRTUAL') {
                             // Accumulate wallet expense
                             totalWalletRefund -= wantedDeposit;
@@ -242,7 +239,8 @@ export class BatchUpdateOrdersUseCase {
                                         module: 'ORDERS',
                                         clientDoc,
                                         orders: [orderSummary],
-                                        description
+                                        description: userNotes,
+                                        extra: systemDetail
                                     })
                                 } as any
                             });
@@ -282,7 +280,8 @@ export class BatchUpdateOrdersUseCase {
                                         module: 'ORDERS',
                                         clientDoc,
                                         orders: [orderSummary],
-                                        description
+                                        description: userNotes,
+                                        extra: systemDetail
                                     })
                                 } as any
                             });

@@ -119,7 +119,8 @@ export class RegisterOrderPaymentUseCase {
                             orderNumber: order.orderNumber ?? undefined,
                             brandName: order.brandName ?? undefined,
                         }],
-                        extra: dto.notes || undefined,
+                        description: dto.notes || "",
+                        extra: `Abono posterior | Orden: ${order.receiptNumber}`
                     });
 
                     await tx.financialRecord.create({
@@ -285,6 +286,8 @@ export class RegisterOrderPaymentUseCase {
                             orderNumber: order.orderNumber ?? undefined,
                             brandName: order.brandName ?? undefined,
                         }],
+                        description: dto.notes || "",
+                        extra: `Uso de Billetera | Orden: ${order.receiptNumber}`
                     });
 
                     await tx.financialRecord.create({
@@ -324,6 +327,11 @@ export class RegisterOrderPaymentUseCase {
                 
                 const totalPaid = allPayments.reduce((acc: number, p: any) => acc + Number(p.amount), 0);
                 const orderTotal = Number(order.realInvoiceTotal || order.total);
+
+                // Validation: Block overpayment
+                if (totalPaid > orderTotal + 0.01) {
+                    throw new Error(`El abono de $${(dto.amount + (dto.creditAmount || 0)).toFixed(2)} excede el saldo pendiente. Saldo actual: $${(orderTotal - (totalPaid - (dto.amount + (dto.creditAmount || 0)))).toFixed(2)}`);
+                }
 
 
                 return mainPayment || creditPayment;

@@ -41,12 +41,14 @@ export type CardTitle =
   | 'REDUCCION_ABONO'      // Delta negativo (-) al editar
   // Phase 3.3 — Method change & cancellation cards
   | 'CAMBIO_METODO_PAGO'   // Reversión + nuevo método
-  | 'CANCELACION_PEDIDO';  // Eliminación de pedido con abono
+  | 'CANCELACION_PEDIDO'   // Eliminación de pedido con abono
+  | 'ABONO';               // Generic payment label
 
 export interface NotesOrderContext {
   receiptNumber: string;
   orderNumber?: string | null;
   brandName?: string | null;
+  type?: string | null;
 }
 
 export interface NotesSchema {
@@ -66,9 +68,9 @@ export const CARD_TITLE_LABELS: Record<CardTitle, string> = {
   TRANSFERENCIA_BANCARIA: 'Transferencia Bancaria',
   DEPOSITO_BANCARIO: 'Depósito Bancario',
   PAGO_CHEQUE: 'Pago con Cheque',
-  USO_BILLETERA: 'Uso de Billetera Virtual',
-  RECARGA_BILLETERA: 'Recarga Billetera Virtual',
-  TRASPASO_SALDO: 'Traspaso de Saldo',
+  USO_BILLETERA: 'Abono con Billetera Virtual',
+  RECARGA_BILLETERA: 'Recarga de Billetera Virtual',
+  TRASPASO_SALDO: 'Traspaso de Saldo (Wallet)',
   DEVOLUCION: 'Devolución',
   REEMBOLSO_CASH: 'Devolución en Efectivo',
   REEMBOLSO_BANCARIO: 'Devolución Bancaria',
@@ -84,6 +86,7 @@ export const CARD_TITLE_LABELS: Record<CardTitle, string> = {
   // Phase 3.3
   CAMBIO_METODO_PAGO: 'Cambio de Método de Pago',
   CANCELACION_PEDIDO: 'Cancelación de Pedido',
+  ABONO: 'ABONO',
 };
 
 // ─── Derive CardTitle from payment method ────────────────────────────────────

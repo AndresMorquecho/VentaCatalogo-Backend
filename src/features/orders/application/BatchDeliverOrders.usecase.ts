@@ -217,6 +217,8 @@ export class BatchDeliverOrdersUseCase {
             module: 'BATCH_DELIVERY',
             clientDoc: firstClientDoc,
             orders: batchOrderContexts,
+            description: "", // User notes not currently captured in batch delivery modal
+            extra: `Pago en lote | Entrega: ${finalDeliveryNumber}`
           });
 
           // @ts-ignore
@@ -466,7 +468,8 @@ export class BatchDeliverOrdersUseCase {
                 module: 'BATCH_DELIVERY',
                 clientDoc: firstClientDoc,
                 orders: [{ receiptNumber: sourceOrder.receiptNumber, orderNumber: sourceOrder.orderNumber ?? undefined, brandName: (sourceOrder as any).brand?.name ?? undefined }],
-                extra: dist.description || 'Devolución de saldo a favor al cliente',
+                description: dist.description || "",
+                extra: `Devolución de excedente en entrega | Entrega: ${finalDeliveryNumber}`,
               });
 
               console.log('[BatchDeliverOrder] Creating refund financial record', { 
@@ -531,7 +534,8 @@ export class BatchDeliverOrdersUseCase {
                 module: 'BATCH_DELIVERY',
                 clientDoc: firstClientDoc,
                 orders: [{ receiptNumber: sourceOrder.receiptNumber, orderNumber: sourceOrder.orderNumber ?? undefined, brandName: (sourceOrder as any).brand?.name ?? undefined }],
-                extra: `Traspaso desde esta orden hacia: ${targetInfo?.receiptNumber || dist.targetOrderId}`,
+                description: dist.description || "",
+                extra: `Traspaso desde esta orden hacia: ${targetInfo?.receiptNumber || dist.targetOrderId} | Entrega: ${finalDeliveryNumber}`,
               });
 
               const targetNotes = buildNotesJSON({
@@ -543,7 +547,8 @@ export class BatchDeliverOrdersUseCase {
                   orderNumber: targetInfo?.orderNumber ?? undefined,
                   brandName: (targetInfo as any)?.brand?.name ?? undefined
                 }],
-                extra: `Saldo recibido desde orden: ${sourceOrder.receiptNumber}`,
+                description: dist.description || "",
+                extra: `Saldo recibido desde orden: ${sourceOrder.receiptNumber} | Entrega: ${finalDeliveryNumber}`,
               });
 
               // Maintenance of client wallet balance for the card 'Saldo' display
@@ -639,7 +644,8 @@ export class BatchDeliverOrdersUseCase {
                 module: 'BATCH_DELIVERY',
                 clientDoc: firstClientDoc,
                 orders: [{ receiptNumber: sourceOrder.receiptNumber, orderNumber: sourceOrder.orderNumber ?? undefined, brandName: (sourceOrder as any).brand?.name ?? undefined }],
-                extra: dist.description,
+                description: dist.description || "",
+                extra: `Excedente movido a billetera | Entrega: ${finalDeliveryNumber}`,
               });
 
               // @ts-ignore

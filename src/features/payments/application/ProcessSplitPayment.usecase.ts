@@ -199,7 +199,8 @@ export class ProcessSplitPaymentUseCase {
                 orderNumber: o.orderNumber ?? undefined,
                 brandName: o.brandName || o.brand?.name || undefined
               })),
-              description: `Abono inicial (Múltiple) - Request ${dto.requestId}`
+              description: paymentAllocation.notes || "",
+              extra: `Abono inicial (Múltiple) - Request ${dto.requestId}`
             });
 
             const financialRecord = await (tx as any).financialRecord.create({
