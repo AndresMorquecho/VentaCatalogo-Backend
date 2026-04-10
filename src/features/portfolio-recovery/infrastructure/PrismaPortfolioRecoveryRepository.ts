@@ -41,8 +41,8 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
     const offset = calculateOffset(pagination);
     const limit = pagination.pageSize;
 
-    // Build dynamic WHERE conditions for filters
-    const whereConditions: string[] = ["o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR', 'ENTREGADO')"];
+    // ✅ Focus on orders that are or were in the warehouse (In Bodega)
+    const whereConditions: string[] = ["o.status IN ('RECIBIDO_EN_BODEGA', 'ENTREGADO')"];
     const params: any[] = [];
     let paramIndex = 1;
 
@@ -80,23 +80,24 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
 
     // Recovery status filter
     if (filters.recoveryStatus && filters.recoveryStatus !== 'ALL') {
+      const rateSql = '(CASE WHEN SUM(COALESCE(o.real_invoice_total, o.total)) > 0 THEN (SUM(CASE WHEN o.status = \'ENTREGADO\' THEN COALESCE(o.real_invoice_total, o.total) ELSE 0 END) / SUM(COALESCE(o.real_invoice_total, o.total)) * 100) ELSE 0 END)';
       if (filters.recoveryStatus === 'HEALTHY') {
-        havingConditions.push('(CASE WHEN SUM(wo.total) > 0 THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100) ELSE 0 END) > 50');
+        havingConditions.push(`${rateSql} > 50`);
       } else if (filters.recoveryStatus === 'WARNING') {
-        havingConditions.push('(CASE WHEN SUM(wo.total) > 0 THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100) ELSE 0 END) >= 30 AND (CASE WHEN SUM(wo.total) > 0 THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100) ELSE 0 END) <= 50');
+        havingConditions.push(`${rateSql} >= 30 AND ${rateSql} <= 50`);
       } else if (filters.recoveryStatus === 'CRITICAL') {
-        havingConditions.push('(CASE WHEN SUM(wo.total) > 0 THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100) ELSE 0 END) < 30');
+        havingConditions.push(`${rateSql} < 30`);
       }
     }
 
     // Min days in warehouse filter
     if (filters.minDaysInWarehouse !== undefined) {
-      havingConditions.push(`AVG(wo.days_in_warehouse) >= ${filters.minDaysInWarehouse}`);
+      havingConditions.push(`AVG(CASE WHEN o.status = 'ENTREGADO' THEN EXTRACT(DAY FROM (o.delivery_date::timestamp - o.reception_date::timestamp))::integer ELSE EXTRACT(DAY FROM (CURRENT_DATE - o.reception_date::timestamp))::integer END) >= ${filters.minDaysInWarehouse}`);
     }
 
     // Min amount filter
     if (filters.minAmount !== undefined) {
-      havingConditions.push(`SUM(wo.total) >= ${filters.minAmount}`);
+      havingConditions.push(`SUM(COALESCE(o.real_invoice_total, o.total)) >= ${filters.minAmount}`);
     }
 
     const havingClause = havingConditions.length > 0 
@@ -110,9 +111,14 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
           o.brand_id,
           b.name as brand_name,
           o.id as order_id,
-          o.total,
+          COALESCE(o.real_invoice_total, o.total) as total,
           o.reception_date,
-          EXTRACT(DAY FROM (CURRENT_DATE - o.reception_date::timestamp))::integer as days_in_warehouse
+          o.status,
+          CASE 
+            WHEN o.status = 'ENTREGADO' AND o.delivery_date IS NOT NULL 
+            THEN EXTRACT(DAY FROM (o.delivery_date::timestamp - o.reception_date::timestamp))::integer
+            ELSE EXTRACT(DAY FROM (CURRENT_DATE - o.reception_date::timestamp))::integer
+          END as days_in_warehouse
         FROM orders o
         INNER JOIN brands b ON o.brand_id = b.id
         WHERE ${whereClause}
@@ -130,17 +136,16 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
           wo.brand_id,
           wo.brand_name,
           SUM(wo.total) as total_in_warehouse,
-          COALESCE(SUM(p.total_paid), 0) as total_recovered,
-          SUM(wo.total) - COALESCE(SUM(p.total_paid), 0) as total_outstanding,
+          SUM(CASE WHEN wo.status = 'ENTREGADO' THEN wo.total ELSE 0 END) as total_recovered,
+          SUM(CASE WHEN wo.status = 'RECIBIDO_EN_BODEGA' THEN wo.total ELSE 0 END) as total_outstanding,
           CASE 
             WHEN SUM(wo.total) > 0 
-            THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100)
+            THEN (SUM(CASE WHEN wo.status = 'ENTREGADO' THEN wo.total ELSE 0 END) / SUM(wo.total) * 100)
             ELSE 0 
           END as recovery_rate,
           COUNT(DISTINCT wo.order_id) as order_count,
           AVG(wo.days_in_warehouse) as avg_days_in_warehouse
         FROM warehouse_orders wo
-        LEFT JOIN payments_by_order p ON wo.order_id = p.order_id
         GROUP BY wo.brand_id, wo.brand_name
         ${havingClause}
       )
@@ -173,11 +178,8 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
       WITH warehouse_orders AS (
         SELECT 
           o.brand_id,
-          b.name as brand_name,
           o.id as order_id,
-          o.total,
-          o.reception_date,
-          EXTRACT(DAY FROM (CURRENT_DATE - o.reception_date::timestamp))::integer as days_in_warehouse
+          COALESCE(o.real_invoice_total, o.total) as total
         FROM orders o
         INNER JOIN brands b ON o.brand_id = b.id
         WHERE ${whereClause}
@@ -194,13 +196,12 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
         SELECT 
           wo.brand_id,
           SUM(wo.total) as total_in_warehouse,
-          COALESCE(SUM(p.total_paid), 0) as total_recovered,
+          SUM(LEAST(wo.total, COALESCE(p.total_paid, 0))) as total_recovered,
           CASE 
             WHEN SUM(wo.total) > 0 
-            THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100)
+            THEN (SUM(LEAST(wo.total, COALESCE(p.total_paid, 0))) / SUM(wo.total) * 100)
             ELSE 0 
-          END as recovery_rate,
-          AVG(wo.days_in_warehouse) as avg_days_in_warehouse
+          END as recovery_rate
         FROM warehouse_orders wo
         LEFT JOIN payments_by_order p ON wo.order_id = p.order_id
         GROUP BY wo.brand_id
@@ -278,11 +279,11 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
       WITH warehouse_orders AS (
         SELECT 
           o.id as order_id,
-          o.total,
+          COALESCE(o.real_invoice_total, o.total) as total,
           o.reception_date,
           ${dateGrouping} as period_date
         FROM orders o
-        WHERE o.status IN ('RECIBIDO_EN_BODEGA', 'POR_RECIBIR', 'ENTREGADO')
+        WHERE o.status IN ('RECIBIDO_EN_BODEGA', 'ENTREGADO')
           AND o.reception_date IS NOT NULL
       ),
       payments_by_order AS (
@@ -296,15 +297,14 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
       SELECT 
         TO_CHAR(wo.period_date, '${periodFormat}') as period,
         SUM(wo.total) as total_in_warehouse,
-        COALESCE(SUM(p.total_paid), 0) as total_recovered,
+        SUM(CASE WHEN wo.status = 'ENTREGADO' THEN wo.total ELSE 0 END) as total_recovered,
         CASE 
           WHEN SUM(wo.total) > 0 
-          THEN (COALESCE(SUM(p.total_paid), 0) / SUM(wo.total) * 100)
+          THEN (SUM(CASE WHEN wo.status = 'ENTREGADO' THEN wo.total ELSE 0 END) / SUM(wo.total) * 100)
           ELSE 0 
         END as recovery_rate,
         COUNT(DISTINCT wo.order_id) as order_count
       FROM warehouse_orders wo
-      LEFT JOIN payments_by_order p ON wo.order_id = p.order_id
       GROUP BY wo.period_date
       ORDER BY wo.period_date ASC
     `;

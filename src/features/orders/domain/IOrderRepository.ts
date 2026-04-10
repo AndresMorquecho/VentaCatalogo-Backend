@@ -17,6 +17,7 @@ export interface OrderFilters {
   receiptNumber?: string;
   sourceOrderNumber?: string;
   trackingGuide?: string;
+  orderNumber?: string;
   sortBy?: string;
   order?: 'asc' | 'desc';
 }

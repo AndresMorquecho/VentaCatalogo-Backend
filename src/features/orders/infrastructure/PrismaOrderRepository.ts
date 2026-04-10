@@ -55,7 +55,10 @@ export class PrismaOrderRepository implements IOrderRepository {
     if (filters.trackingGuide) {
       where.trackingGuide = { contains: filters.trackingGuide, mode: 'insensitive' };
     }
-    if (filters.search) {
+  if (filters.orderNumber) {
+    where.orderNumber = { contains: filters.orderNumber, mode: 'insensitive' };
+  }
+  if (filters.search) {
       where.OR = [
         { receiptNumber: { contains: filters.search, mode: 'insensitive' } },
         { clientName: { contains: filters.search, mode: 'insensitive' } },

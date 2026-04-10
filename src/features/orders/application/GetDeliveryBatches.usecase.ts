@@ -46,6 +46,7 @@ export class GetDeliveryBatchesUseCase {
               include: {
                 payments: true,
                 brand: true,
+                client: true,
               }
             },
             payments: {

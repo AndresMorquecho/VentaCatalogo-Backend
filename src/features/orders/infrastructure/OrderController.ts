@@ -66,6 +66,7 @@ export class OrderController {
       receiptNumber: req.query.receiptNumber as string,
       sourceOrderNumber: req.query.sourceOrderNumber as string,
       trackingGuide: req.query.trackingGuide as string,
+      orderNumber: req.query.orderNumber as string,
       type: req.query.type as string,
       onlyParents: req.query.onlyParents === 'true',
       hasPendingPayment,
@@ -1082,12 +1083,17 @@ export class OrderController {
               select: {
                 id: true,
                 receiptNumber: true,
+                orderNumber: true,
+                sourceOrderNumber: true,
+                type: true,
+                documentType: true,
                 clientName: true,
                 brandId: true,
                 invoiceNumber: true,
                 realInvoiceTotal: true,
                 total: true,
                 status: true,
+                payments: true,
                 brand: {
                   select: {
                     name: true
