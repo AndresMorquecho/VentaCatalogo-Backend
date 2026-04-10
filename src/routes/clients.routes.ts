@@ -4,7 +4,7 @@ import { authenticate, requirePermission } from '../middleware/auth';
 
 const router = Router();
 
-router.get('/', authenticate, requirePermission('clients.view'), async (req, res, next) => {
+router.get('/', authenticate, requirePermission(['clients.view', 'orders.create', 'orders.edit']), async (req, res, next) => {
   try {
     const search = req.query.search as string;
     const active = req.query.active; // true/false (DB field)
@@ -191,7 +191,7 @@ router.get('/', authenticate, requirePermission('clients.view'), async (req, res
   }
 });
 
-router.get('/:id', authenticate, requirePermission('clients.view'), async (req: any, res, next) => {
+router.get('/:id', authenticate, requirePermission(['clients.view', 'orders.view', 'orders.create', 'orders.edit']), async (req: any, res, next) => {
   try {
     const client = await prisma.client.findUnique({
       where: { id: req.params.id },

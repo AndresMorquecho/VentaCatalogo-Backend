@@ -53,8 +53,9 @@ export const authorize = (...roles: string[]) => {
  * Checks if the authenticated user's JWT contains the required permission.
  * ADMIN role bypasses all permission checks.
  * Usage: router.post('/', authenticate, requirePermission('orders.create'), handler)
+ * Or with multiple: router.get('/', requirePermission(['brands.view', 'orders.create']), handler)
  */
-export const requirePermission = (permission: string) => {
+export const requirePermission = (permission: string | string[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return next(new AppError(401, 'Authentication required', 'UNAUTHORIZED'));
@@ -67,8 +68,15 @@ export const requirePermission = (permission: string) => {
     }
 
     const userPermissions: string[] = req.user.permissions || [];
-    if (!userPermissions.includes(permission)) {
-      return next(new AppError(403, `Permission denied: '${permission}' is required`, 'FORBIDDEN'));
+    const requiredPermissions = Array.isArray(permission) ? permission : [permission];
+
+    const hasAnyPermission = requiredPermissions.some(p => userPermissions.includes(p));
+
+    if (!hasAnyPermission) {
+      const permissionMsg = requiredPermissions.length > 1
+        ? `one of [${requiredPermissions.join(', ')}]`
+        : `'${requiredPermissions[0]}'`;
+      return next(new AppError(403, `Permission denied: ${permissionMsg} is required`, 'FORBIDDEN'));
     }
 
     next();

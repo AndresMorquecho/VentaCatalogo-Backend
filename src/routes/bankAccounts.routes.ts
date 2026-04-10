@@ -4,7 +4,7 @@ import { authenticate, requirePermission } from '../middleware/auth';
 
 const router = Router();
 
-router.get('/:id', authenticate, requirePermission('bank_accounts.view'), async (req, res, next) => {
+router.get('/:id', authenticate, requirePermission(['bank_accounts.view', 'orders.view', 'orders.create', 'orders.edit', 'payments.create', 'wallet.manage']), async (req, res, next) => {
   try {
     const { id } = req.params;
     const account = await prisma.bankAccount.findUnique({ where: { id } });
@@ -15,7 +15,7 @@ router.get('/:id', authenticate, requirePermission('bank_accounts.view'), async 
   }
 });
 
-router.get('/', authenticate, requirePermission('bank_accounts.view'), async (req, res, next) => {
+router.get('/', authenticate, requirePermission(['bank_accounts.view', 'orders.create', 'orders.edit', 'payments.create', 'wallet.manage']), async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(500, Math.max(1, parseInt(req.query.limit as string) || 500));

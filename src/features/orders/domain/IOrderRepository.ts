@@ -13,7 +13,10 @@ export interface OrderFilters {
   onlyParents?: boolean;
   invoiceNumber?: string;
   creditNoteNumber?: string;
-  hasPendingPayment?: boolean; // Filter orders where total > sum(payments)
+  hasPendingPayment?: boolean;
+  receiptNumber?: string;
+  sourceOrderNumber?: string;
+  trackingGuide?: string;
   sortBy?: string;
   order?: 'asc' | 'desc';
 }

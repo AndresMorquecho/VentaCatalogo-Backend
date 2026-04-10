@@ -24,26 +24,37 @@ export class GetCatalogDeliveriesUseCase {
 
   async execute(filters: GetCatalogDeliveriesFilters): Promise<Result<{ data: any[]; total: number; page: number; limit: number }>> {
     try {
-      const result = await this.deliveryRepository.findMany(filters);
+      const result = await this.deliveryRepository.findMany({
+        ...filters,
+        limit: filters.limit || 15
+      });
 
       // Enriquecer con información de pedidos de la marca (sin importar campaña)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
       const enriched = await Promise.all(
         result.data.map(async (delivery) => {
+          // Buscamos el último pedido de esta marca hecho por la empresaria (sin importar fecha)
           const lastOrder = await prisma.order.findFirst({
             where: {
               clientId: delivery.clientId,
               brandId: delivery.brandId,
               type: { not: 'CATALOGO' },
-              transactionDate: { gte: delivery.deliveredAt }
+              status: 'ENTREGADO'
             },
-            orderBy: { transactionDate: 'desc' },
-            select: { transactionDate: true }
+            orderBy: { deliveryDate: 'desc' },
+            select: { deliveryDate: true }
           });
+
+          const isRecent = lastOrder?.deliveryDate 
+            ? lastOrder.deliveryDate >= thirtyDaysAgo 
+            : false;
 
           return {
             ...delivery.toJSON(),
-            madeOrder: lastOrder !== null,
-            lastOrderDate: lastOrder?.transactionDate || null
+            madeOrder: isRecent,
+            lastOrderDate: lastOrder?.deliveryDate || null
           };
         })
       );
@@ -52,11 +63,18 @@ export class GetCatalogDeliveriesUseCase {
         data: enriched,
         total: result.total,
         page: filters.page || 1,
-        limit: filters.limit || 20
+        limit: filters.limit || 15
       });
     } catch (error) {
       console.error('GetCatalogDeliveriesUseCase Error:', error);
       return Result.fail(error instanceof Error ? error.message : 'Error al obtener entregas');
     }
   }
+}
+
+// Helper to get start of day for comparison
+function startOfDay(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
 }

@@ -14,7 +14,7 @@ export class PrismaCatalogDeliveryRepository implements ICatalogDeliveryReposito
     limit?: number;
   }): Promise<{ data: CatalogDelivery[]; total: number }> {
     const page = filters.page || 1;
-    const limit = filters.limit || 20;
+    const limit = filters.limit || 15;
     const skip = (page - 1) * limit;
 
     const where: any = {};

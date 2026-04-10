@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaFinancialRecordRepository } from './PrismaFinancialRecordRepository';
 import { FinancialRecord } from '../domain/FinancialRecord.entity';
-import { authenticate } from '../../../middleware/auth';
+import { authenticate, requirePermission } from '../../../middleware/auth';
 import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
 import { buildTransactionCards } from '../application/buildTransactionCards';
 import { prisma } from '../../../lib/prisma';
@@ -12,7 +12,7 @@ const repository = new PrismaFinancialRecordRepository();
 // ─── GET /api/financial-records/cards ────────────────────────────────────────
 // Returns TransactionCardDTO[] — fully processed, ready for UI rendering.
 // Frontend does ZERO financial logic on this data.
-router.get('/cards', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+router.get('/cards', authenticate, requirePermission('transactions.view'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { 
       clientId, 
@@ -112,7 +112,7 @@ router.get('/cards', authenticate, async (req: Request, res: Response, next: Nex
 });
 
 // GET /api/financial-records - Get all with optional filters
-router.get('/', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+router.get('/', authenticate, requirePermission('transactions.view'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { clientId, orderId, bankAccountId, startDate, endDate, type, movementType, referenceNumber, accountType, createdBy } = req.query;
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
@@ -149,7 +149,7 @@ router.get('/', authenticate, async (req: Request, res: Response, next: NextFunc
 });
 
 // GET /api/financial-records/:id - Get by ID
-router.get('/:id', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:id', authenticate, requirePermission('transactions.view'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const record = await repository.findById(id);
@@ -166,7 +166,7 @@ router.get('/:id', authenticate, async (req: Request, res: Response, next: NextF
 });
 
 // POST /api/financial-records - Create new record
-router.post('/', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+router.post('/', authenticate, requirePermission('bank_accounts.edit'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const {
       type,
@@ -219,7 +219,7 @@ router.post('/', authenticate, async (req: Request, res: Response, next: NextFun
 });
 
 // PUT /api/financial-records/:id - Update record
-router.put('/:id', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+router.put('/:id', authenticate, requirePermission('bank_accounts.edit'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const { amount, notes, date } = req.body;
@@ -242,7 +242,7 @@ router.put('/:id', authenticate, async (req: Request, res: Response, next: NextF
 });
 
 // DELETE /api/financial-records/:id - Delete record
-router.delete('/:id', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/:id', authenticate, requirePermission('bank_accounts.edit'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
 

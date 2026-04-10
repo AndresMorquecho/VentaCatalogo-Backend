@@ -46,6 +46,15 @@ export class PrismaOrderRepository implements IOrderRepository {
     if (filters.creditNoteNumber) {
       where.creditNoteNumber = { contains: filters.creditNoteNumber, mode: 'insensitive' };
     }
+    if (filters.receiptNumber) {
+      where.receiptNumber = { contains: filters.receiptNumber, mode: 'insensitive' };
+    }
+    if (filters.sourceOrderNumber) {
+      where.sourceOrderNumber = { contains: filters.sourceOrderNumber, mode: 'insensitive' };
+    }
+    if (filters.trackingGuide) {
+      where.trackingGuide = { contains: filters.trackingGuide, mode: 'insensitive' };
+    }
     if (filters.search) {
       where.OR = [
         { receiptNumber: { contains: filters.search, mode: 'insensitive' } },
@@ -54,13 +63,17 @@ export class PrismaOrderRepository implements IOrderRepository {
         { creditNoteNumber: { contains: filters.search, mode: 'insensitive' } },
         { orderNumber: { contains: filters.search, mode: 'insensitive' } },
         { brand: { name: { contains: filters.search, mode: 'insensitive' } } },
+        { sourceOrderNumber: { contains: filters.search, mode: 'insensitive' } },
+        { trackingGuide: { contains: filters.search, mode: 'insensitive' } },
         {
           childOrders: {
             some: {
               OR: [
                 { orderNumber: { contains: filters.search, mode: 'insensitive' } },
                 { invoiceNumber: { contains: filters.search, mode: 'insensitive' } },
-                { creditNoteNumber: { contains: filters.search, mode: 'insensitive' } }
+                { creditNoteNumber: { contains: filters.search, mode: 'insensitive' } },
+                { sourceOrderNumber: { contains: filters.search, mode: 'insensitive' } },
+                { trackingGuide: { contains: filters.search, mode: 'insensitive' } }
               ]
             }
           }

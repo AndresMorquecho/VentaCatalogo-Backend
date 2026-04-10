@@ -10,7 +10,7 @@ const router = Router();
 // RULES MANAGEMENT
 // ============================================================================
 
-router.get('/rules', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
+router.get('/rules', authenticate, requirePermission(['loyalty.view', 'orders.view', 'orders.create']), async (req, res, next) => {
     try {
         const rules = await prisma.loyaltyRule.findMany({
             include: {

@@ -469,7 +469,7 @@ export class CreateOrderUseCase {
         await tx.client.update({
           where: { id: dto.clientId },
           data: {
-            lastOrderDate: new Date(),
+            lastOrderDate: dto.transactionDate,
             lastBrandName: dto.brandName
           }
         });

@@ -102,19 +102,31 @@ router.put('/:id', requirePermission('users.edit'), async (req, res, next) => {
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) throw new AppError(404, 'User not found', 'NOT_FOUND');
 
-    // Protect ADMIN: Cannot deactivate or change role from ADMIN
-    let finalActive = isActive;
-    let finalRole = role;
+    let finalActive = isActive !== undefined ? isActive : existing.isActive;
+    let finalRole = role || existing.role;
 
-    if (existing.role.toUpperCase() === 'ADMIN') {
-      finalActive = true; // Always active
-      finalRole = existing.role; // Role cannot be changed via this endpoint
+    // Protection logic for ADMIN users
+    const isCurrentAdmin = existing.role.toUpperCase() === 'ADMIN' || existing.role.toUpperCase() === 'ADMINISTRADOR';
+    const isChangingFromAdmin = isCurrentAdmin && (finalRole.toUpperCase() !== 'ADMIN' && finalRole.toUpperCase() !== 'ADMINISTRADOR');
+    const isDeactivatingAdmin = isCurrentAdmin && finalActive === false;
+
+    if (isChangingFromAdmin || isDeactivatingAdmin) {
+      const activeAdminCount = await prisma.user.count({
+        where: {
+          role: { in: ['ADMIN', 'admin', 'ADMINISTRADOR', 'administrador'] },
+          isActive: true
+        }
+      });
+
+      if (activeAdminCount <= 1) {
+        throw new AppError(400, 'No se puede cambiar el rol o desactivar al único administrador activo del sistema.', 'LAST_ADMIN');
+      }
     }
 
     const user = await prisma.user.update({
       where: { id },
       data: {
-        username,
+        username: username || existing.username,
         role: finalRole,
         isActive: finalActive
       }
