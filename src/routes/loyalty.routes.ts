@@ -258,25 +258,60 @@ router.get('/balances', authenticate, requirePermission('loyalty.view'), async (
 router.get('/redemptions', authenticate, requirePermission('loyalty.view'), async (req, res, next) => {
     try {
         const page = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 20));
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 15));
         const skip = (page - 1) * limit;
+
+        const { search, startDate, endDate, brandId } = req.query;
+
+        const whereClause: Prisma.LoyaltyRedemptionWhereInput = {};
+
+        if (search) {
+            whereClause.OR = [
+                { clientName: { contains: search as string, mode: 'insensitive' } },
+                { clientId: { contains: search as string, mode: 'insensitive' } }
+            ];
+        }
+
+        if (startDate && endDate) {
+            whereClause.date = {
+                gte: new Date(startDate as string),
+                lte: new Date(endDate as string)
+            };
+        }
+
+        if (brandId && brandId !== 'ALL') {
+            whereClause.rule = {
+                brands: {
+                    some: { brandId: brandId as string }
+                }
+            };
+        }
 
         const [data, total] = await Promise.all([
             prisma.loyaltyRedemption.findMany({
+                where: whereClause,
                 include: {
                     author: { select: { username: true } },
-                    prize: true
+                    prize: true,
+                    rule: { select: { type: true } }
                 },
                 orderBy: { date: 'desc' },
                 skip,
                 take: limit
             }),
-            prisma.loyaltyRedemption.count()
+            prisma.loyaltyRedemption.count({ where: whereClause })
         ]);
+
+        const formattedData = data.map(r => ({
+            ...r,
+            pointsUsed: r.valueClaimed ? Number(r.valueClaimed) : 0,
+            authorName: r.author?.username,
+            ruleType: r.rule?.type
+        }));
 
         res.json({
             success: true,
-            data,
+            data: formattedData,
             pagination: { page, limit, total, pages: Math.ceil(total / limit) }
         });
     } catch (error) {
