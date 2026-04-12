@@ -110,6 +110,8 @@ model OrderReceipt {
   transactionReference String?      @map("transaction_reference")
   notes                String?
   createdByName        String?      @map("created_by_name")
+  /// N° secuencial interno de registro de envío (ej. ENV-2026-0001), solo recibos CAM-*
+  shippingRegistryNumber String?    @map("shipping_registry_number")
   version              Int          @default(1)
   bankAccount          BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
   client               Client       @relation(fields: [clientId], references: [id])
@@ -179,6 +181,8 @@ model Order {
   changeStatus         String?             @map("change_status")
   parentOrderId        String?             @map("parent_order_id")
   trackingGuide        String?             @map("tracking_guide")
+  /// Secuencial interno del PDF guía de envío de cambios (ej. Guia-2026-001)
+  exchangeShippingGuideSeq String?         @map("exchange_shipping_guide_seq")
   orderNumber          String?             @map("order_number")
   receiptId            String?             @map("receipt_id")
   documentType         String?             @default("FACTURA") @map("document_type")

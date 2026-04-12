@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../../lib/prisma';
 import { CreateOrderUseCase } from '../application/CreateOrder.usecase';
 import { GetOrdersUseCase } from '../application/GetOrders.usecase';
@@ -117,6 +118,31 @@ export class OrderController {
     }
   };
 
+  generateExchangeReceiptNumber = async (req: Request, res: Response) => {
+    try {
+      const orderNumber = await this.orderRepository.generateExchangeReceiptNumber();
+      return HttpResponse.ok(res, { orderNumber });
+    } catch (error) {
+      return HttpResponse.fail(
+        res,
+        error instanceof Error ? error.message : 'Failed to generate exchange receipt number'
+      );
+    }
+  };
+
+  /** POST: asigna y devuelve el siguiente Guia-AAAA-NNN (PDF guía de envío de cambios). */
+  allocateExchangeShippingGuideSerial = async (req: Request, res: Response) => {
+    try {
+      const guideSequential = await this.orderRepository.allocateExchangeShippingGuideSerial();
+      return HttpResponse.ok(res, { guideSequential });
+    } catch (error) {
+      return HttpResponse.fail(
+        res,
+        error instanceof Error ? error.message : 'Failed to allocate shipping guide serial'
+      );
+    }
+  };
+
   checkReceiptExists = async (req: Request, res: Response) => {
     try {
       const { receiptNumber } = req.params;
@@ -218,7 +244,24 @@ export class OrderController {
         return HttpResponse.badRequest(res, result.error!);
       }
 
-      return HttpResponse.created(res, result.getValue().map((o: any) => o.toJSON()));
+      const ordersJson = result.getValue().map((o: any) => o.toJSON());
+      const rn = String(dto.receiptNumber || '').trim();
+      if (/^CAM-\d{4}-/i.test(rn)) {
+        const rec = await prisma.orderReceipt.findUnique({
+          where: { receiptNumber: rn },
+          select: { shippingRegistryNumber: true },
+        });
+        if (rec?.shippingRegistryNumber && ordersJson[0]) {
+          ordersJson[0] = {
+            ...ordersJson[0],
+            receipt: {
+              ...((ordersJson[0] as any).receipt || {}),
+              shippingRegistryNumber: rec.shippingRegistryNumber,
+            },
+          };
+        }
+      }
+      return HttpResponse.created(res, ordersJson);
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to batch create orders');
     }
@@ -402,14 +445,13 @@ export class OrderController {
       }
 
       // Map DTO but keep critical fields protected
-      const updateData: any = {
+      const updateData: Record<string, unknown> = {
         receiptNumber: req.body.receipt_number || req.body.receiptNumber,
         salesChannel: req.body.sales_channel || req.body.salesChannel,
         type: req.body.type,
         brandId: req.body.brand_id || req.body.brandId,
         total: req.body.total !== undefined ? Number(req.body.total) : undefined,
         paymentMethod: req.body.payment_method || req.body.paymentMethod,
-        bankAccountId: (req.body.bank_account_id || req.body.bankAccountId) || null,
         transactionDate: (req.body.transaction_date || req.body.transactionDate) ? new Date(req.body.transaction_date || req.body.transactionDate) : undefined,
         possibleDeliveryDate: (req.body.possible_delivery_date || req.body.possibleDeliveryDate) ? new Date(req.body.possible_delivery_date || req.body.possibleDeliveryDate) : undefined,
         orderNumber: req.body.orderNumber || req.body.order_number,
@@ -418,6 +460,8 @@ export class OrderController {
         notes: req.body.notes,
         status: req.body.status,
         trackingGuide: req.body.trackingGuide || req.body.tracking_guide,
+        exchangeShippingGuideSeq:
+          req.body.exchangeShippingGuideSeq || req.body.exchange_shipping_guide_seq || undefined,
         receptionBatchId: req.body.receptionBatchId || req.body.reception_batch_id,
         deliveryBatchId: req.body.deliveryBatchId || req.body.delivery_batch_id,
         packingNumber: req.body.packingNumber || req.body.packing_number,
@@ -434,16 +478,21 @@ export class OrderController {
         updatedAt: new Date()
       };
 
+      if (req.body.bank_account_id !== undefined || req.body.bankAccountId !== undefined) {
+        updateData.bankAccountId =
+          req.body.bank_account_id ?? req.body.bankAccountId ?? null;
+      }
+
       console.log("[OrderController] Updating order with data:", JSON.stringify(updateData, null, 2));
 
       // Remove undefined fields
-      Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
+      Object.keys(updateData).forEach((key) => updateData[key] === undefined && delete updateData[key]);
 
       const savedOrder = await prisma.$transaction(async (tx) => {
-        // Update Order
+        // Update Order — usar unchecked para bankAccountId, brandId, clientId, FKs escalares
         const updated = await tx.order.update({
           where: { id },
-          data: updateData,
+          data: updateData as Prisma.OrderUncheckedUpdateInput,
           include: { items: true, payments: true, brand: true, client: true }
         });
 

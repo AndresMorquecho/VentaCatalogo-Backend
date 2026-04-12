@@ -117,6 +117,18 @@ router.put('/receipt-header/:receiptNumber', authenticate, requirePermission('or
 router.get('/receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.getByReceiptNumber);
 router.get('/generate-receipt-number', authenticate, requirePermission('orders.create'), orderController.generateReceiptNumber);
 router.get('/generate-order-number', authenticate, requirePermission('orders.create'), orderController.generateOrderNumber);
+router.get(
+  '/generate-exchange-receipt-number',
+  authenticate,
+  requirePermission('exchanges.create'),
+  orderController.generateExchangeReceiptNumber
+);
+router.post(
+  '/allocate-exchange-shipping-guide-serial',
+  authenticate,
+  requirePermission('exchanges.create'),
+  orderController.allocateExchangeShippingGuideSerial
+);
 router.get('/check-receipt/:receiptNumber', authenticate, requirePermission('orders.view'), orderController.checkReceiptExists);
 router.get('/generate-packing-number', authenticate, requirePermission('reception.confirm'), orderController.generatePackingNumber);
 router.post('/generate-packing-number', authenticate, requirePermission('reception.confirm'), orderController.generatePackingNumber);

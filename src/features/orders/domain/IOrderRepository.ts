@@ -31,6 +31,10 @@ export interface IOrderRepository {
   delete(id: string): Promise<void>;
   generateReceiptNumber(): Promise<string>;
   generateOrderNumber(): Promise<string>;
+  /** Siguiente recibo de cambio CAM-AAAA-NNN (solo secuencia CAM, independiente de PD) */
+  generateExchangeReceiptNumber(): Promise<string>;
+  /** Siguiente Guia-AAAA-NNN para PDF de guía de envío de cambios (incrementa contador) */
+  allocateExchangeShippingGuideSerial(): Promise<string>;
   generateSequence(prefix: string): Promise<string>;
   dismantle(orderId: string, mode: 'BLOCK' | 'NORMAL', reason: string): Promise<void>;
 }

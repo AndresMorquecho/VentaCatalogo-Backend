@@ -28,6 +28,7 @@ export interface OrderProps {
   parentOrderId?: string;
   orderNumber?: string;
   trackingGuide?: string;
+  exchangeShippingGuideSeq?: string;
   changeStatus?: string;
   receptionBatchId?: string;
   deliveryBatchId?: string;

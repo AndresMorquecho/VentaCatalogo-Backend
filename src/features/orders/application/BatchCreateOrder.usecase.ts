@@ -4,6 +4,7 @@ import { IBankAccountRepository } from '../../financial/domain/IBankAccountRepos
 import { Order, OrderStatus } from '../domain/Order.entity';
 import { Result } from '../../../shared/domain/Result';
 import { prisma } from '../../../lib/prisma';
+import { allocateExchangeConsecutives } from '../../../shared/utils/exchangeShippingRegistry';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientAccountCredit } from '../../../shared/utils/financialValidations';
 import { buildNotesJSON, cardTitleFromMethod, generateGroupId } from '../../../shared/utils/transactionNotes';
@@ -100,7 +101,7 @@ export class BatchCreateOrderUseCase {
     const mainClient = clients.find(c => c.id === dto.clientId);
     if (!mainClient) return Result.fail('Cliente no encontrado');
 
-    const receiptNumber = (dto.receiptNumber || `SN-${crypto.randomUUID().slice(0, 8)}`).trim();
+    let receiptNumber = (dto.receiptNumber || `SN-${crypto.randomUUID().slice(0, 8)}`).trim();
     const transactionGroupId = generateGroupId();
 
     const resultOrders = await prisma.$transaction(async (tx): Promise<any[]> => {
@@ -130,7 +131,15 @@ export class BatchCreateOrderUseCase {
       const clientName = mainClient.firstName.trim();
       const orderBrandNames = new Map<string, string>();
 
-      // 1. Create OrderReceipt
+      // 1. Create OrderReceipt — CAM alineado al mismo contador que ENV (registro de envío)
+      const isCamReceipt = /^CAM-\d{4}-/i.test(receiptNumber);
+      let shippingRegistryNumber: string | null = null;
+      if (isCamReceipt) {
+        const pair = await allocateExchangeConsecutives(tx);
+        receiptNumber = pair.exchangeReceiptNumber;
+        shippingRegistryNumber = pair.shippingRegistryNumber;
+      }
+
       const receipt = await tx.orderReceipt.create({
         data: {
           receiptNumber,
@@ -142,7 +151,8 @@ export class BatchCreateOrderUseCase {
           bankAccountId: dto.bankAccountId,
           transactionReference: (dto as any).transactionReference,
           notes: dto.notes,
-          createdByName: (dto as any).createdBy || 'admin'
+          createdByName: (dto as any).createdBy || 'admin',
+          shippingRegistryNumber
         }
       });
       const receiptId = receipt.id;
@@ -162,7 +172,9 @@ export class BatchCreateOrderUseCase {
         if (!parentOrderId) parentOrderId = orderId;
 
         let actualOrderNumber = orderDto.orderNumber;
-        if (!actualOrderNumber) {
+        if (isCamReceipt && String(orderDto.type || '').toUpperCase() === 'CAMBIO') {
+          actualOrderNumber = receiptNumber;
+        } else if (!actualOrderNumber) {
           actualOrderNumber = `${orderPrefix}${String(nextOrderNumber).padStart(3, '0')}`;
           nextOrderNumber++;
         }

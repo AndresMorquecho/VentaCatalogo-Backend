@@ -1,4 +1,6 @@
 import { prisma } from '../../../lib/prisma';
+import { peekNextExchangeSerial } from '../../../shared/utils/exchangeShippingRegistry';
+import { allocateNextExchangeShippingGuideSerial } from '../../../shared/utils/exchangeShippingGuideSerial';
 import { IOrderRepository, OrderFilters } from '../domain/IOrderRepository';
 import { Order, OrderStatus } from '../domain/Order.entity';
 import { Prisma } from '@prisma/client';
@@ -351,6 +353,19 @@ export class PrismaOrderRepository implements IOrderRepository {
     return this.generateSequence('PD');
   }
 
+  /**
+   * Siguiente CAM-AAAA-NNNN (mismo sufijo que el próximo ENV de registro de envío).
+   * Vista previa sin incrementar; el guardado en batch incrementa el contador y asigna ambos.
+   */
+  async generateExchangeReceiptNumber(): Promise<string> {
+    const { exchangeReceiptNumber } = await peekNextExchangeSerial(prisma);
+    return exchangeReceiptNumber;
+  }
+
+  async allocateExchangeShippingGuideSerial(): Promise<string> {
+    return prisma.$transaction(async (tx) => allocateNextExchangeShippingGuideSerial(tx as any));
+  }
+
   async generateSequence(prefix: string): Promise<string> {
     const year = new Date().getFullYear();
     
@@ -433,6 +448,7 @@ export class PrismaOrderRepository implements IOrderRepository {
         parentOrderId: raw.parentOrderId || undefined,
         orderNumber: raw.orderNumber || undefined,
         trackingGuide: raw.trackingGuide || undefined,
+        exchangeShippingGuideSeq: raw.exchangeShippingGuideSeq || undefined,
         exchangeItemId: raw.exchangeItemId || undefined,
         sourceOrderId: raw.sourceOrderId || undefined,
         sourceOrderNumber: raw.sourceOrderNumber || undefined,
@@ -583,6 +599,7 @@ export class PrismaOrderRepository implements IOrderRepository {
       parentOrderId: json.parentOrderId,
       orderNumber: json.orderNumber,
       trackingGuide: json.trackingGuide,
+      exchangeShippingGuideSeq: json.exchangeShippingGuideSeq,
       exchangeItemId: json.exchangeItemId,
       sourceOrderId: json.sourceOrderId,
       sourceOrderNumber: json.sourceOrderNumber,
