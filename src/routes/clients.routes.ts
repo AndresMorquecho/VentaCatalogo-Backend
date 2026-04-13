@@ -136,7 +136,20 @@ router.get('/', authenticate, requirePermission(['clients.view', 'orders.create'
     }
 
     const [clients, total] = await Promise.all([
-      prisma.client.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: limit }),
+      prisma.client.findMany({ 
+        where, 
+        orderBy: { createdAt: 'desc' }, 
+        skip, 
+        take: limit,
+        include: {
+          referredBy: {
+            select: {
+              id: true,
+              firstName: true
+            }
+          }
+        }
+      }),
       prisma.client.count({ where })
     ]);
 
@@ -214,6 +227,12 @@ router.get('/:id', authenticate, requirePermission(['clients.view', 'orders.view
           include: {
             credits: { where: { status: 'AVAILABLE' } }
           }
+        },
+        referredBy: {
+          select: {
+            id: true,
+            firstName: true
+          }
         }
       }
     });
@@ -255,20 +274,41 @@ router.post('/', authenticate, requirePermission('clients.create'), async (req: 
     if (req.body.birthDate) clientData.birthDate = new Date(req.body.birthDate);
     if (req.body.identificationIssuanceDate) clientData.identificationIssuanceDate = new Date(req.body.identificationIssuanceDate);
     if (req.body.isWhatsApp !== undefined) clientData.isWhatsApp = req.body.isWhatsApp;
-    if (req.body.referredById) clientData.referredById = req.body.referredById;
+    
+    if (req.body.referredById) {
+      const referralClient = await prisma.client.findUnique({ where: { id: req.body.referredById } });
+      if (!referralClient) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_REFERRAL', message: 'La empresaria que seleccionaste como referido ya no se encuentra disponible o fue eliminada. Por favor, selecciona a otra.' }
+        });
+      }
+      clientData.referredById = req.body.referredById;
+    }
+
     if (req.body.isBlocked !== undefined) clientData.isBlocked = req.body.isBlocked;
     clientData.createdByName = (req as any).user?.username || 'Administrador';
     clientData.lastDataUpdate = new Date();
 
-    // 🔴 REGLA: Todos los campos de texto a MAYÚSCULAS (excepto email)
+    // 🔴 REGLA: Todos los campos de texto a MAYÚSCULAS (excepto email y IDs)
     Object.keys(clientData).forEach(key => {
-        if (typeof clientData[key] === 'string' && key !== 'email') {
+        if (typeof clientData[key] === 'string' && key !== 'email' && key !== 'referredById') {
             clientData[key] = clientData[key].toUpperCase();
         }
     });
 
     const client = await prisma.$transaction(async (tx) => {
-      const newClient = await tx.client.create({ data: clientData });
+      const newClient = await tx.client.create({ 
+        data: clientData,
+        include: {
+          referredBy: {
+            select: {
+              id: true,
+              firstName: true
+            }
+          }
+        }
+      });
       await tx.clientAccount.create({ data: { clientId: newClient.id } });
       return newClient;
     });
@@ -303,12 +343,32 @@ router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: 
     if (req.body.birthDate !== undefined) data.birthDate = req.body.birthDate ? new Date(req.body.birthDate) : null;
     if (req.body.identificationIssuanceDate !== undefined) data.identificationIssuanceDate = req.body.identificationIssuanceDate ? new Date(req.body.identificationIssuanceDate) : null;
     if (req.body.isWhatsApp !== undefined) data.isWhatsApp = req.body.isWhatsApp;
-    if (req.body.referredById !== undefined) data.referredById = req.body.referredById;
+    
+    if (req.body.referredById !== undefined) {
+      if (req.body.referredById) {
+        if (req.body.referredById === req.params.id) {
+           return res.status(400).json({
+             success: false,
+             error: { code: 'INVALID_REFERRAL', message: 'Una empresaria no puede referirse a sí misma.' }
+           });
+        }
+        
+        const referralClient = await prisma.client.findUnique({ where: { id: req.body.referredById } });
+        if (!referralClient) {
+          return res.status(400).json({
+            success: false,
+            error: { code: 'INVALID_REFERRAL', message: 'La empresaria que seleccionaste como referido ya no se encuentra disponible o fue eliminada. Por favor, selecciona a otra.' }
+          });
+        }
+      }
+      data.referredById = req.body.referredById;
+    }
+
     if (req.body.isBlocked !== undefined) data.isBlocked = req.body.isBlocked;
 
-    // 🔴 REGLA: Todos los campos de texto editados a MAYÚSCULAS (excepto email)
+    // 🔴 REGLA: Todos los campos de texto editados a MAYÚSCULAS (excepto email y IDs)
     Object.keys(data).forEach(key => {
-        if (typeof data[key] === 'string' && key !== 'email') {
+        if (typeof data[key] === 'string' && key !== 'email' && key !== 'referredById') {
             data[key] = data[key].toUpperCase();
         }
     });
@@ -320,7 +380,15 @@ router.put('/:id', authenticate, requirePermission('clients.edit'), async (req: 
 
     const client = await prisma.client.update({
       where: { id: req.params.id },
-      data
+      data,
+      include: {
+        referredBy: {
+          select: {
+            id: true,
+            firstName: true
+          }
+        }
+      }
     });
 
     if (data.firstName) {
