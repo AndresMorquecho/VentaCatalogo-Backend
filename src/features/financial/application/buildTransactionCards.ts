@@ -294,11 +294,11 @@ function buildMovements(records: RawRecord[], title: CardTitle): CardMovement[] 
     }
 
     // DISTRIBUTION legs: 
-    // - EXPENSE (debt reduction) is REAL for the card amount
-    // - INCOME (payment added) is INFORMATIVE to avoid double counting
-    const isDistributionIncome = r.source === 'CREDIT_DISTRIBUTION' && r.movementType === 'INCOME';
+    // BOTH are INFORMATIVE because they don't represent new money entering or leaving the system.
+    // They are virtual shifts of credit between orders/wallet.
+    const isDistribution = r.source === 'CREDIT_DISTRIBUTION';
 
-    const informative = isInformativeWallet || isDistributionIncome;
+    const informative = isInformativeWallet || isDistribution;
 
     // Direction: INCOME → IN, EXPENSE → OUT, INTERNAL → interpret from account types
     let direction: MovementDirection;

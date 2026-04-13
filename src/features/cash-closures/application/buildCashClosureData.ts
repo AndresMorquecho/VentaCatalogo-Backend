@@ -189,12 +189,19 @@ export async function computeCashClosureData(
             } else if (card.operationType === 'RECARGA') {
                 incomeBySource.walletRecharges += cardValidIncome;
             } else if (card.operationType === 'ABONO') {
-                incomeBySource.orderPayments += cardValidIncome; // combined all initial/additional here for simplicity
+                // Distinguish between INITIAL (Orders/Reception) and ADDITIONAL (Abonos module)
+                const isAdditional = card.notes?.includes('"module":"ABONOS"') || card.title === 'AJUSTE_ABONO';
+                if (isAdditional) {
+                    incomeBySource.additionalPayments += cardValidIncome;
+                } else {
+                    incomeBySource.orderPayments += cardValidIncome;
+                }
                 runningAbonos += cardValidIncome;
                 summaryTables.abonos.push({ ...baseRow, amount: cardValidIncome, type: 'INCOME', balance: runningAbonos });
             } else if (card.operationType === 'REEMBOLSO' || card.operationType === 'CAMBIO') {
                 incomeBySource.adjustments += cardValidIncome;
             } else {
+                // Any other income (Manual from bank accounts, etc.)
                 incomeBySource.manual += cardValidIncome;
             }
         }
