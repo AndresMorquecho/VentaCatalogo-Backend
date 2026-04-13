@@ -61,6 +61,13 @@ async function main() {
     await prisma.auditLog.deleteMany();
     await prisma.systemLock.deleteMany();
 
+    console.log('🔄 Reiniciando consecutivos de sistema (SystemSettings)...');
+    await prisma.systemSettings.deleteMany({
+      where: {
+        key: { startsWith: 'SEQ_' }
+      }
+    });
+
     console.log('🧹 Reseteando fechas de última actividad en clientes...');
     await prisma.client.updateMany({
       data: {
