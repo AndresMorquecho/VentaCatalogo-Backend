@@ -191,6 +191,20 @@ router.get('/', authenticate, requirePermission(['clients.view', 'orders.create'
   }
 });
 
+router.get('/cities', authenticate, async (req, res, next) => {
+  try {
+    const cities = await prisma.client.findMany({
+      select: { city: true },
+      distinct: ['city'],
+      where: { city: { not: '' } },
+      orderBy: { city: 'asc' }
+    });
+    return res.json({ success: true, data: cities.map(c => c.city) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get('/:id', authenticate, requirePermission(['clients.view', 'orders.view', 'orders.create', 'orders.edit']), async (req: any, res, next) => {
   try {
     const client = await prisma.client.findUnique({
@@ -213,8 +227,7 @@ router.get('/:id', authenticate, requirePermission(['clients.view', 'orders.view
 
     return res.json({ success: true, data: client });
   } catch (error) {
-    next(error);
-    return;
+    return next(error);
   }
 });
 
@@ -260,9 +273,9 @@ router.post('/', authenticate, requirePermission('clients.create'), async (req: 
       return newClient;
     });
 
-    res.status(201).json({ success: true, data: client });
+    return res.status(201).json({ success: true, data: client });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 

@@ -81,6 +81,7 @@ export class GetInventoryMovementsUseCase {
                         client: true,
                         brand: true,
                         payments: true,
+                        items: true,
                         inventoryMovements: {
                           orderBy: { createdAt: 'asc' }
                         }
@@ -101,16 +102,21 @@ export class GetInventoryMovementsUseCase {
                         ? moves.filter((m: any) => m.type === typeValue)
                         : moves;
 
+                    const totalQuantity = (order.items || []).reduce((sum: number, it: any) => sum + (it.quantity || 0), 0);
+                    
                     relevantMoves.forEach((m: any) => {
                         finalMovements.push({
                             ...m,
-                            order: { ...order, inventoryMovements: undefined },
+                            totalQuantity,
+                            order: { ...order, inventoryMovements: undefined, items: undefined },
                             client: order.client,
                             brand: order.brand
                         });
                     });
                 } else {
                     if (typeValue && typeValue !== 'ALL') continue;
+
+                    const totalQuantity = (order.items || []).reduce((sum: number, it: any) => sum + (it.quantity || 0), 0);
 
                     finalMovements.push({
                         id: `pend-${order.id}`,
@@ -120,7 +126,8 @@ export class GetInventoryMovementsUseCase {
                         type: 'POR_RECIBIR', 
                         createdAt: order.createdAt,
                         createdBy: order.createdByName || 'S/N',
-                        order: { ...order, inventoryMovements: undefined },
+                        totalQuantity,
+                        order: { ...order, inventoryMovements: undefined, items: undefined },
                         client: order.client,
                         brand: order.brand
                     });

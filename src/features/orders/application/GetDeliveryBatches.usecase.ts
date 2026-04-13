@@ -5,6 +5,8 @@ export interface DeliveryBatchFilters {
   searchText?: string;
   startDate?: string;
   endDate?: string;
+  clientId?: string;
+  orderQuantity?: string;
   page?: number;
   limit?: number;
 }
@@ -34,6 +36,27 @@ export class GetDeliveryBatchesUseCase {
           end.setHours(23, 59, 59, 999);
           where.deliveryDate.lte = end;
         }
+      }
+
+      if (filters.clientId) {
+        where.orders = { some: { clientId: filters.clientId } };
+      }
+
+      if (filters.orderQuantity) {
+          const qty = parseInt(filters.orderQuantity);
+          if (!isNaN(qty)) {
+              // Find IDs of batches that have exactly this many orders
+              const batchesWithQty = await prisma.$queryRaw<Array<{ delivery_batch_id: string }>>`
+                SELECT delivery_batch_id
+                FROM orders
+                WHERE delivery_batch_id IS NOT NULL
+                GROUP BY delivery_batch_id
+                HAVING COUNT(*) = ${qty}
+              `;
+              const allowedIds = batchesWithQty.map(b => b.delivery_batch_id);
+              if (allowedIds.length === 0) return Result.ok({ data: [], pagination: { total: 0, page, limit, pages: 0 } });
+              where.id = { in: allowedIds };
+          }
       }
 
       // @ts-ignore

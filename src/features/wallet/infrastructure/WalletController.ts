@@ -280,23 +280,14 @@ export class WalletController {
                 });
             }
 
-            // Get all ClientCredit records (source of truth for wallet balance)
-            const credits = await prisma.clientCredit.findMany({
+            // Get all financial records that involve the wallet (as source or destination)
+            const walletRecords = await prisma.financialRecord.findMany({
                 where: {
-                    clientAccountId: clientAccount.id
-                },
-                orderBy: {
-                    createdAt: 'asc'
-                }
-            });
-
-            // Get all payments using CREDITO_CLIENTE method for this client
-            const creditPayments = await prisma.orderPayment.findMany({
-                where: {
-                    method: 'CREDITO_CLIENTE',
-                    order: {
-                        clientId: clientId
-                    }
+                    clientId,
+                    OR: [
+                        { fromAccountType: 'WALLET' },
+                        { toAccountType: 'WALLET' }
+                    ]
                 },
                 include: {
                     order: {
@@ -313,129 +304,59 @@ export class WalletController {
                     }
                 },
                 orderBy: {
-                    createdAt: 'asc'
+                    date: 'asc'
                 }
             });
 
-            // Build unified history
-            const history: any[] = [];
-
-            // Add credit generations (AVAILABLE or USED)
-            for (const credit of credits) {
-                // Get origin order info
-                let originOrder = null;
-                if (credit.originOrderId) {
-                    originOrder = await prisma.order.findUnique({
-                        where: { id: credit.originOrderId },
-                        select: {
-                            receiptNumber: true,
-                            orderNumber: true,
-                            brand: {
-                                select: {
-                                    name: true
-                                }
-                            }
-                        }
-                    });
-                }
-
-                // Determine who created it from the transaction ID or financial records
-                let createdBy = 'system';
-                const financialRecord = await prisma.financialRecord.findFirst({
-                    where: {
-                        OR: [
-                            {
-                                type: 'CREDIT_GENERATION',
-                                orderId: credit.originOrderId
-                            },
-                            {
-                                referenceNumber: {
-                                    contains: credit.originTransactionId
-                                }
-                            }
-                        ]
-                    },
-                    select: {
-                        createdBy: true
-                    }
-                });
-                if (financialRecord) {
-                    createdBy = financialRecord.createdBy;
-                }
-
-                history.push({
-                    id: `gen-${credit.id}`,
-                    type: 'CREDIT_GENERATION',
-                    movementType: 'INCOME',
-                    amount: Number(credit.amount),
-                    date: credit.createdAt,
-                    createdBy: createdBy,
-                    notes: `Saldo a favor generado${originOrder ? ` - Origen: Pedido ${originOrder.receiptNumber}` : ''}`,
-                    orderId: credit.originOrderId,
-                    orderReceiptNumber: originOrder?.receiptNumber || null,
-                    orderNumber: originOrder?.orderNumber || null,
-                    brandName: originOrder?.brand?.name || null,
-                    status: credit.status,
-                    creditId: credit.id
-                });
-            }
-
-            // Add credit applications (uses) - only count the actual amount used
-            for (const payment of creditPayments) {
-                // Get who created the payment
-                let createdBy = 'system';
-                const financialRecord = await prisma.financialRecord.findFirst({
-                    where: {
-                        orderPaymentId: payment.id
-                    },
-                    select: {
-                        createdBy: true
-                    }
-                });
-                if (financialRecord) {
-                    createdBy = financialRecord.createdBy;
-                }
-
-                history.push({
-                    id: `app-${payment.id}`,
-                    type: 'CREDIT_APPLICATION',
-                    movementType: 'EXPENSE',
-                    amount: Number(payment.amount),
-                    date: payment.createdAt,
-                    createdBy: createdBy,
-                    notes: `Saldo aplicado a pedido ${payment.order.receiptNumber}`,
-                    orderId: payment.order.id,
-                    orderReceiptNumber: payment.order.receiptNumber,
-                    orderNumber: payment.order.orderNumber,
-                    brandName: payment.order.brand?.name || null,
-                    status: 'USED',
-                    paymentId: payment.id
-                });
-            }
-
-            // Sort by date
-            history.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-            // Calculate running balance
+            // Build unified history from financial records
             let runningBalance = 0;
-            const historyWithBalance = history.map(record => {
-                if (record.type === 'CREDIT_GENERATION') {
-                    runningBalance += record.amount;
-                } else if (record.type === 'CREDIT_APPLICATION') {
-                    runningBalance -= record.amount;
+            const history = walletRecords.map(record => {
+                const isIncome = record.toAccountType === 'WALLET';
+                const amount = Number(record.amount);
+                
+                if (isIncome) {
+                    runningBalance += amount;
+                } else {
+                    runningBalance -= amount;
+                }
+
+                // Parse notes if JSON, or use as prefix
+                let displayNotes = record.notes || '';
+                try {
+                    const notesObj = JSON.parse(record.notes || '{}');
+                    if (notesObj.description) {
+                        displayNotes = notesObj.description;
+                    } else if (notesObj.title) {
+                        displayNotes = notesObj.title;
+                    }
+                } catch (e) {
+                    // Not JSON, use as is
                 }
 
                 return {
-                    ...record,
+                    id: record.id,
+                    type: record.type,
+                    movementType: isIncome ? 'INCOME' : 'EXPENSE',
+                    amount: amount,
+                    date: record.date,
+                    createdBy: record.createdBy,
+                    notes: displayNotes,
+                    orderId: record.orderId,
+                    orderReceiptNumber: record.order?.receiptNumber || null,
+                    orderNumber: record.order?.orderNumber || null,
+                    brandName: record.order?.brand?.name || null,
+                    status: 'COMPLETADO',
                     balance: runningBalance
                 };
             });
 
-            // Verify balance matches
-            const calculatedBalance = runningBalance;
-            
-            // Calculate REAL available balance from AVAILABLE credits
-            const availableCredits = credits.filter(c => c.status === 'AVAILABLE');
+            // Calculate current balance (from AVAILABLE credits for validation)
+            const availableCredits = await prisma.clientCredit.findMany({
+                where: {
+                    clientAccount: { clientId },
+                    status: 'AVAILABLE'
+                }
+            });
             const realAvailableBalance = availableCredits.reduce((sum, c) => sum + Number(c.remainingAmount), 0);
             
             const accountBalance = Number(clientAccount.totalCreditAvailable);
@@ -444,22 +365,18 @@ export class WalletController {
             // If there's a significant difference, log it for debugging
             if (difference > 0.01) {
                 console.warn(`[WalletHistory] Balance mismatch for client ${clientId}:`);
-                console.warn(`  Calculated from history: $${calculatedBalance.toFixed(2)}`);
-                console.warn(`  Real available (from AVAILABLE credits): $${realAvailableBalance.toFixed(2)}`);
-                console.warn(`  ClientAccount.totalCreditAvailable: $${accountBalance.toFixed(2)}`);
-                console.warn(`  Difference: $${difference.toFixed(2)}`);
-                console.warn(`  Total credits: ${credits.length}`);
-                console.warn(`  Available credits: ${availableCredits.length}`);
-                console.warn(`  Total payments: ${creditPayments.length}`);
+                console.warn(`  Calculated from history: $${runningBalance.toFixed(2)}`);
+                console.warn(`  Real available (credits): $${realAvailableBalance.toFixed(2)}`);
+                console.warn(`  ClientAccount (aggregate): $${accountBalance.toFixed(2)}`);
             }
 
             return HttpResponse.ok(res, {
-                history: historyWithBalance,
-                currentBalance: realAvailableBalance, // Use REAL balance from AVAILABLE credits
-                accountBalance: accountBalance, // For debugging
-                calculatedBalance: calculatedBalance,
+                history: history.reverse(), // Show newest first
+                currentBalance: accountBalance,
+                calculatedBalance: runningBalance,
                 difference: difference
             });
+
         } catch (error: any) {
             console.error('[WalletController] getClientWalletHistory error:', error);
             return HttpResponse.fail(res, error?.message || 'Internal Server Error');

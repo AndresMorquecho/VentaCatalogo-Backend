@@ -80,7 +80,7 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
 
     // Recovery status filter
     if (filters.recoveryStatus && filters.recoveryStatus !== 'ALL') {
-      const rateSql = '(CASE WHEN SUM(COALESCE(o.real_invoice_total, o.total)) > 0 THEN (SUM(CASE WHEN o.status = \'ENTREGADO\' THEN COALESCE(o.real_invoice_total, o.total) ELSE 0 END) / SUM(COALESCE(o.real_invoice_total, o.total)) * 100) ELSE 0 END)';
+      const rateSql = '(CASE WHEN SUM(wo.total) > 0 THEN (SUM(CASE WHEN wo.status = \'ENTREGADO\' THEN wo.total ELSE 0 END) / SUM(wo.total) * 100) ELSE 0 END)';
       if (filters.recoveryStatus === 'HEALTHY') {
         havingConditions.push(`${rateSql} > 50`);
       } else if (filters.recoveryStatus === 'WARNING') {
@@ -92,12 +92,12 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
 
     // Min days in warehouse filter
     if (filters.minDaysInWarehouse !== undefined) {
-      havingConditions.push(`AVG(CASE WHEN o.status = 'ENTREGADO' THEN EXTRACT(DAY FROM (o.delivery_date::timestamp - o.reception_date::timestamp))::integer ELSE EXTRACT(DAY FROM (CURRENT_DATE - o.reception_date::timestamp))::integer END) >= ${filters.minDaysInWarehouse}`);
+      havingConditions.push(`AVG(wo.days_in_warehouse) >= ${filters.minDaysInWarehouse}`);
     }
 
     // Min amount filter
     if (filters.minAmount !== undefined) {
-      havingConditions.push(`SUM(COALESCE(o.real_invoice_total, o.total)) >= ${filters.minAmount}`);
+      havingConditions.push(`SUM(wo.total) >= ${filters.minAmount}`);
     }
 
     const havingClause = havingConditions.length > 0 
@@ -179,7 +179,13 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
         SELECT 
           o.brand_id,
           o.id as order_id,
-          COALESCE(o.real_invoice_total, o.total) as total
+          COALESCE(o.real_invoice_total, o.total) as total,
+          o.status,
+          CASE 
+            WHEN o.status = 'ENTREGADO' AND o.delivery_date IS NOT NULL 
+            THEN EXTRACT(DAY FROM (o.delivery_date::timestamp - o.reception_date::timestamp))::integer
+            ELSE EXTRACT(DAY FROM (CURRENT_DATE - o.reception_date::timestamp))::integer
+          END as days_in_warehouse
         FROM orders o
         INNER JOIN brands b ON o.brand_id = b.id
         WHERE ${whereClause}
@@ -250,7 +256,7 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
    * Get recovery trends over time
    */
   async getRecoveryTrends(
-    _filters: RecoveryFilters,
+    filters: RecoveryFilters,
     groupBy: TrendGroupBy
   ): Promise<RecoveryTrend[]> {
     // Determine date grouping based on groupBy parameter
@@ -275,16 +281,44 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
         periodFormat = 'YYYY-MM-DD';
     }
 
+    const whereConditions: string[] = [
+      "o.status IN ('RECIBIDO_EN_BODEGA', 'ENTREGADO')",
+      "o.reception_date IS NOT NULL"
+    ];
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    // Date filters
+    if (filters.dateFrom) {
+      whereConditions.push(`o.reception_date >= $${paramIndex}`);
+      params.push(filters.dateFrom);
+      paramIndex++;
+    }
+    if (filters.dateTo) {
+      whereConditions.push(`o.reception_date <= $${paramIndex}`);
+      params.push(filters.dateTo);
+      paramIndex++;
+    }
+
+    // Brand filters
+    if (filters.brandIds && filters.brandIds.length > 0) {
+      whereConditions.push(`o.brand_id = ANY($${paramIndex}::text[])`);
+      params.push(filters.brandIds);
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
     const query = `
       WITH warehouse_orders AS (
         SELECT 
           o.id as order_id,
           COALESCE(o.real_invoice_total, o.total) as total,
           o.reception_date,
+          o.status,
           ${dateGrouping} as period_date
         FROM orders o
-        WHERE o.status IN ('RECIBIDO_EN_BODEGA', 'ENTREGADO')
-          AND o.reception_date IS NOT NULL
+        WHERE ${whereClause}
       ),
       payments_by_order AS (
         SELECT 
@@ -309,7 +343,7 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
       ORDER BY wo.period_date ASC
     `;
 
-    const results = await this.prisma.$queryRawUnsafe<any[]>(query);
+    const results = await this.prisma.$queryRawUnsafe<any[]>(query, ...params);
 
     return results.map((row) => ({
       period: row.period,

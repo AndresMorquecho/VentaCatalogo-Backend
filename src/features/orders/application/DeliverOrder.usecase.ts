@@ -544,22 +544,13 @@ export class DeliverOrderUseCase {
               include: { brand: true }
             });
 
-            // Maintenance of client wallet balance for the card 'Saldo' display
+
+            // Context for audit trail (wallet balance doesn't change during order-to-order transfer)
             if (clientWalletRunningBal === null) {
               clientWalletRunningBal = Number(clientAccount.totalCreditAvailable);
             }
-            const balanceBefore: number = clientWalletRunningBal;
-            const balanceAfter: number = balanceBefore - Number(dist.amount);
-            clientWalletRunningBal = balanceAfter;
-
-            // Update Client Account in DB (Important for correctness!)
-            await tx.clientAccount.update({
-              where: { id: clientAccount.id },
-              data: {
-                totalCreditAvailable: { decrement: dist.amount },
-                version: { increment: 1 }
-              }
-            });
+            const balanceBefore = clientWalletRunningBal;
+            const balanceAfter = clientWalletRunningBal;
 
             // Create expense leg (source order losing credit)
             await tx.financialRecord.create({

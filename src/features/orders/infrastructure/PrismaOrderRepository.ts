@@ -34,22 +34,56 @@ export class PrismaOrderRepository implements IOrderRepository {
         where.status = filters.status as OrderStatus;
       }
     }
-    if (filters.clientId) where.clientId = filters.clientId;
-    if (filters.brandId) where.brandId = filters.brandId;
-    if (filters.onlyParents) {
-      where.parentOrderId = null;
+
+    if (filters.clientId) {
+      where.clientId = filters.clientId;
     }
+
+    if (filters.brandId) {
+      if (filters.onlyParents) {
+        where.OR = [
+          ...(where.OR || []),
+          { brandId: filters.brandId },
+          { childOrders: { some: { brandId: filters.brandId } } }
+        ];
+      } else {
+        where.brandId = filters.brandId;
+      }
+    }
+
     if (filters.type) {
-      where.type = filters.type;
+      if (filters.onlyParents) {
+        where.OR = [
+          ...(where.OR || []),
+          { type: filters.type },
+          { childOrders: { some: { type: filters.type } } }
+        ];
+      } else {
+        where.type = filters.type;
+      }
     }
+
+    if (filters.receiptNumber) {
+      where.receiptNumber = { contains: filters.receiptNumber, mode: 'insensitive' };
+    }
+
+    if (filters.orderNumber) {
+      if (filters.onlyParents) {
+        where.OR = [
+          ...(where.OR || []),
+          { orderNumber: { contains: filters.orderNumber, mode: 'insensitive' } },
+          { childOrders: { some: { orderNumber: { contains: filters.orderNumber, mode: 'insensitive' } } } }
+        ];
+      } else {
+        where.orderNumber = { contains: filters.orderNumber, mode: 'insensitive' };
+      }
+    }
+
     if (filters.invoiceNumber) {
       where.invoiceNumber = { contains: filters.invoiceNumber, mode: 'insensitive' };
     }
     if (filters.creditNoteNumber) {
       where.creditNoteNumber = { contains: filters.creditNoteNumber, mode: 'insensitive' };
-    }
-    if (filters.receiptNumber) {
-      where.receiptNumber = { contains: filters.receiptNumber, mode: 'insensitive' };
     }
     if (filters.sourceOrderNumber) {
       where.sourceOrderNumber = { contains: filters.sourceOrderNumber, mode: 'insensitive' };
@@ -57,11 +91,10 @@ export class PrismaOrderRepository implements IOrderRepository {
     if (filters.trackingGuide) {
       where.trackingGuide = { contains: filters.trackingGuide, mode: 'insensitive' };
     }
-  if (filters.orderNumber) {
-    where.orderNumber = { contains: filters.orderNumber, mode: 'insensitive' };
-  }
-  if (filters.search) {
+
+    if (filters.search) {
       where.OR = [
+        ...(where.OR || []),
         { receiptNumber: { contains: filters.search, mode: 'insensitive' } },
         { clientName: { contains: filters.search, mode: 'insensitive' } },
         { invoiceNumber: { contains: filters.search, mode: 'insensitive' } },
@@ -84,6 +117,10 @@ export class PrismaOrderRepository implements IOrderRepository {
           }
         }
       ];
+    }
+    
+    if (filters.onlyParents) {
+      where.parentOrderId = null;
     }
     if (filters.startDate || filters.endDate) {
       where.transactionDate = {};

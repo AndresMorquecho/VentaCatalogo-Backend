@@ -1213,6 +1213,8 @@ export class OrderController {
         searchText: req.query.search as string,
         startDate: req.query.startDate as string,
         endDate: req.query.endDate as string,
+        clientId: req.query.clientId as string,
+        orderQuantity: req.query.orderQuantity as string,
         page: req.query.page ? parseInt(req.query.page as string) : 1,
         limit: req.query.limit ? parseInt(req.query.limit as string) : 25
       };

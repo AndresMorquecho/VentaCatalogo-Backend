@@ -40,6 +40,7 @@ export interface BatchCreateOrderDTO {
     totalAmount: number;
   };
   idempotencyKey?: string;
+  transactionReference?: string;
   orders: Array<{
     brandId: string;
     brandName: string;
@@ -148,10 +149,10 @@ export class BatchCreateOrderUseCase {
           salesChannel: dto.salesChannel,
           transactionDate: dto.transactionDate || new Date(),
           paymentMethod: dto.paymentMethod,
-          bankAccountId: dto.bankAccountId,
-          transactionReference: (dto as any).transactionReference,
+          bankAccountId: dto.bankAccountId || null,
+          transactionReference: dto.transactionReference,
           notes: dto.notes,
-          createdByName: (dto as any).createdBy || 'admin',
+          createdByName: dto.createdByName || createdBy || 'admin',
           shippingRegistryNumber
         }
       });
@@ -196,7 +197,7 @@ export class BatchCreateOrderUseCase {
           transactionDate: dto.transactionDate,
           possibleDeliveryDate: orderDto.possibleDeliveryDate,
           paymentMethod: dto.paymentMethod,
-          bankAccountId: dto.bankAccountId,
+          bankAccountId: dto.bankAccountId || null,
           notes: orderDto.notes,
           description: orderDto.description,
           trackingGuide: dto.trackingGuide,

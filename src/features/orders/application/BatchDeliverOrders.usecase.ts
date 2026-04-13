@@ -574,8 +574,8 @@ export class BatchDeliverOrdersUseCase {
                 clientWalletRunningBal = Number(clientAccount?.totalCreditAvailable || 0);
               }
               const balanceBefore: number = clientWalletRunningBal;
-              const balanceAfter: number = balanceBefore - Number(dist.amount);
-              clientWalletRunningBal = balanceAfter;
+              const balanceAfter: number = clientWalletRunningBal;
+
 
               // Create expense leg (source order losing credit)
               // @ts-ignore
