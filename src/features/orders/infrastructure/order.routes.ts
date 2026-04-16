@@ -44,7 +44,6 @@ const getDeliveryBatchesUseCase = new GetDeliveryBatchesUseCase();
 const reverseOrderDeliveryUseCase = new ReverseOrderDeliveryUseCase();
 
 // Controller
-console.log(`[OrderRoutes] Initializing OrderController. BatchDeliverUsecase: ${!!batchDeliverOrdersUseCase}`);
 const orderController = new OrderController(
   createOrderUseCase,
   getOrdersUseCase,

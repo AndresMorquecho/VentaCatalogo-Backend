@@ -70,7 +70,7 @@ export class CreateReceptionBatchOptimizedUseCase {
   private readonly CHUNK_SIZE = 30; // Process in chunks to avoid huge transactions
 
   async execute(dto: BatchReceptionDTO, userId: string): Promise<Result<any>> {
-    console.time('⏱️ BATCH_RECEPTION_TOTAL');
+
     
     try {
       if (!dto.items || dto.items.length === 0) {
@@ -85,25 +85,25 @@ export class CreateReceptionBatchOptimizedUseCase {
       // For smaller batches, process in single transaction
       const result = await this.processBatch(dto, userId);
       
-      console.timeEnd('⏱️ BATCH_RECEPTION_TOTAL');
+
       return Result.ok(result);
       
     } catch (error) {
-      console.timeEnd('⏱️ BATCH_RECEPTION_TOTAL');
+      console.timeEnd('BATCH_RECEPTION_TOTAL');
       console.error('CreateReceptionBatchOptimizedUseCase Error:', error);
       return Result.fail(error instanceof Error ? error.message : 'Error al procesar recepción por lote');
     }
   }
 
   private async executeInChunks(dto: BatchReceptionDTO, userId: string): Promise<any> {
-    console.log(`📦 Processing ${dto.items.length} orders in chunks of ${this.CHUNK_SIZE}`);
+
     
     const chunks = chunkArray(dto.items, this.CHUNK_SIZE);
     const allProcessedOrders: ProcessedOrder[] = [];
     let batch: any;
 
     for (let i = 0; i < chunks.length; i++) {
-      console.time(`⏱️ CHUNK_${i + 1}`);
+
       
       const chunkDto: BatchReceptionDTO = {
         ...dto,
@@ -119,7 +119,7 @@ export class CreateReceptionBatchOptimizedUseCase {
       }
       
       allProcessedOrders.push(...result.orders);
-      console.timeEnd(`⏱️ CHUNK_${i + 1}`);
+
     }
 
     return {
@@ -132,14 +132,14 @@ export class CreateReceptionBatchOptimizedUseCase {
 
   private async processBatch(dto: BatchReceptionDTO, userId: string): Promise<any> {
     return await prisma.$transaction(async (tx) => {
-      console.time('⏱️ TRANSACTION');
+
       
       let batch;
       
       // ============================================================================
       // STEP 1: Handle batch creation/update (w/ Concurrency Control)
       // ============================================================================
-      console.time('⏱️ STEP_1_BATCH');
+
       
       let finalPackingNumber = dto.packingNumber;
 
@@ -149,7 +149,7 @@ export class CreateReceptionBatchOptimizedUseCase {
       } else {
         // --- 🔒 CONCURRENCY CHECK: Ensure packingNumber is unique and sequential ---
         finalPackingNumber = await getNextSequence('PK-', 'PACKING', tx);
-        console.log(`✅ Robust packing number generated: ${finalPackingNumber}`);
+
         // Propagate change to DTO for order-level updates
         dto.packingNumber = finalPackingNumber;
 
@@ -163,7 +163,7 @@ export class CreateReceptionBatchOptimizedUseCase {
         });
       }
       
-      console.timeEnd('⏱️ STEP_1_BATCH');
+
 
       // ============================================================================
       // STEP 2: Pre-fetch all orders and default accounts in ONE query
@@ -235,12 +235,12 @@ export class CreateReceptionBatchOptimizedUseCase {
         clientAccounts.map(a => [a.clientId, Number(a.totalCreditAvailable)])
       );
       
-      console.timeEnd('⏱️ STEP_2_PREFETCH');
+
 
       // ============================================================================
       // STEP 3: Validate all orders
       // ============================================================================
-      console.time('⏱️ STEP_3_VALIDATE');
+
       
       for (const item of dto.items) {
         const order = ordersMap.get(item.orderId);
@@ -264,12 +264,12 @@ export class CreateReceptionBatchOptimizedUseCase {
         }
       }
       
-      console.timeEnd('⏱️ STEP_3_VALIDATE');
+
 
       // ============================================================================
       // STEP 4: Prepare all data in memory (NO queries yet)
       // ============================================================================
-      console.time('⏱️ STEP_4_PREPARE');
+
       
       const orderUpdates: any[] = [];
       const inventoryMovements: any[] = [];
@@ -422,12 +422,7 @@ export class CreateReceptionBatchOptimizedUseCase {
         const newPaidAmount = paidAmount + (item.abonoRecepcion || 0);
         const pendingAmount = item.finalTotal - newPaidAmount;
 
-        // ====== DEBUG LOGGING ======
-        console.log(`\n📦 Processing order ${order.receiptNumber} (${order.id})`);
-        console.log(`   total=${order.total}, finalTotal=${item.finalTotal}, existingPaid=${paidAmount}, abonoRecepcion=${item.abonoRecepcion || 0}`);
-        console.log(`   newPaidAmount=${newPaidAmount}, pendingAmount=${pendingAmount}`);
-        console.log(`   creditDistribution received:`, JSON.stringify(item.creditDistribution, null, 2));
-        // ====== END DEBUG ======
+
 
         if (pendingAmount < -0.01) {
           console.log(`   ℹ️ Credit detected ($${Math.abs(pendingAmount).toFixed(2)}) but distribution is deferred to Delivery module as per new workflow`);
@@ -436,17 +431,12 @@ export class CreateReceptionBatchOptimizedUseCase {
         }
       }
       
-      console.log('\n📊 Summary:');
-      console.log(`   orderPayments to insert: ${orderPayments.length}`, orderPayments.map(p => `${p.orderId.substring(0,8)}=$${p.amount}(${p.method})`));
-      console.log(`   clientCredits to insert: ${clientCredits.length}`, clientCredits.map(c => `$${c.amount}`));
-      console.log(`   clientAccountCredits:`, Object.fromEntries(clientAccountCredits));
-      
-      console.timeEnd('⏱️ STEP_4_PREPARE');
+
 
       // ============================================================================
       // STEP 5: Execute bulk operations
       // ============================================================================
-      console.time('⏱️ STEP_5_BULK_OPS');
+
       
       // Update all orders
       for (const update of orderUpdates) {
@@ -489,7 +479,7 @@ export class CreateReceptionBatchOptimizedUseCase {
                 receivedAt: new Date()
               }
             });
-            console.log(`[Sync] Exchange Batch ${batchItem.batchId} updated to EN_BODEGA because shadow order ${order.receiptNumber} was received`);
+
           }
         }
       }
@@ -509,12 +499,12 @@ export class CreateReceptionBatchOptimizedUseCase {
         await tx.financialRecord.createMany({ data: financialRecords });
       }
       
-      console.timeEnd('⏱️ STEP_5_BULK_OPS');
+
 
       // ============================================================================
       // STEP 6: Update bank accounts (accumulated)
       // ============================================================================
-      console.time('⏱️ STEP_6_BANK_ACCOUNTS');
+
       
       for (const [bankAccountId, totalAmount] of bankAccountTotals) {
         await tx.bankAccount.update({
@@ -527,12 +517,12 @@ export class CreateReceptionBatchOptimizedUseCase {
         });
       }
       
-      console.timeEnd('⏱️ STEP_6_BANK_ACCOUNTS');
+
 
       // ============================================================================
       // STEP 7: Handle client credits (accumulated)
       // ============================================================================
-      console.time('⏱️ STEP_7_CLIENT_CREDITS');
+
       
       if (clientCredits.length > 0) {
         // Get unique client IDs
@@ -589,9 +579,9 @@ export class CreateReceptionBatchOptimizedUseCase {
         }
       }
       
-      console.timeEnd('⏱️ STEP_7_CLIENT_CREDITS');
 
-      console.timeEnd('⏱️ TRANSACTION');
+
+
 
       // ============================================================================
       // STEP 8: Return complete order data for frontend
@@ -670,7 +660,7 @@ export class CreateReceptionBatchOptimizedUseCase {
       }
     }
 
-    console.log(`🔄 Reverting previous effects for ${oldOrderIds.length} orders in batch ${batch.id}`);
+
 
     // ============================================================================
     // REVERT ALL FINANCIAL EFFECTS FOR ALL ORDERS IN BATCH
