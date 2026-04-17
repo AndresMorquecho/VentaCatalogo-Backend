@@ -57,6 +57,13 @@ export class OrderController {
       status = undefined;
     }
 
+    let excludeIds: string[] | undefined = undefined;
+    if (req.query.excludeIds) {
+      excludeIds = Array.isArray(req.query.excludeIds)
+        ? (req.query.excludeIds as string[])
+        : (req.query.excludeIds as string).split(',').filter(id => id.length > 0);
+    }
+
     const filters: any = {
       status,
       clientId: req.query.clientId as string,
@@ -74,7 +81,8 @@ export class OrderController {
       page,
       limit,
       sortBy: req.query.sortBy as string,
-      order: req.query.order as 'asc' | 'desc'
+      order: req.query.order as 'asc' | 'desc',
+      excludeIds
     };
 
     const result = await this.getOrdersUseCase.execute(filters);
