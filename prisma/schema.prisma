@@ -465,6 +465,7 @@ model Call {
 model User {
   id           String              @id @default(uuid())
   username     String              @unique
+  email        String?             @unique
   password     String
   role         String              @default("USER")
   isActive     Boolean             @default(true) @map("is_active")
