@@ -65,7 +65,7 @@ router.post('/login', async (req, res, next) => {
       }
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
@@ -109,12 +109,12 @@ router.post('/forgot-password', async (req, res, next) => {
       `
     );
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Si el correo electrónico está registrado, recibirás un enlace para restablecer tu contraseña.'
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
@@ -150,12 +150,12 @@ router.post('/reset-password', async (req, res, next) => {
       data: { password: hashedPassword }
     });
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Tu contraseña ha sido restablecida exitosamente.'
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
