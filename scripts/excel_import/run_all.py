@@ -11,11 +11,12 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 scripts = [
-    ("Marcas",       "insert_brands.py"),
-    ("Clientes",     "insert_clients.py"),
-    ("Usuarios",     "insert_users.py"),
-    ("Órdenes",      "import_excel.py"),
-    ("Order Items",  "insert_order_items.py"),
+    ("Marcas",                "insert_brands.py"),
+    ("Clientes",              "insert_clients.py"),
+    ("Usuarios",              "insert_users.py"),
+    ("Órdenes",               "import_excel.py"),
+    ("Order Items",           "insert_order_items.py"),
+    ("Registros relacionados","sync_related_records.py"),
 ]
 
 print("=" * 60)
