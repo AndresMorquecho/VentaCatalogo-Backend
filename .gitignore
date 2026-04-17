@@ -11,6 +11,22 @@ dist/
 # Logs
 *.log
 npm-debug.log*
+*_output.txt
+bug_debug.txt
+real_output.txt
+diag_output.txt
+
+# Diagnostic outputs
+*.json
+!package.json
+!composer.json
+!tsconfig*.json
+!components.json
+!*.schema.json
+
+# Temporary files
+*.tmp
+tmp/
 
 # OS
 .DS_Store

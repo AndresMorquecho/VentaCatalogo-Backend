@@ -57,6 +57,13 @@ export class OrderController {
       status = undefined;
     }
 
+    let excludeIds: string[] | undefined = undefined;
+    if (req.query.excludeIds) {
+      excludeIds = Array.isArray(req.query.excludeIds)
+        ? (req.query.excludeIds as string[])
+        : (req.query.excludeIds as string).split(',').filter(id => id.length > 0);
+    }
+
     const filters: any = {
       status,
       clientId: req.query.clientId as string,
@@ -74,7 +81,8 @@ export class OrderController {
       page,
       limit,
       sortBy: req.query.sortBy as string,
-      order: req.query.order as 'asc' | 'desc'
+      order: req.query.order as 'asc' | 'desc',
+      excludeIds
     };
 
     const result = await this.getOrdersUseCase.execute(filters);
@@ -331,7 +339,7 @@ export class OrderController {
         description: req.body.description,
       };
 
-      console.log("[OrderController] Creating order with DTO:", JSON.stringify(dto, null, 2));
+
 
       const result = await this.createOrderUseCase.execute(dto, req.user!.username);
 
@@ -362,7 +370,7 @@ export class OrderController {
   getByReceiptNumber = async (req: Request, res: Response) => {
     try {
       const { receiptNumber } = req.params;
-      console.log(`[OrderController] getByReceiptNumber called for: ${receiptNumber}`);
+
       const rawOrders = await prisma.order.findMany({
         where: { receiptNumber },
         include: {
@@ -400,7 +408,7 @@ export class OrderController {
   update = async (req: AuthRequest, res: Response) => {
     try {
       const { id } = req.params;
-      console.log(`[OrderController] update called for ID: ${id}`);
+
 
       // Find existing order with full details
       const order = await prisma.order.findUnique({
@@ -483,7 +491,7 @@ export class OrderController {
           req.body.bank_account_id ?? req.body.bankAccountId ?? null;
       }
 
-      console.log("[OrderController] Updating order with data:", JSON.stringify(updateData, null, 2));
+
 
       // Remove undefined fields
       Object.keys(updateData).forEach((key) => updateData[key] === undefined && delete updateData[key]);
@@ -546,7 +554,7 @@ export class OrderController {
                 // If diff > 0: client pays more (deduct extra)
                 const clientAcc = await tx.clientAccount.findUnique({ where: { clientId: updated.clientId } });
                 if (clientAcc) {
-                  console.log(`[OrderController] WALLET DELTA: old=${payment.amount}, new=${newDeposit}, diff=${diff}`);
+
                   if (diff < -0.001) {
                     // Client is REDUCING deposit → refund the difference
                     const refundAmount = Math.abs(diff);
@@ -827,7 +835,7 @@ export class OrderController {
   batchUpdate = async (req: AuthRequest, res: Response) => {
     try {
       const { receiptNumber } = req.params;
-      console.log(`[OrderController] batchUpdate called for receipt: ${receiptNumber}`);
+
 
       if (!this.batchUpdateOrdersUseCase) {
         return HttpResponse.fail(res, 'BatchUpdateOrdersUseCase not initialized');
@@ -1359,7 +1367,7 @@ export class OrderController {
         } : undefined
       };
 
-      console.log('[DeliverOrderController] Final DTO:', JSON.stringify(dto, null, 2));
+
       const result = await this.deliverOrderUseCase.execute(id, dto, req.user!.username);
 
       return HttpResponse.ok(res, result);
@@ -1516,7 +1524,7 @@ export class OrderController {
         })) : []
       };
 
-      console.log('[BatchDeliverOrderController] Final DTO:', JSON.stringify(dto, null, 2));
+
       // @ts-ignore
       const result = await this.batchDeliverOrdersUseCase.execute(dto, req.user!.username);
       return HttpResponse.ok(res, result);

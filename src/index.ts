@@ -115,10 +115,8 @@ app.use('/api/exchanges', exchangesRouter);
 app.use(errorHandler);
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📊 Environment: ${env.NODE_ENV}`);
-  console.log(`🌐 CORS Origins: ${origins.join(', ')}`);
-  console.log(`🏗️  Architecture: Hexagonal (Feature-based)`);
-});
-
-// Force reload 1775186225730
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Environment: ${env.NODE_ENV}`);
+  console.log(`CORS Origins: ${origins.join(', ')}`);
+  console.log(`Architecture: Hexagonal (Feature-based)`);
+});

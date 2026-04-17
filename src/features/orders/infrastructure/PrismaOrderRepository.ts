@@ -130,30 +130,26 @@ export class PrismaOrderRepository implements IOrderRepository {
 
     // hasPendingPayment: filter orders where (realInvoiceTotal ?? total) > sum(payments.amount)
     // Prisma doesn't support aggregate comparisons in where, so we use a raw subquery for IDs.
-    if (filters.hasPendingPayment === true) {
+    // 1. Prepare ID filter
+    const idFilter: Prisma.StringFilter = {};
+    if (filters.excludeIds && filters.excludeIds.length > 0) {
+      idFilter.notIn = filters.excludeIds;
+    }
+
+    // 2. Filter for pending payments (raw query)
+    if (filters.hasPendingPayment !== undefined) {
       const rows = await prisma.$queryRaw<Array<{ id: string }>>`
         SELECT o.id
         FROM "orders" o
-        WHERE COALESCE(o."real_invoice_total", o.total) > COALESCE(
-          (SELECT SUM(p.amount) FROM "order_payments" p WHERE p."order_id" = o.id),
-          0
-        )
+        WHERE ${filters.hasPendingPayment ? Prisma.sql`COALESCE(o."real_invoice_total", o.total) > COALESCE((SELECT SUM(p.amount) FROM "order_payments" p WHERE p."order_id" = o.id), 0)` : Prisma.sql`COALESCE(o."real_invoice_total", o.total) <= COALESCE((SELECT SUM(p.amount) FROM "order_payments" p WHERE p."order_id" = o.id), 0)`}
       `;
-      const pendingIds = rows.map(r => r.id);
-      if (pendingIds.length === 0) return { data: [], total: 0 };
-      where.id = { in: pendingIds };
-    } else if (filters.hasPendingPayment === false) {
-      const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-        SELECT o.id
-        FROM "orders" o
-        WHERE COALESCE(o."real_invoice_total", o.total) <= COALESCE(
-          (SELECT SUM(p.amount) FROM "order_payments" p WHERE p."order_id" = o.id),
-          0
-        )
-      `;
-      const paidIds = rows.map(r => r.id);
-      if (paidIds.length === 0) return { data: [], total: 0 };
-      where.id = { in: paidIds };
+      const filteredIds = rows.map(r => r.id);
+      if (filteredIds.length === 0) return { data: [], total: 0 };
+      idFilter.in = filteredIds;
+    }
+
+    if (Object.keys(idFilter).length > 0) {
+      where.id = idFilter;
     }
 
     const { page, limit } = filters;

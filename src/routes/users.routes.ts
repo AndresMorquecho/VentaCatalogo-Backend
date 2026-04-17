@@ -31,6 +31,7 @@ router.get('/', requirePermission('users.view'), async (req, res, next) => {
         select: {
           id: true,
           username: true,
+          email: true,
           role: true,
           isActive: true,
           createdAt: true,
@@ -63,7 +64,7 @@ router.get('/', requirePermission('users.view'), async (req, res, next) => {
 // CREATE user
 router.post('/', requirePermission('users.create'), async (req, res, next) => {
   try {
-    const { username, password, role } = req.body;
+    const { username, password, role, email } = req.body;
 
     const existing = await prisma.user.findUnique({ where: { username } });
     if (existing) {
@@ -75,6 +76,7 @@ router.post('/', requirePermission('users.create'), async (req, res, next) => {
     const user = await prisma.user.create({
       data: {
         username,
+        email,
         password: hashedPassword,
         role: role || 'USER'
       }
@@ -85,6 +87,7 @@ router.post('/', requirePermission('users.create'), async (req, res, next) => {
       data: {
         id: user.id,
         username: user.username,
+        email: user.email,
         role: user.role
       }
     });
@@ -97,7 +100,7 @@ router.post('/', requirePermission('users.create'), async (req, res, next) => {
 router.put('/:id', requirePermission('users.edit'), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { username, role, isActive } = req.body;
+    const { username, role, isActive, email } = req.body;
 
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) throw new AppError(404, 'User not found', 'NOT_FOUND');
@@ -127,6 +130,7 @@ router.put('/:id', requirePermission('users.edit'), async (req, res, next) => {
       where: { id },
       data: {
         username: username || existing.username,
+        email: email !== undefined ? email : existing.email,
         role: finalRole,
         isActive: finalActive
       }
@@ -137,6 +141,7 @@ router.put('/:id', requirePermission('users.edit'), async (req, res, next) => {
       data: {
         id: user.id,
         username: user.username,
+        email: user.email,
         role: user.role,
         isActive: user.isActive
       }

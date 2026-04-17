@@ -20,6 +20,7 @@ export interface OrderFilters {
   orderNumber?: string;
   sortBy?: string;
   order?: 'asc' | 'desc';
+  excludeIds?: string[];
 }
 
 export interface IOrderRepository {
