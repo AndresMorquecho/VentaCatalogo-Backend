@@ -160,10 +160,21 @@ export class GetCashClosurePreviewUseCase {
                 orderBy: { date: 'desc' }
             });
 
-            const priorMovements = await prisma.financialRecord.findMany({
+            // 🚀 OPTIMIZATION: Instead of fetching ALL prior movements, sum them in the DB
+            const priorAggregates = await prisma.financialRecord.groupBy({
+                by: ['bankAccountId', 'movementType', 'toAccountType', 'fromAccountType'],
                 where: { date: { lt: fromDate } },
-                include: { bankAccount: true, order: true }
+                _sum: { amount: true }
             });
+
+            // Map aggregates to a format compatible with legacy computation
+            const priorMovements = priorAggregates.map(agg => ({
+                bankAccountId: agg.bankAccountId,
+                movementType: agg.movementType,
+                toAccountType: agg.toAccountType,
+                fromAccountType: agg.fromAccountType,
+                amount: agg._sum.amount
+            }));
 
             // Fetch users mapping
             const allUserIds = [...new Set(movements.map(m => m.createdBy))];

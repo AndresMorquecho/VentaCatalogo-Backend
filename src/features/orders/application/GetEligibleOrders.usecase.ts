@@ -1,8 +1,9 @@
 import { Order } from '../domain/Order.entity';
 import { Result } from '../../../shared/domain/Result';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../../../lib/prisma';
 
-const prisma = new PrismaClient();
+
 
 export interface EligibleOrderFilters {
   clientId?: string;

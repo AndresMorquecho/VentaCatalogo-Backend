@@ -6,7 +6,7 @@
  */
 
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../../lib/prisma';
 import { authenticate } from '../../../middleware/auth';
 import { PortfolioRecoveryController } from './PortfolioRecoveryController';
 import { PrismaPortfolioRecoveryRepository } from './PrismaPortfolioRecoveryRepository';
@@ -16,8 +16,9 @@ import { CacheManager } from './CacheManager';
 const router = Router();
 
 // Initialize dependencies
-const prisma = new PrismaClient();
-const repository = new PrismaPortfolioRecoveryRepository(prisma);
+// Use singleton prisma
+const repoPrisma = prisma;
+const repository = new PrismaPortfolioRecoveryRepository(repoPrisma);
 
 // Initialize cache manager with 60 second TTL (configurable via env)
 const cacheTTL = process.env.PORTFOLIO_CACHE_TTL 

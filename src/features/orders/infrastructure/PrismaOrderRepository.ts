@@ -136,12 +136,16 @@ export class PrismaOrderRepository implements IOrderRepository {
       idFilter.notIn = filters.excludeIds;
     }
 
-    // 2. Filter for pending payments (raw query)
+    // 2. Filter for pending payments (optimized raw query using JOIN and HAVING)
     if (filters.hasPendingPayment !== undefined) {
       const rows = await prisma.$queryRaw<Array<{ id: string }>>`
         SELECT o.id
         FROM "orders" o
-        WHERE ${filters.hasPendingPayment ? Prisma.sql`COALESCE(o."real_invoice_total", o.total) > COALESCE((SELECT SUM(p.amount) FROM "order_payments" p WHERE p."order_id" = o.id), 0)` : Prisma.sql`COALESCE(o."real_invoice_total", o.total) <= COALESCE((SELECT SUM(p.amount) FROM "order_payments" p WHERE p."order_id" = o.id), 0)`}
+        LEFT JOIN "order_payments" p ON o.id = p."order_id"
+        GROUP BY o.id
+        HAVING ${filters.hasPendingPayment 
+          ? Prisma.sql`COALESCE(o."real_invoice_total", o.total) > COALESCE(SUM(p.amount), 0)` 
+          : Prisma.sql`COALESCE(o."real_invoice_total", o.total) <= COALESCE(SUM(p.amount), 0)`}
       `;
       const filteredIds = rows.map(r => r.id);
       if (filteredIds.length === 0) return { data: [], total: 0 };
@@ -166,62 +170,35 @@ export class PrismaOrderRepository implements IOrderRepository {
         orderBy,
         include: {
           items: true,
-          payments: {
-            include: {
-              financialRecords: {
-                select: {
-                  id: true,
-                  paymentMethod: true,
-                  amount: true,
-                  bankAccountId: true,
-                  notes: true,
-                  createdBy: true,
-                  referenceNumber: true,
-                  bankAccount: { select: { name: true } }
-                }
-              }
-            }
-          },
+          payments: true,
           financialRecords: {
             select: {
               id: true,
               paymentMethod: true,
               amount: true,
               bankAccountId: true,
-              notes: true,
-              createdBy: true,
-              referenceNumber: true,
               movementType: true,
               type: true,
               orderPaymentId: true,
+              notes: true,
+              createdBy: true,
+              referenceNumber: true,
+              createdAt: true,
               bankAccount: { select: { name: true } }
             }
           },
           brand: true,
-          client: { select: { identificationNumber: true } },
+          client: { select: { identificationNumber: true, firstName: true } },
           receipt: true,
           childOrders: {
-            include: {
-              items: true,
-              payments: {
-                include: {
-                  financialRecords: {
-                    select: {
-                      id: true,
-                      paymentMethod: true,
-                      amount: true,
-                      bankAccountId: true,
-                      notes: true,
-                      createdBy: true,
-                      referenceNumber: true,
-                      bankAccount: { select: { name: true } }
-                    }
-                  }
-                }
-              },
-              brand: true,
-              client: { select: { identificationNumber: true } },
-              receipt: true
+            select: {
+              id: true,
+              receiptNumber: true,
+              status: true,
+              total: true,
+              realInvoiceTotal: true,
+              orderNumber: true,
+              brand: { select: { name: true } }
             }
           },
           _count: {
@@ -256,6 +233,7 @@ export class PrismaOrderRepository implements IOrderRepository {
                 notes: true,
                 createdBy: true,
                 referenceNumber: true,
+                createdAt: true,
                 bankAccount: { select: { name: true } }
               }
             }
@@ -273,11 +251,12 @@ export class PrismaOrderRepository implements IOrderRepository {
             movementType: true,
             type: true,
             orderPaymentId: true,
+            createdAt: true,
             bankAccount: { select: { name: true } }
           }
         },
         brand: true,
-        client: { select: { identificationNumber: true } },
+        client: { select: { identificationNumber: true, firstName: true } },
         childOrders: {
           include: {
             items: true,
@@ -292,13 +271,14 @@ export class PrismaOrderRepository implements IOrderRepository {
                     notes: true,
                     createdBy: true,
                     referenceNumber: true,
+                    createdAt: true,
                     bankAccount: { select: { name: true } }
                   }
                 }
               }
             },
             brand: true,
-            client: { select: { identificationNumber: true } },
+            client: { select: { identificationNumber: true, firstName: true } },
             receipt: true
           }
         },
@@ -472,8 +452,9 @@ export class PrismaOrderRepository implements IOrderRepository {
         creditNoteTotal: raw.creditNoteTotal ? Number(raw.creditNoteTotal) : undefined,
         status: raw.status as OrderStatus,
         clientId: raw.clientId,
-        clientName: raw.clientName,
+        clientName: raw.clientName || raw.client?.firstName || 'Sin nombre',
         clientIdentification: raw.client?.identificationNumber || undefined,
+
         notes: raw.notes,
         createdByName: raw.createdByName || undefined,
         receivedByName: raw.receivedByName || undefined,
@@ -495,7 +476,7 @@ export class PrismaOrderRepository implements IOrderRepository {
         packingNumber: raw.packingNumber || undefined,
         packingTotal: raw.packingTotal !== null ? Number(raw.packingTotal) : undefined,
         deliveryNumber: raw.deliveryNumber || undefined,
-        items: raw.items.map((item: any) => ({
+        items: (raw.items || []).map((item: any) => ({
           id: item.id,
           productName: item.productName,
           quantity: item.quantity,
@@ -505,7 +486,7 @@ export class PrismaOrderRepository implements IOrderRepository {
           link: item.link
         })),
         payments: (() => {
-          const mappedPayments = raw.payments.map((payment: any) => {
+          const mappedPayments = (raw.payments || []).map((payment: any) => {
             // For SPLIT_PAYMENT: use FRs linked to this payment, or fall back to order-level FRs
             let financialRecords = payment.financialRecords
               ? payment.financialRecords.map((fr: any) => ({

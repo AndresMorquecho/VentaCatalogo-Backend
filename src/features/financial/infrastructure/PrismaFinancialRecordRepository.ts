@@ -126,23 +126,14 @@ export class PrismaFinancialRecordRepository implements IFinancialRecordReposito
   async save(record: FinancialRecord): Promise<FinancialRecord> {
     const data = this.toPersistence(record);
 
-    // Calculate running balance for this bank account
-    const sumResult = await prisma.financialRecord.aggregate({
+    // Calculate running balance for this bank account using the latest record instead of summarizing everything
+    const latestRecord = await prisma.financialRecord.findFirst({
       where: { bankAccountId: record.bankAccountId },
-      _sum: { amount: true }
+      orderBy: { date: 'desc' },
+      select: { balanceAfter: true }
     });
 
-    // Sum of all INCOME minus EXPENSE records for this account
-    const incomeSum = await prisma.financialRecord.aggregate({
-      where: { bankAccountId: record.bankAccountId, movementType: 'INCOME' },
-      _sum: { amount: true }
-    });
-    const expenseSum = await prisma.financialRecord.aggregate({
-      where: { bankAccountId: record.bankAccountId, movementType: { in: ['EXPENSE'] } },
-      _sum: { amount: true }
-    });
-
-    const balanceBefore = Number(incomeSum._sum.amount ?? 0) - Number(expenseSum._sum.amount ?? 0);
+    const balanceBefore = latestRecord?.balanceAfter != null ? Number(latestRecord.balanceAfter) : 0;
     const delta = record.movementType === 'INCOME' ? record.amount
       : record.movementType === 'EXPENSE' ? -record.amount
       : 0;

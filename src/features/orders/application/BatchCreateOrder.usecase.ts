@@ -106,6 +106,7 @@ export class BatchCreateOrderUseCase {
     const transactionGroupId = generateGroupId();
 
     const resultOrders = await prisma.$transaction(async (tx): Promise<any[]> => {
+
       // 0. Idempotency Check
       if (dto.idempotencyKey) {
         const existing = await tx.financialRecord.findFirst({
@@ -229,7 +230,21 @@ export class BatchCreateOrderUseCase {
       // Financial Logic
       const defaultBankId = (await tx.bankAccount.findFirst({ where: { type: 'CASH', isActive: true } }))?.id;
 
+      // PRE-FETCH Credits for the whole batch if WAlLET is involved
+      const needsWallet = allPayments.some(p => p.method === 'BILLETERA_VIRTUAL');
+      let availableCredits: any[] = [];
+      if (needsWallet && clientAccount) {
+        availableCredits = await tx.clientCredit.findMany({
+          where: { clientAccountId: clientAccount.id, status: 'AVAILABLE' },
+          orderBy: { createdAt: 'asc' }
+        });
+        // Convert to numbers once
+        availableCredits.forEach(c => c.remainingAmount = Number(c.remainingAmount));
+      }
+      const creditUpdates = new Map<string, { consumed: number, newStatus: string, usedAt?: Date }>();
+
       for (const payment of allPayments) {
+
         const order = allOrders.find(o => o.id === payment.orderId);
         const bName = orderBrandNames.get(payment.orderId) || (dto.orders.find(do_ => do_.brandId === order?.brandId)?.brandName) || '—';
         const orderSummary = { receiptNumber, orderNumber: order?.orderNumber, brandName: bName };
@@ -245,34 +260,29 @@ export class BatchCreateOrderUseCase {
           
           if (!defaultBankId) throw new Error('No se encontró cuenta de caja activa para registrar el movimiento de billetera');
 
-          // 2. Consume Individual Credits (FIFO)
-          const availableCredits = await tx.clientCredit.findMany({
-            where: { clientAccountId: clientAccount.id, status: 'AVAILABLE' },
-            orderBy: { createdAt: 'asc' }
-          });
-
           let remainingToSubtract = payment.amount;
           for (const credit of availableCredits) {
             if (remainingToSubtract <= 0) break;
-            const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
-            
-            const newRemainingAmount = Number(credit.remainingAmount) - amountToSubtract;
-            const newStatus = newRemainingAmount <= 0.01 ? 'USED' : 'AVAILABLE';
+            if (credit.remainingAmount <= 0) continue;
 
-            await tx.clientCredit.update({
-              where: { id: credit.id },
-              data: {
-                remainingAmount: { decrement: amountToSubtract },
-                status: newStatus,
-                usedAt: newStatus === 'USED' ? new Date() : undefined
-              }
-            });
+            const amountToSubtract = Math.min(credit.remainingAmount, remainingToSubtract);
+            credit.remainingAmount -= amountToSubtract;
             remainingToSubtract -= amountToSubtract;
+
+            const newStatus = credit.remainingAmount <= 0.01 ? 'USED' : 'AVAILABLE';
+            
+            // Track for final update
+            const existingUpdate = creditUpdates.get(credit.id) || { consumed: 0, newStatus: 'AVAILABLE' };
+            existingUpdate.consumed += amountToSubtract;
+            existingUpdate.newStatus = newStatus;
+            if (newStatus === 'USED') existingUpdate.usedAt = new Date();
+            creditUpdates.set(credit.id, existingUpdate);
           }
 
           if (remainingToSubtract > 0.01) {
             throw new Error(`Saldo a favor insuficiente para cubrir $${payment.amount.toFixed(2)} (error de concurrencia en créditos)`);
           }
+
 
           const balBefore = currentWalletRunningBalance;
           const balAfter = balBefore - payment.amount;
@@ -363,6 +373,19 @@ export class BatchCreateOrderUseCase {
         }
       }
 
+      // 5. Finalize Credit Updates
+      for (const [creditId, update] of creditUpdates) {
+        await tx.clientCredit.update({
+          where: { id: creditId },
+          data: {
+            remainingAmount: { decrement: update.consumed },
+            status: update.newStatus,
+            usedAt: update.usedAt
+          }
+        });
+      }
+
+
       await tx.order.createMany({ data: allOrders });
       if (allPayments.length > 0) await tx.orderPayment.createMany({ data: allPayments });
       if (allFinancialRecords.length > 0) await tx.financialRecord.createMany({ data: allFinancialRecords });
@@ -373,7 +396,11 @@ export class BatchCreateOrderUseCase {
         brandName: orderBrandNames.get(o.id) || '—',
         payments: allPayments.filter(p => p.orderId === o.id)
       }));
+    }, {
+      timeout: 20000,   // 20 seconds
+      maxWait: 10000    // 10 seconds wait for connection
     });
+
 
     return Result.ok(resultOrders.map((o: any) => Order.create(o, o.id)));
   }

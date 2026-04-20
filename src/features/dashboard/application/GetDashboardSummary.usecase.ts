@@ -14,107 +14,100 @@ export class GetDashboardSummaryUseCase {
             fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
             const thirtyDaysAgo = new Date(today);
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            const sevenDaysAgo = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
+            sevenDaysAgo.setHours(0, 0, 0, 0);
 
-            // ── ALL AGGREGATES IN PARALLEL ────────────────────────────────────────
-            const [
-                dailyIncomeAgg,
-                monthlyIncomeAgg,
-                currentCashAgg,
-                ordersByStatusRaw,
-                totalActiveClients,
-                ordersReceivedToday,
-                ordersDeliveredToday,
-                pendingOrders,
-                oldestOrdersRaw,
-                ordersOver15Days,
-                ordersOver30Days,
-                salesTrend7days
-            ] = await Promise.all([
-                // Daily income
-                prisma.financialRecord.aggregate({
-                    where: { movementType: 'INCOME', date: { gte: today, lt: tomorrow } },
-                    _sum: { amount: true }
-                }),
-                // Monthly income
-                prisma.financialRecord.aggregate({
-                    where: { movementType: 'INCOME', date: { gte: startOfMonth } },
-                    _sum: { amount: true }
-                }),
-                // Current cash (sum of all active bank accounts)
-                prisma.bankAccount.aggregate({
-                    where: { isActive: true },
-                    _sum: { currentBalance: true }
-                }),
-                // Orders by status
-                prisma.order.groupBy({
-                    by: ['status'],
-                    _count: true
-                }),
-                // Active clients count
-                prisma.client.count({ where: { isActive: true } }),
-                // Orders received today
-                prisma.order.count({
-                    where: { status: { notIn: ['CANCELADO'] }, receptionDate: { gte: today, lt: tomorrow } }
-                }),
-                // Orders delivered today
-                prisma.order.count({
-                    where: { status: 'ENTREGADO', deliveryDate: { gte: today, lt: tomorrow } }
-                }),
-                // Pending orders for portfolio calculation
-                prisma.order.findMany({
-                    where: { status: { notIn: ['ENTREGADO', 'CANCELADO'] } },
-                    select: {
-                        total: true,
-                        realInvoiceTotal: true,
-                        payments: { select: { amount: true } }
-                    }
-                }),
-                // Oldest orders in warehouse
-                prisma.order.findMany({
-                    where: { status: 'RECIBIDO_EN_BODEGA', receptionDate: { lte: fifteenDaysAgo } },
-                    orderBy: { receptionDate: 'asc' },
-                    take: 5,
-                    select: {
-                        receiptNumber: true,
-                        clientName: true,
-                        receptionDate: true,
-                        total: true,
-                        realInvoiceTotal: true
-                    }
-                }),
-                // Orders over 15 days in warehouse
-                prisma.order.count({
-                    where: { status: 'RECIBIDO_EN_BODEGA', receptionDate: { lte: fifteenDaysAgo } }
-                }),
-                // Orders over 30 days in warehouse
-                prisma.order.count({
-                    where: { status: 'RECIBIDO_EN_BODEGA', receptionDate: { lte: thirtyDaysAgo } }
-                }),
-                // Financial records for last 7 days chart
-                prisma.financialRecord.findMany({
-                    where: { movementType: 'INCOME', date: { gte: new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000) } },
-                    select: { date: true, amount: true }
-                })
+            // ── TOTAL OPTIMIZATION: RAW SQL FOR EVERYTHING ──
+            // Using a single large query to minimize database roundtrips and connection duration
+            const [statsRaw, trendRaw, ordersTrendRaw] = await Promise.all([
+                // 1. Basic Stats
+                prisma.$queryRaw<any[]>`
+                    SELECT 
+                        (SELECT COALESCE(SUM(amount), 0) FROM financial_records WHERE movement_type = 'INCOME' AND date >= ${today} AND date < ${tomorrow}) as daily_income,
+                        (SELECT COALESCE(SUM(amount), 0) FROM financial_records WHERE movement_type = 'INCOME' AND date >= ${startOfMonth}) as monthly_income,
+                        (SELECT COALESCE(SUM(current_balance), 0) FROM bank_accounts WHERE is_active = true) as current_cash,
+                        (SELECT count(id) FROM clients WHERE is_active = true) as active_clients,
+                        (SELECT count(id) FROM orders WHERE status != 'CANCELADO' AND (reception_date >= ${today} AND reception_date < ${tomorrow})) as orders_received_today,
+                        (SELECT count(id) FROM orders WHERE status = 'ENTREGADO' AND (delivery_date >= ${today} AND delivery_date < ${tomorrow})) as orders_delivered_today,
+                        (SELECT count(id) FROM orders WHERE status = 'RECIBIDO_EN_BODEGA' AND reception_date <= ${fifteenDaysAgo}) as orders_over_15d,
+                        (SELECT count(id) FROM orders WHERE status = 'RECIBIDO_EN_BODEGA' AND reception_date <= ${thirtyDaysAgo}) as orders_over_30d,
+                        (SELECT count(id) FROM orders WHERE status = 'POR_RECIBIR') as status_por_recibir,
+                        (SELECT count(id) FROM orders WHERE status = 'RECIBIDO_EN_BODEGA') as status_en_bodega,
+                        (SELECT count(id) FROM orders WHERE status = 'ENTREGADO') as status_entregado,
+                        (SELECT count(id) FROM orders WHERE status = 'CANCELADO') as status_cancelado,
+                        (SELECT SUM(pending) FROM (
+                            SELECT GREATEST(0, COALESCE(o.real_invoice_total, o.total) - COALESCE(p.paid, 0)) as pending
+                            FROM orders o
+                            LEFT JOIN (
+                                SELECT order_id, SUM(amount) as paid 
+                                FROM order_payments 
+                                GROUP BY order_id
+                            ) p ON o.id = p.order_id
+                            WHERE o.status NOT IN ('ENTREGADO', 'CANCELADO')
+                        ) as portfolio) as total_portfolio
+                `,
+                // 2. Sales Trend (Income sum per day)
+                prisma.$queryRaw<any[]>`
+                    SELECT DATE(date) as day, SUM(amount) as amount
+                    FROM financial_records 
+                    WHERE movement_type = 'INCOME' AND date >= ${sevenDaysAgo}
+                    GROUP BY DATE(date)
+                    ORDER BY day ASC
+                `,
+                // 3. Orders Trend (Count per day)
+                prisma.$queryRaw<any[]>`
+                    SELECT 
+                        days.day,
+                        COALESCE(c.created, 0) as created,
+                        COALESCE(d.delivered, 0) as delivered
+                    FROM (
+                        SELECT generate_series(${sevenDaysAgo}::date, ${today}::date, '1 day'::interval)::date as day
+                    ) days
+                    LEFT JOIN (
+                        SELECT DATE(created_at) as day, COUNT(*) as created FROM orders GROUP BY DATE(created_at)
+                    ) c ON days.day = c.day
+                    LEFT JOIN (
+                        SELECT DATE(delivery_date) as day, COUNT(*) as delivered FROM orders WHERE status = 'ENTREGADO' GROUP BY DATE(delivery_date)
+                    ) d ON days.day = d.day
+                    ORDER BY days.day ASC
+                `
             ]);
 
-            // ── STATUS MAP ──────────────────────────────────────────────────────
-            const statusCounts = ordersByStatusRaw.reduce((acc, item) => {
-                acc[item.status] = item._count;
-                return acc;
-            }, {} as Record<string, number>);
+            const stats = statsRaw[0] || {};
 
-            // ── PORTFOLIO PENDING ───────────────────────────────────────────────
-            const totalPortfolioPending = pendingOrders.reduce((sum, order) => {
-                const total = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
-                const paid = order.payments.reduce((pSum, p) => pSum + Number(p.amount), 0);
-                return sum + Math.max(0, total - paid);
-            }, 0);
+            // ── COMPLEMENTARY QUERY: Oldest Orders (keep Prisma for easy pagination/mapping) ─
+            const oldestOrdersRaw = await prisma.order.findMany({
+                where: { status: 'RECIBIDO_EN_BODEGA', receptionDate: { lte: fifteenDaysAgo } },
+                orderBy: { receptionDate: 'asc' },
+                take: 5,
+                select: {
+                    id: true,
+                    receiptNumber: true,
+                    clientName: true,
+                    receptionDate: true,
+                    total: true,
+                    realInvoiceTotal: true
+                }
+            });
 
-            // ── OLDEST ORDERS ───────────────────────────────────────────────────
+            // ── TRANSFORM TREND DATA ──────────────────────────────────────────
+            const salesTrend = trendRaw.map(t => ({
+                date: `${new Date(t.day).getDate().toString().padStart(2, '0')}/${(new Date(t.day).getMonth() + 1).toString().padStart(2, '0')}`,
+                amount: Number(t.amount)
+            }));
+
+            const ordersTrendDaily = ordersTrendRaw.map(t => ({
+                period: `${new Date(t.day).getDate().toString().padStart(2, '0')}/${(new Date(t.day).getMonth() + 1).toString().padStart(2, '0')}`,
+                created: Number(t.created),
+                delivered: Number(t.delivered)
+            }));
+
+            // ── OLDEST ORDERS MAPPING ───────────────────────────────────────────
             const oldestOrders = oldestOrdersRaw.map(o => {
                 const days = Math.floor((today.getTime() - new Date(o.receptionDate!).getTime()) / (1000 * 60 * 60 * 24));
                 return {
-                    id: o.receiptNumber,
+                    id: o.id,
+                    receiptNumber: o.receiptNumber,
                     clientName: o.clientName,
                     days,
                     value: o.realInvoiceTotal ? Number(o.realInvoiceTotal) : Number(o.total)
@@ -123,81 +116,35 @@ export class GetDashboardSummaryUseCase {
 
             const totalRetainedValue = oldestOrders.reduce((sum, o) => sum + o.value, 0);
 
-            // ── SALES TREND (last 7 days) ───────────────────────────────────────
-            const salesTrendMap: Record<string, number> = {};
-            for (let i = 6; i >= 0; i--) {
-                const d = new Date(today);
-                d.setDate(d.getDate() - i);
-                const key = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                salesTrendMap[key] = 0;
-            }
-            salesTrend7days.forEach(fr => {
-                const d = new Date(fr.date);
-                const key = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                if (salesTrendMap[key] !== undefined) {
-                    salesTrendMap[key] += Number(fr.amount);
-                }
-            });
-            const salesTrend = Object.entries(salesTrendMap).map(([date, amount]) => ({ date, amount }));
-
-            // ── ORDERS TREND (last 7 days) — TASK-5.1: 2 batch queries instead of 14 sequential ──
-            const sevenDaysAgo = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
-            sevenDaysAgo.setHours(0, 0, 0, 0);
-
-            const [createdByDay, deliveredByDay] = await Promise.all([
-                prisma.order.findMany({
-                    where: { createdAt: { gte: sevenDaysAgo } },
-                    select: { createdAt: true }
-                }),
-                prisma.order.findMany({
-                    where: { deliveryDate: { gte: sevenDaysAgo }, status: 'ENTREGADO' },
-                    select: { deliveryDate: true }
-                })
-            ]);
-
-            // Build 7-day trend map
-            const ordersTrendDaily = [];
-            for (let i = 6; i >= 0; i--) {
-                const d = new Date(today);
-                d.setDate(d.getDate() - i);
-                d.setHours(0, 0, 0, 0);
-                const dNext = new Date(d);
-                dNext.setDate(dNext.getDate() + 1);
-                const period = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                const created = createdByDay.filter(o => new Date(o.createdAt) >= d && new Date(o.createdAt) < dNext).length;
-                const delivered = deliveredByDay.filter(o => o.deliveryDate && new Date(o.deliveryDate) >= d && new Date(o.deliveryDate) < dNext).length;
-                ordersTrendDaily.push({ period, created, delivered });
-            }
-
             // ── ORDER STATUS for pie chart ─────────────────────────────────────
             const orderStatus = [
-                { status: 'Por Recibir', count: statusCounts['POR_RECIBIR'] || 0, color: '#F59E0B' },
-                { status: 'En Bodega', count: statusCounts['RECIBIDO_EN_BODEGA'] || 0, color: '#3B82F6' },
-                { status: 'Entregado', count: statusCounts['ENTREGADO'] || 0, color: '#10B981' },
-                { status: 'Cancelado', count: statusCounts['CANCELADO'] || 0, color: '#EF4444' }
+                { status: 'Por Recibir', count: Number(stats.status_por_recibir || 0), color: '#F59E0B' },
+                { status: 'En Bodega', count: Number(stats.status_en_bodega || 0), color: '#3B82F6' },
+                { status: 'Entregado', count: Number(stats.status_entregado || 0), color: '#10B981' },
+                { status: 'Cancelado', count: Number(stats.status_cancelado || 0), color: '#EF4444' }
             ];
 
             return Result.ok({
                 financial: {
-                    dailyIncome: Number(dailyIncomeAgg._sum.amount || 0),
-                    monthlyIncome: Number(monthlyIncomeAgg._sum.amount || 0),
-                    dailyAbonos: Number(dailyIncomeAgg._sum.amount || 0), // Same as daily income for now
-                    totalPortfolioPending,
+                    dailyIncome: Number(stats.daily_income || 0),
+                    monthlyIncome: Number(stats.monthly_income || 0),
+                    dailyAbonos: Number(stats.daily_income || 0),
+                    totalPortfolioPending: Number(stats.total_portfolio || 0),
                     overduePortfolioPercentage: 0,
-                    currentCash: Number(currentCashAgg._sum.currentBalance || 0)
+                    currentCash: Number(stats.current_cash || 0)
                 },
                 operational: {
-                    ordersReceivedToday,
-                    ordersPending: statusCounts['POR_RECIBIR'] || 0,
-                    ordersInWarehouse: statusCounts['RECIBIDO_EN_BODEGA'] || 0,
-                    ordersDeliveredToday,
-                    totalOrdersDelivered: statusCounts['ENTREGADO'] || 0,
-                    totalActiveClients,
+                    ordersReceivedToday: Number(stats.orders_received_today || 0),
+                    ordersPending: Number(stats.status_por_recibir || 0),
+                    ordersInWarehouse: Number(stats.status_en_bodega || 0),
+                    ordersDeliveredToday: Number(stats.orders_delivered_today || 0),
+                    totalOrdersDelivered: Number(stats.status_entregado || 0),
+                    totalActiveClients: Number(stats.active_clients || 0),
                     ordersByStatus: {
-                        porRecibir: statusCounts['POR_RECIBIR'] || 0,
-                        recepcionado: statusCounts['RECIBIDO_EN_BODEGA'] || 0,
-                        entregado: statusCounts['ENTREGADO'] || 0,
-                        cancelado: statusCounts['CANCELADO'] || 0
+                        porRecibir: Number(stats.status_por_recibir || 0),
+                        recepcionado: Number(stats.status_en_bodega || 0),
+                        entregado: Number(stats.status_entregado || 0),
+                        cancelado: Number(stats.status_cancelado || 0)
                     },
                     averageWarehouseTimeDays: 0
                 },
@@ -212,8 +159,8 @@ export class GetDashboardSummaryUseCase {
                     redemptionsMade: 0
                 },
                 alerts: {
-                    ordersOver15Days,
-                    ordersOver30Days,
+                    ordersOver15Days: Number(stats.orders_over_15d || 0),
+                    ordersOver30Days: Number(stats.orders_over_30d || 0),
                     totalRetainedValue,
                     oldestOrders
                 },
@@ -223,8 +170,8 @@ export class GetDashboardSummaryUseCase {
                     warehouseTimeTrend: [{ month: 'Actual', days: 0 }],
                     comparison: {
                         category: 'Finanzas',
-                        value1: Number(monthlyIncomeAgg._sum.amount || 0),
-                        value2: totalPortfolioPending
+                        value1: Number(stats.monthly_income || 0),
+                        value2: Number(stats.total_portfolio || 0)
                     },
                     ordersTrend: {
                         daily: ordersTrendDaily,
@@ -235,8 +182,9 @@ export class GetDashboardSummaryUseCase {
             });
 
         } catch (error) {
-            console.error('GetDashboardSummaryUseCase ERROR:', error);
-            return Result.fail('Error al generar resumen de dashboard');
+            console.error('GetDashboardSummaryUseCase ERROR DETAILS:', error);
+            const msg = error instanceof Error ? error.message : 'Error desconocido';
+            return Result.fail(`Error al generar resumen de dashboard: ${msg}`);
         }
     }
 }

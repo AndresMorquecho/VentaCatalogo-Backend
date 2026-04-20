@@ -229,6 +229,10 @@ model Order {
   @@index([transactionDate])
   @@index([receiptNumber])
   @@index([receiptId])
+  @@index([receptionBatchId])
+  @@index([deliveryBatchId])
+  @@index([parentOrderId])
+  @@index([type])
   @@map("orders")
 }
 
@@ -247,6 +251,7 @@ model OrderItem {
   order                Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
+  @@index([brandId])
   @@map("order_items")
 }
 
