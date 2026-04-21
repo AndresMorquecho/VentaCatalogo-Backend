@@ -15,6 +15,7 @@ router.get('/', authenticate, requirePermission(['clients.view', 'orders.create'
     const excludeCalledToday = req.query.excludeCalledToday === 'true';
     const callReason = req.query.callReason as string;
     const withPendingPayments = req.query.withPendingPayments === 'true';
+    const outdated = req.query.outdated === 'true';
     
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit as string) || 200));
@@ -101,6 +102,13 @@ router.get('/', authenticate, requirePermission(['clients.view', 'orders.create'
         // No clients with debt, return empty
         return res.json({ success: true, data: [], pagination: { page, limit, total: 0, pages: 0 } });
       }
+    }
+
+    // Filter outdated clients (> 90 days)
+    if (outdated) {
+      const ninetyDaysAgo = new Date();
+      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+      where.lastDataUpdate = { lt: ninetyDaysAgo };
     }
 
     if (city) {
