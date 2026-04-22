@@ -13,7 +13,7 @@ export class GetInventoryMovementsUseCase {
         search?: string;
         page?: number; 
         limit?: number 
-    }): Promise<Result<{ data: any[]; total: number }>> {
+    }): Promise<Result<{ data: any[]; total: number; stats: any }>> {
         try {
             const page = filters.page;
             const limit = filters.limit;
@@ -73,8 +73,15 @@ export class GetInventoryMovementsUseCase {
                 ];
             }
 
-            // 📊 Fetch paginated orders
-            const [orders, totalCount] = await Promise.all([
+            // 📊 Fetch paginated orders and global stats
+            const fifteenDaysAgo = new Date();
+            fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+
+            const [orders, totalCount, stats] = await Promise.all([
                 prisma.order.findMany({
                     where: orderWhere,
                     include: {
@@ -90,8 +97,46 @@ export class GetInventoryMovementsUseCase {
                     skip,
                     take
                 }),
-                prisma.order.count({ where: orderWhere })
+                prisma.order.count({ where: orderWhere }),
+                prisma.order.groupBy({
+                    by: ['status'],
+                    where: orderWhere,
+                    _count: { id: true }
+                }).then(groups => {
+                    const counts = {
+                        pending: 0,
+                        inWarehouse: 0,
+                        deliveredToday: 0,
+                        longStorage: 0
+                    };
+                    groups.forEach(g => {
+                        if (g.status === 'POR_RECIBIR') counts.pending = g._count.id;
+                        if (g.status === 'RECIBIDO_EN_BODEGA') counts.inWarehouse = g._count.id;
+                    });
+                    return counts;
+                })
             ]);
+
+            // Additional stats that are harder to get with groupBy
+            const [deliveredToday, longStorage] = await Promise.all([
+                prisma.order.count({
+                    where: {
+                        ...orderWhere,
+                        status: 'ENTREGADO',
+                        deliveryDate: { gte: today, lt: tomorrow }
+                    }
+                }),
+                prisma.order.count({
+                    where: {
+                        ...orderWhere,
+                        status: 'RECIBIDO_EN_BODEGA',
+                        receptionDate: { lte: fifteenDaysAgo }
+                    }
+                })
+            ]);
+
+            stats.deliveredToday = deliveredToday;
+            stats.longStorage = longStorage;
 
             const finalMovements: any[] = [];
             
@@ -134,7 +179,11 @@ export class GetInventoryMovementsUseCase {
                 }
             }
 
-            return Result.ok({ data: finalMovements, total: totalCount });
+            return Result.ok({ 
+                data: finalMovements, 
+                total: totalCount,
+                stats
+            });
         } catch (error) {
             console.error('GetInventoryMovementsUseCase Error:', error);
             return Result.fail('Error al obtener movimientos de inventario');

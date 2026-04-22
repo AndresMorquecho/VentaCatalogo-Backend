@@ -28,12 +28,13 @@ export class InventoryController {
             return HttpResponse.fail(res, result.error!);
         }
 
-        const { data, total } = result.getValue();
+        const { data, total, stats } = result.getValue();
 
         if (page && limit) {
             return res.json({
                 success: true,
                 data,
+                stats,
                 pagination: {
                     page,
                     limit,

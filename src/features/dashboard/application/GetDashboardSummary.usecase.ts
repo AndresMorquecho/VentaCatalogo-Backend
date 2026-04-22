@@ -43,7 +43,7 @@ export class GetDashboardSummaryUseCase {
                                 FROM order_payments 
                                 GROUP BY order_id
                             ) p ON o.id = p.order_id
-                            WHERE o.status NOT IN ('ENTREGADO', 'CANCELADO')
+                            WHERE o.status != 'CANCELADO'
                         ) as portfolio) as total_portfolio
                 `,
                 // 2. Sales Trend (Income sum per day)

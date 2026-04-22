@@ -8,47 +8,47 @@ datasource db {
 }
 
 model Client {
-  id                   String              @id @default(uuid())
-  identificationType   String              @map("identification_type")
-  identificationNumber String              @unique @map("identification_number")
-  firstName            String              @map("first_name")
-  country              String
-  province             String
-  city                 String
-  address              String
-  neighborhood         String?
-  sector               String?
-  email                String
-  phone1               String              @map("phone1")
-  operator1            String              @map("operator1")
-  phone2               String?             @map("phone2")
-  operator2            String?             @map("operator2")
-  reference            String?
-  isActive             Boolean             @default(true) @map("is_active")
-  createdAt            DateTime            @default(now()) @map("created_at")
-  updatedAt            DateTime            @updatedAt @map("updated_at")
+  id                         String              @id @default(uuid())
+  identificationType         String              @map("identification_type")
+  identificationNumber       String              @unique @map("identification_number")
+  firstName                  String              @map("first_name")
+  country                    String
+  province                   String
+  city                       String
+  address                    String
+  neighborhood               String?
+  sector                     String?
+  email                      String
+  phone1                     String              @map("phone1")
+  operator1                  String              @map("operator1")
+  phone2                     String?             @map("phone2")
+  operator2                  String?             @map("operator2")
+  reference                  String?
+  isActive                   Boolean             @default(true) @map("is_active")
+  createdAt                  DateTime            @default(now()) @map("created_at")
+  updatedAt                  DateTime            @updatedAt @map("updated_at")
   birthDate                  DateTime?           @map("birth_date")
   identificationIssuanceDate DateTime?           @map("identification_issuance_date")
   isBlocked                  Boolean             @default(false) @map("is_blocked")
-  isWhatsApp           Boolean             @default(false) @map("is_whatsapp")
-  lastDataUpdate       DateTime            @default(now()) @map("last_data_update")
-  referredById         String?             @map("referred_by_id")
-  lastOrderDate        DateTime?           @map("last_order_date")
-  lastBrandName        String?             @map("last_brand_name")
-  createdByName        String?             @map("created_by_name")
-  blockedReason        String?             @map("blocked_reason")
-  calls                Call[]
-  catalogDeliveries    CatalogDelivery[]
-  clientAccount        ClientAccount?
-  referredBy           Client?             @relation("ClientReferral", fields: [referredById], references: [id])
-  referrals            Client[]            @relation("ClientReferral")
-  financialRecords     FinancialRecord[]
-  inventoryMovements   InventoryMovement[]
-  rewardRedemptions    LoyaltyRedemption[]
-  exchanges            OrderExchange[]
-  orderReceipts        OrderReceipt[]
-  orders               Order[]
-  walletRecharges      WalletRecharge[]
+  isWhatsApp                 Boolean             @default(false) @map("is_whatsapp")
+  lastDataUpdate             DateTime            @default(now()) @map("last_data_update")
+  referredById               String?             @map("referred_by_id")
+  lastOrderDate              DateTime?           @map("last_order_date")
+  lastBrandName              String?             @map("last_brand_name")
+  createdByName              String?             @map("created_by_name")
+  blockedReason              String?             @map("blocked_reason")
+  calls                      Call[]
+  catalogDeliveries          CatalogDelivery[]
+  clientAccount              ClientAccount?
+  referredBy                 Client?             @relation("ClientReferral", fields: [referredById], references: [id])
+  referrals                  Client[]            @relation("ClientReferral")
+  financialRecords           FinancialRecord[]
+  inventoryMovements         InventoryMovement[]
+  rewardRedemptions          LoyaltyRedemption[]
+  exchanges                  OrderExchange[]
+  orderReceipts              OrderReceipt[]
+  orders                     Order[]
+  walletRecharges            WalletRecharge[]
 
   @@index([firstName])
   @@index([email])
@@ -98,24 +98,24 @@ model BankAccount {
 }
 
 model OrderReceipt {
-  id                   String       @id @default(uuid())
-  receiptNumber        String       @unique @map("receipt_number")
-  clientId             String       @map("client_id")
-  clientName           String       @map("client_name")
-  salesChannel         String       @map("sales_channel")
-  createdAt            DateTime     @default(now()) @map("created_at")
-  transactionDate      DateTime     @map("transaction_date")
-  paymentMethod        String       @map("payment_method")
-  bankAccountId        String?      @map("bank_account_id")
-  transactionReference String?      @map("transaction_reference")
-  notes                String?
-  createdByName        String?      @map("created_by_name")
+  id                     String       @id @default(uuid())
+  receiptNumber          String       @unique @map("receipt_number")
+  clientId               String       @map("client_id")
+  clientName             String       @map("client_name")
+  salesChannel           String       @map("sales_channel")
+  createdAt              DateTime     @default(now()) @map("created_at")
+  transactionDate        DateTime     @map("transaction_date")
+  paymentMethod          String       @map("payment_method")
+  bankAccountId          String?      @map("bank_account_id")
+  transactionReference   String?      @map("transaction_reference")
+  notes                  String?
+  createdByName          String?      @map("created_by_name")
   /// N° secuencial interno de registro de envío (ej. ENV-2026-0001), solo recibos CAM-*
-  shippingRegistryNumber String?    @map("shipping_registry_number")
-  version              Int          @default(1)
-  bankAccount          BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
-  client               Client       @relation(fields: [clientId], references: [id])
-  orders               Order[]
+  shippingRegistryNumber String?      @map("shipping_registry_number")
+  version                Int          @default(1)
+  bankAccount            BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  client                 Client       @relation(fields: [clientId], references: [id])
+  orders                 Order[]
 
   @@index([clientId])
   @@index([transactionDate])
@@ -138,90 +138,90 @@ model ReceptionBatch {
 }
 
 model DeliveryBatch {
-  id              String   @id @default(uuid())
-  deliveryNumber  String   @unique @map("delivery_number")
-  deliveryDate    DateTime @default(now()) @map("delivery_date")
-  deliveredByName String   @map("delivered_by_name")
-  notes           String?
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-  orders          Order[]
-  payments        OrderPayment[]
+  id               String            @id @default(uuid())
+  deliveryNumber   String            @unique @map("delivery_number")
+  deliveryDate     DateTime          @default(now()) @map("delivery_date")
+  deliveredByName  String            @map("delivered_by_name")
+  notes            String?
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
   financialRecords FinancialRecord[]
+  payments         OrderPayment[]
+  orders           Order[]
 
   @@index([deliveryNumber])
   @@map("delivery_batches")
 }
 
 model Order {
-  id                   String              @id @default(uuid())
-  receiptNumber        String              @map("receipt_number")
-  salesChannel         String              @map("sales_channel")
-  type                 String
-  brandId              String              @map("brand_id")
-  total                Decimal             @db.Decimal(10, 2)
-  realInvoiceTotal     Decimal?            @map("real_invoice_total") @db.Decimal(10, 2)
-  paymentMethod        String              @map("payment_method")
-  bankAccountId        String?             @map("bank_account_id")
-  transactionDate      DateTime            @map("transaction_date")
-  possibleDeliveryDate DateTime            @map("possible_delivery_date")
-  receptionDate        DateTime?           @map("reception_date")
-  deliveryDate         DateTime?           @map("delivery_date")
-  invoiceNumber        String?             @map("invoice_number")
-  status               String              @default("POR_RECIBIR")
-  clientId             String              @map("client_id")
-  clientName           String              @map("client_name")
-  notes                String?
-  createdAt            DateTime            @default(now()) @map("created_at")
-  updatedAt            DateTime            @updatedAt @map("updated_at")
-  version              Int                 @default(1)
-  createdByName        String?             @map("created_by_name")
-  deliveredByName      String?             @map("delivered_by_name")
-  receivedByName       String?             @map("received_by_name")
-  changeStatus         String?             @map("change_status")
-  parentOrderId        String?             @map("parent_order_id")
-  trackingGuide        String?             @map("tracking_guide")
+  id                       String              @id @default(uuid())
+  receiptNumber            String              @map("receipt_number")
+  salesChannel             String              @map("sales_channel")
+  type                     String
+  brandId                  String              @map("brand_id")
+  total                    Decimal             @db.Decimal(10, 2)
+  realInvoiceTotal         Decimal?            @map("real_invoice_total") @db.Decimal(10, 2)
+  paymentMethod            String              @map("payment_method")
+  bankAccountId            String?             @map("bank_account_id")
+  transactionDate          DateTime            @map("transaction_date")
+  possibleDeliveryDate     DateTime            @map("possible_delivery_date")
+  receptionDate            DateTime?           @map("reception_date")
+  deliveryDate             DateTime?           @map("delivery_date")
+  invoiceNumber            String?             @map("invoice_number")
+  status                   String              @default("POR_RECIBIR")
+  clientId                 String              @map("client_id")
+  clientName               String              @map("client_name")
+  notes                    String?
+  createdAt                DateTime            @default(now()) @map("created_at")
+  updatedAt                DateTime            @updatedAt @map("updated_at")
+  version                  Int                 @default(1)
+  createdByName            String?             @map("created_by_name")
+  deliveredByName          String?             @map("delivered_by_name")
+  receivedByName           String?             @map("received_by_name")
+  changeStatus             String?             @map("change_status")
+  parentOrderId            String?             @map("parent_order_id")
+  trackingGuide            String?             @map("tracking_guide")
   /// Secuencial interno del PDF guía de envío de cambios (ej. Guia-2026-001)
-  exchangeShippingGuideSeq String?         @map("exchange_shipping_guide_seq")
-  orderNumber          String?             @map("order_number")
-  receiptId            String?             @map("receipt_id")
-  documentType         String?             @default("FACTURA") @map("document_type")
-  packingNumber        String?             @map("packing_number")
-  packingTotal         Decimal?            @map("packing_total") @db.Decimal(10, 2)
-  receptionBatchId     String?             @map("reception_batch_id")
-  deliveryBatchId      String?             @map("delivery_batch_id")
-  deliveryNumber       String?             @map("delivery_number")
-  loyaltyRedemptionId  String?             @map("loyalty_redemption_id")
-  exchangeItemId       String?             @unique @map("exchange_item_id")
-  creditNoteNumber     String?             @map("credit_note_number")
-  creditNoteTotal      Decimal?            @map("credit_note_total") @db.Decimal(10, 2)
-  sourceOrderId        String?             @unique @map("source_order_id")
-  sourceOrderNumber    String?             @map("source_order_number")
-  sourceBrandName      String?             @map("source_brand_name")
-  sourceQuantity       Int?                @map("source_quantity")
-  sourceDescription    String?             @map("source_description")
-  description          String?             @map("description")
-  calls                Call[]
-  catalogDelivery      CatalogDelivery?    @relation("CatalogOrder")
-  exchangeBatchItems   ExchangeBatchItem[]
-  financialRecords     FinancialRecord[]
-  inventoryMovements   InventoryMovement[]
-  exchangeItems        OrderExchangeItem[] @relation("OriginalOrderExchanges")
-  items                OrderItem[]
-  payments             OrderPayment[]
-  bankAccount          BankAccount?        @relation(fields: [bankAccountId], references: [id])
-  brand                Brand               @relation(fields: [brandId], references: [id])
-  client               Client              @relation(fields: [clientId], references: [id])
-  exchangeItem         OrderExchangeItem?  @relation("NewOrderExchange", fields: [exchangeItemId], references: [id])
-  loyaltyRedemption    LoyaltyRedemption?  @relation(fields: [loyaltyRedemptionId], references: [id])
-  parentOrder          Order?              @relation("OrderHeirs", fields: [parentOrderId], references: [id])
-  childOrders          Order[]             @relation("OrderHeirs")
-  receipt              OrderReceipt?       @relation(fields: [receiptId], references: [id])
-  receptionBatch       ReceptionBatch?     @relation(fields: [receptionBatchId], references: [id])
-  deliveryBatch        DeliveryBatch?      @relation(fields: [deliveryBatchId], references: [id])
-  sourceOrder          Order?              @relation("ExchangeSource", fields: [sourceOrderId], references: [id])
-  exchangesOriginated  Order[]             @relation("ExchangeSource")
-  rewardApplications   RewardApplication?
+  exchangeShippingGuideSeq String?             @map("exchange_shipping_guide_seq")
+  orderNumber              String?             @map("order_number")
+  receiptId                String?             @map("receipt_id")
+  documentType             String?             @default("FACTURA") @map("document_type")
+  packingNumber            String?             @map("packing_number")
+  packingTotal             Decimal?            @map("packing_total") @db.Decimal(10, 2)
+  receptionBatchId         String?             @map("reception_batch_id")
+  deliveryBatchId          String?             @map("delivery_batch_id")
+  deliveryNumber           String?             @map("delivery_number")
+  loyaltyRedemptionId      String?             @map("loyalty_redemption_id")
+  exchangeItemId           String?             @unique @map("exchange_item_id")
+  creditNoteNumber         String?             @map("credit_note_number")
+  creditNoteTotal          Decimal?            @map("credit_note_total") @db.Decimal(10, 2)
+  sourceOrderId            String?             @unique @map("source_order_id")
+  sourceOrderNumber        String?             @map("source_order_number")
+  sourceBrandName          String?             @map("source_brand_name")
+  sourceQuantity           Int?                @map("source_quantity")
+  sourceDescription        String?             @map("source_description")
+  description              String?             @map("description")
+  calls                    Call[]
+  catalogDelivery          CatalogDelivery?    @relation("CatalogOrder")
+  exchangeBatchItems       ExchangeBatchItem[]
+  financialRecords         FinancialRecord[]
+  inventoryMovements       InventoryMovement[]
+  exchangeItems            OrderExchangeItem[] @relation("OriginalOrderExchanges")
+  items                    OrderItem[]
+  payments                 OrderPayment[]
+  bankAccount              BankAccount?        @relation(fields: [bankAccountId], references: [id])
+  brand                    Brand               @relation(fields: [brandId], references: [id])
+  client                   Client              @relation(fields: [clientId], references: [id])
+  deliveryBatch            DeliveryBatch?      @relation(fields: [deliveryBatchId], references: [id])
+  exchangeItem             OrderExchangeItem?  @relation("NewOrderExchange", fields: [exchangeItemId], references: [id])
+  loyaltyRedemption        LoyaltyRedemption?  @relation(fields: [loyaltyRedemptionId], references: [id])
+  parentOrder              Order?              @relation("OrderHeirs", fields: [parentOrderId], references: [id])
+  childOrders              Order[]             @relation("OrderHeirs")
+  receipt                  OrderReceipt?       @relation(fields: [receiptId], references: [id])
+  receptionBatch           ReceptionBatch?     @relation(fields: [receptionBatchId], references: [id])
+  sourceOrder              Order?              @relation("ExchangeSource", fields: [sourceOrderId], references: [id])
+  exchangesOriginated      Order?              @relation("ExchangeSource")
+  rewardApplications       RewardApplication?
 
   @@index([clientId])
   @@index([brandId])
@@ -265,12 +265,11 @@ model OrderPayment {
   createdAt           DateTime           @default(now()) @map("created_at")
   receiptNumber       String?            @map("receipt_number")
   processingRequestId String?            @map("processing_request_id")
-  // Phase 5 Fix #3: Delta-based payment history — isAdjustment=true records are deltas, not full amounts
   isAdjustment        Boolean            @default(false) @map("is_adjustment")
-  financialRecords    FinancialRecord[]
-  order               Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
   deliveryBatchId     String?            @map("delivery_batch_id")
+  financialRecords    FinancialRecord[]
   deliveryBatch       DeliveryBatch?     @relation(fields: [deliveryBatchId], references: [id])
+  order               Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
   processingRequest   ProcessingRequest? @relation(fields: [processingRequestId], references: [id])
 
   @@index([orderId])
@@ -279,42 +278,39 @@ model OrderPayment {
 }
 
 model FinancialRecord {
-  id                 String        @id @default(uuid())
+  id                 String         @id @default(uuid())
   type               String
-  referenceNumber    String        @unique @map("reference_number")
-  amount             Decimal       @db.Decimal(10, 2)
+  referenceNumber    String         @unique @map("reference_number")
+  amount             Decimal        @db.Decimal(10, 2)
   date               DateTime
-  clientId           String        @map("client_id")
-  clientName         String        @map("client_name")
-  orderId            String?       @map("order_id")
-  createdBy          String        @map("created_by")
+  clientId           String         @map("client_id")
+  clientName         String         @map("client_name")
+  orderId            String?        @map("order_id")
+  createdBy          String         @map("created_by")
   notes              String?
-  bankAccountId      String        @map("bank_account_id")
+  bankAccountId      String         @map("bank_account_id")
   source             String
-  paymentMethod      String?       @map("payment_method")
-  movementType       String        @map("movement_type")
-  createdAt          DateTime      @default(now()) @map("created_at")
-  version            Int           @default(1)
-  orderPaymentId     String?       @map("order_payment_id")
-  userReference      String?       @map("user_reference")
-  fromAccountType    String?       @map("from_account_type")
-  toAccountType      String?       @map("to_account_type")
-  transactionGroupId String?       @map("transaction_group_id")
-  balanceBefore      Decimal?      @map("balance_before") @db.Decimal(10, 2)
-  balanceAfter       Decimal?      @map("balance_after") @db.Decimal(10, 2)
-  clientDocument     String?       @map("client_document")
-  deliveryBatchId    String?       @map("delivery_batch_id")
-  // Phase 4.2: Reversal flag for cash closure — isReversal=true records are EXCLUDED from period totals
-  isReversal         Boolean       @default(false) @map("is_reversal")
-  // Phase 2.3: Audit trail — logical reference to the original record this adjusts
-  adjustmentOf       String?       @map("adjustment_of")
-  // Phase 5 Fix #5: Idempotency — unique per operation group to prevent duplicate processing on retries
-  idempotencyKey     String?       @unique @map("idempotency_key")
-  bankAccount        BankAccount   @relation(fields: [bankAccountId], references: [id])
-  client             Client        @relation(fields: [clientId], references: [id])
-  order              Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  orderPayment       OrderPayment? @relation(fields: [orderPaymentId], references: [id])
+  paymentMethod      String?        @map("payment_method")
+  movementType       String         @map("movement_type")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  version            Int            @default(1)
+  orderPaymentId     String?        @map("order_payment_id")
+  userReference      String?        @map("user_reference")
+  fromAccountType    String?        @map("from_account_type")
+  toAccountType      String?        @map("to_account_type")
+  transactionGroupId String?        @map("transaction_group_id")
+  balanceBefore      Decimal?       @map("balance_before") @db.Decimal(10, 2)
+  balanceAfter       Decimal?       @map("balance_after") @db.Decimal(10, 2)
+  clientDocument     String?        @map("client_document")
+  deliveryBatchId    String?        @map("delivery_batch_id")
+  isReversal         Boolean        @default(false) @map("is_reversal")
+  adjustmentOf       String?        @map("adjustment_of")
+  idempotencyKey     String?        @unique @map("idempotency_key")
+  bankAccount        BankAccount    @relation(fields: [bankAccountId], references: [id])
+  client             Client         @relation(fields: [clientId], references: [id])
   deliveryBatch      DeliveryBatch? @relation(fields: [deliveryBatchId], references: [id])
+  order              Order?         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderPayment       OrderPayment?  @relation(fields: [orderPaymentId], references: [id])
 
   @@index([clientId])
   @@index([orderId])
@@ -371,24 +367,24 @@ model ClientCredit {
 }
 
 model WalletRecharge {
-  id              String       @id @default(uuid())
-  clientId        String       @map("client_id")
-  amount          Decimal      @db.Decimal(10, 2)
-  paymentMethod   String       @map("payment_method")
-  bankAccountId   String?      @map("bank_account_id")
-  reference       String?    @unique
-  controlValidation String?    @unique @map("control_validation")
-  notes           String?
-  status          String       @default("PENDIENTE_VALIDACION")
-  createdByName   String?      @map("created_by_name")
-  validatedByName String?      @map("validated_by_name")
-  validatedAt     DateTime?    @map("validated_at")
-  rejectionReason String?      @map("rejection_reason")
-  isDismissed     Boolean      @default(false) @map("is_dismissed")
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
-  bankAccount     BankAccount? @relation(fields: [bankAccountId], references: [id])
-  client          Client       @relation(fields: [clientId], references: [id])
+  id                String       @id @default(uuid())
+  clientId          String       @map("client_id")
+  amount            Decimal      @db.Decimal(10, 2)
+  paymentMethod     String       @map("payment_method")
+  bankAccountId     String?      @map("bank_account_id")
+  reference         String?      @unique
+  controlValidation String?      @unique @map("control_validation")
+  notes             String?
+  status            String       @default("PENDIENTE_VALIDACION")
+  createdByName     String?      @map("created_by_name")
+  validatedByName   String?      @map("validated_by_name")
+  validatedAt       DateTime?    @map("validated_at")
+  rejectionReason   String?      @map("rejection_reason")
+  isDismissed       Boolean      @default(false) @map("is_dismissed")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+  bankAccount       BankAccount? @relation(fields: [bankAccountId], references: [id])
+  client            Client       @relation(fields: [clientId], references: [id])
 
   @@index([clientId])
   @@index([status])
@@ -715,62 +711,61 @@ model OrderExchangeItem {
 }
 
 model SystemSettings {
-  id             String   @id @default(uuid())
-  key            String   @unique
-  value          String
-  description    String?
-  updatedAt      DateTime @updatedAt @map("updated_at")
-  updatedByName  String?  @map("updated_by_name")
+  id            String   @id @default(uuid())
+  key           String   @unique
+  value         String
+  description   String?
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  updatedByName String?  @map("updated_by_name")
 
   @@map("system_settings")
 }
 
 model NoteTemplate {
-  id             String   @id @default(uuid())
-  title          String
-  content        String
-  type           String   // e.g., "NOTIMONCHITO"
-  isDefault      Boolean  @default(false) @map("is_default")
-  isActive       Boolean  @default(true) @map("is_active")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-  createdByName  String?  @map("created_by_name")
+  id            String   @id @default(uuid())
+  title         String
+  content       String
+  type          String
+  isDefault     Boolean  @default(false) @map("is_default")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdByName String?  @map("created_by_name")
 
   @@map("note_templates")
 }
 
 model OrderType {
-  id             String   @id @default(uuid())
-  name           String   @unique
-  description    String?
-  isActive       Boolean  @default(true) @map("is_active")
-  isSystem       Boolean  @default(false) @map("is_system")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("order_types")
 }
 
-
 model SalesChannel {
-  id             String   @id @default(uuid())
-  name           String   @unique
-  description    String?
-  isActive       Boolean  @default(true) @map("is_active")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("sales_channels")
 }
 
 model SystemLock {
-  id          String   @id @default(uuid())
-  resourceId  String   @map("resource_id")
-  resourceType String  @map("resource_type")
-  userId      String   @map("user_id")
-  userName    String   @map("user_name")
-  expiresAt   DateTime @map("expires_at")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid())
+  resourceId   String   @map("resource_id")
+  resourceType String   @map("resource_type")
+  userId       String   @map("user_id")
+  userName     String   @map("user_name")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@unique([resourceId, resourceType])
   @@index([resourceId, resourceType])

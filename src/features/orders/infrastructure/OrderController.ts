@@ -1144,6 +1144,7 @@ export class OrderController {
                 sourceOrderNumber: true,
                 type: true,
                 documentType: true,
+                clientId: true,
                 clientName: true,
                 brandId: true,
                 invoiceNumber: true,
