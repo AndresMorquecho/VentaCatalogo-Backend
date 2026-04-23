@@ -3,6 +3,7 @@ import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 import { buildNotesJSON, cardTitleFromMethod, generateGroupId } from '../../../shared/utils/transactionNotes';
 import { getNextSequence } from '../../../shared/utils/SequenceGenerator';
+import { roundCurrency } from '../../../shared/utils/currency';
 
 export interface CreditDistributionItemDTO {
   targetOrderId?: string;
@@ -130,8 +131,8 @@ export class BatchDeliverOrdersUseCase {
       const orderPendingAmounts = orders.map(order => {
         const effectiveTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
         const hasSplitPayment = order.payments.some(p => p.method === 'SPLIT_PAYMENT');
-        const paidAmount = order.payments
-          .reduce((sum, p) => sum + Number(p.amount), 0);
+        const paidAmount = roundCurrency(order.payments
+          .reduce((sum, p) => sum + Number(p.amount), 0));
         let pending = effectiveTotal - paidAmount;
         
         if (data.creditDistributions) {
@@ -152,7 +153,7 @@ export class BatchDeliverOrdersUseCase {
       const accountBalancesMap = new Map<string, number>();
       let totalSpentInBatch = 0;
       let clientWalletRunningBal: number | null = null;
-      const totalAggregatePayment = payments.reduce((sum, p) => sum + p.amount, 0);
+      const totalAggregatePayment = roundCurrency(payments.reduce((sum, p) => sum + p.amount, 0));
 
       // One groupId for ALL payment legs of this batch delivery (they form a single card)
       const batchPaymentGroupId = generateGroupId();
@@ -517,7 +518,7 @@ export class BatchDeliverOrdersUseCase {
               
               if (targetObj) {
                 const effectiveTotal = targetObj.realInvoiceTotal ? Number(targetObj.realInvoiceTotal) : Number(targetObj.total);
-                const currentPaid = targetObj.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
+                const currentPaid = roundCurrency(targetObj.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0));
                 const alreadyAppliedInThisBatch = appliedAmounts[targetObj.id] || 0;
                 const realPendingNow = effectiveTotal - currentPaid - alreadyAppliedInThisBatch;
 

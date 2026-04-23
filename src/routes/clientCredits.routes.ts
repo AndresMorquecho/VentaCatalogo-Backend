@@ -50,9 +50,9 @@ router.get('/summary', authenticate, async (req: AuthRequest, res) => {
             const credits = account.credits;
             const availableCredits = credits.filter(c => c.status === 'AVAILABLE');
 
-            const totalCredit = availableCredits.reduce((sum, c) => sum + Number(c.remainingAmount), 0);
-            const totalGenerated = credits.reduce((sum, c) => sum + Number(c.amount), 0);
-            const totalUsed = totalGenerated - totalCredit;
+            const totalCredit = Math.round(availableCredits.reduce((sum, c) => sum + Number(c.remainingAmount), 0) * 100) / 100;
+            const totalGenerated = Math.round(credits.reduce((sum, c) => sum + Number(c.amount), 0) * 100) / 100;
+            const totalUsed = Math.round((totalGenerated - totalCredit) * 100) / 100;
 
             return {
                 clientId: account.clientId,

@@ -19,6 +19,7 @@ import { DeleteDeliveryBatchUseCase } from '../application/DeleteDeliveryBatch.u
 import { GetDeliveryBatchesUseCase } from '../application/GetDeliveryBatches.usecase';
 import { PrismaOrderRepository } from './PrismaOrderRepository';
 import { peekNextSequence } from '../../../shared/utils/SequenceGenerator';
+import { roundCurrency } from '../../../shared/utils/currency';
 
 export class OrderController {
   constructor(
@@ -172,7 +173,7 @@ export class OrderController {
       // Si hay payment_data, procesarlo para múltiples métodos de pago
       if (req.body.payment_data && req.body.payment_data.payments) {
         const payments = req.body.payment_data.payments;
-        totalDeposit = payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+        totalDeposit = roundCurrency(payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0));
         
         // Usar el primer método de pago como principal (para compatibilidad)
         if (payments.length > 0) {
@@ -181,15 +182,15 @@ export class OrderController {
         
         // Calcular crédito de billetera virtual usado
         const walletPayments = payments.filter((p: any) => p.method === 'BILLETERA_VIRTUAL');
-        creditAmount = walletPayments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+        creditAmount = roundCurrency(walletPayments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0));
         
         // Guardar datos de pago para procesamiento posterior
         paymentData = req.body.payment_data;
 
         // Validaciones pre-transacción para split payment
         const declaredTotal = Number(req.body.payment_data.totalAmount || 0);
-        const paymentsSum = payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
-        const ordersDepositSum = (req.body.orders as any[]).reduce((sum: number, o: any) => sum + Number(o.deposit || 0), 0);
+        const paymentsSum = roundCurrency(payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0));
+        const ordersDepositSum = roundCurrency((req.body.orders as any[]).reduce((sum: number, o: any) => sum + Number(o.deposit || 0), 0));
 
         if (declaredTotal > 0 && Math.abs(paymentsSum - declaredTotal) > 0.01) {
           return HttpResponse.badRequest(res, `La suma de los métodos de pago (${paymentsSum.toFixed(2)}) no coincide con el total declarado (${declaredTotal.toFixed(2)})`);
@@ -526,7 +527,7 @@ export class OrderController {
         // 5. Update deposit if provided
         if (req.body.deposit !== undefined) {
           const newDeposit = Number(req.body.deposit);
-          const currentDeposit = updated.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+          const currentDeposit = roundCurrency(updated.payments.reduce((sum, p) => sum + Number(p.amount), 0));
           const diff = newDeposit - currentDeposit;
           
           const newMethod = req.body.payment_method || req.body.paymentMethod || updated.paymentMethod;

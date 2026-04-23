@@ -8,6 +8,7 @@ import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 import { Order, OrderStatus } from '../../orders/domain/Order.entity';
 import { buildNotesJSON, cardTitleFromMethod, generateGroupId } from '../../../shared/utils/transactionNotes';
+import { roundCurrency } from '../../../shared/utils/currency';
 
 export interface RegisterOrderPaymentDTO {
     orderId: string;
@@ -325,7 +326,7 @@ export class RegisterOrderPaymentUseCase {
                     select: { amount: true }
                 });
                 
-                const totalPaid = allPayments.reduce((acc: number, p: any) => acc + Number(p.amount), 0);
+                const totalPaid = roundCurrency(allPayments.reduce((acc: number, p: any) => acc + Number(p.amount), 0));
                 const orderTotal = Number(order.realInvoiceTotal || order.total);
 
                 // Validation: Block overpayment

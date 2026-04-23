@@ -1,4 +1,5 @@
 import { Entity } from '../../../shared/domain/Entity';
+import { roundCurrency } from '../../../shared/utils/currency';
 
 export interface OrderProps {
   receiptNumber: string;
@@ -151,8 +152,8 @@ export class Order extends Entity<OrderProps> {
   }
 
   getPaidAmount(): number {
-    return (this.props.payments || [])
-      .reduce((sum, p) => sum + Number(p.amount), 0);
+    return roundCurrency((this.props.payments || [])
+      .reduce((sum, p) => sum + Number(p.amount), 0));
   }
 
   getPendingAmount(): number {

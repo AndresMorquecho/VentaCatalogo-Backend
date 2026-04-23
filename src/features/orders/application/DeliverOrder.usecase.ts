@@ -4,6 +4,7 @@ import { prisma } from '../../../lib/prisma';
 import { ConcurrencyError } from '../../../shared/errors/ConcurrencyError';
 import { validateBankAccountBalance, validateClientCreditBalance } from '../../../shared/utils/financialValidations';
 import { buildNotesJSON, generateGroupId } from '../../../shared/utils/transactionNotes';
+import { roundCurrency } from '../../../shared/utils/currency';
 
 export interface CreditDistributionItemDTO {
   targetOrderId?: string;
@@ -70,7 +71,7 @@ export class DeliverOrderUseCase {
       const finalInvoiceTotal = order.realInvoiceTotal ? Number(order.realInvoiceTotal) : Number(order.total);
       const finalCreditNoteTotal = data.creditNoteTotal !== undefined ? Number(data.creditNoteTotal) : Number(order.creditNoteTotal || 0);
       
-      const paidBefore = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const paidBefore = roundCurrency(order.payments.reduce((sum, p) => sum + Number(p.amount), 0));
       const pendingBefore = finalInvoiceTotal - paidBefore - finalCreditNoteTotal;
       const accountBalancesMap = new Map<string, number>();
       let clientWalletRunningBal: number | null = null;
@@ -516,7 +517,7 @@ export class DeliverOrderUseCase {
 
               if (targetOrderObj) {
                 const effectiveTotal = targetOrderObj.realInvoiceTotal ? Number(targetOrderObj.realInvoiceTotal) : Number(targetOrderObj.total);
-                const currentPaid = targetOrderObj.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
+                const currentPaid = roundCurrency(targetOrderObj.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0));
                 const realPendingNow = effectiveTotal - currentPaid;
 
                 if (dist.amount > realPendingNow + 0.01) {

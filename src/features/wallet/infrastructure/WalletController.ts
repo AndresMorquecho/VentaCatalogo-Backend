@@ -6,6 +6,7 @@ import { InstantWalletRechargeUseCase } from '../application/InstantWalletRechar
 import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
 import { AuthRequest } from '../../../middleware/auth';
 import { prisma } from '../../../lib/prisma';
+import { roundCurrency } from '../../../shared/utils/currency';
 
 export class WalletController {
     constructor(
@@ -359,7 +360,7 @@ export class WalletController {
                     status: 'AVAILABLE'
                 }
             });
-            const realAvailableBalance = availableCredits.reduce((sum, c) => sum + Number(c.remainingAmount), 0);
+            const realAvailableBalance = roundCurrency(availableCredits.reduce((sum, c) => sum + Number(c.remainingAmount), 0));
             
             const accountBalance = Number(clientAccount.totalCreditAvailable);
             const difference = Math.abs(realAvailableBalance - accountBalance);
