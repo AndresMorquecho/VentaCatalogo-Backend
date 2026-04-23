@@ -25,7 +25,8 @@ export class WalletController {
                 bankAccountId: body.bank_account_id || body.bankAccountId,
                 reference: body.reference,
                 controlValidation: body.control_validation || body.controlValidation,
-                notes: body.notes
+                notes: body.notes,
+                transactionDate: body.transaction_date || body.transactionDate || body.date
             };
 
             console.log('[WalletController] Final DTO:', dto);
@@ -226,7 +227,8 @@ export class WalletController {
                 bankAccountId: body.bankAccountId || body.bank_account_id,
                 reference: body.reference || body.reference,
                 controlValidation: body.controlValidation || body.control_validation,
-                notes: body.notes
+                notes: body.notes,
+                transactionDate: body.transaction_date || body.transactionDate || body.date
             };
             const createdBy = req.user?.username || 'system';
 

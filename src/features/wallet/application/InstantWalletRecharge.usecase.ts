@@ -11,6 +11,7 @@ export interface InstantWalletRechargeDTO {
     reference?: string;
     controlValidation?: string;
     notes?: string;
+    transactionDate?: string;
 }
 
 /**
@@ -97,6 +98,10 @@ export class InstantWalletRechargeUseCase {
                 const isInstant = dto.paymentMethod === 'EFECTIVO';
                 const status = isInstant ? 'VALIDADO' : 'PENDIENTE_VALIDACION';
 
+                const transactionDate = dto.transactionDate 
+                    ? new Date(dto.transactionDate.includes('T') ? dto.transactionDate : `${dto.transactionDate}T12:00:00Z`) 
+                    : new Date();
+
                 // 2. Create the Recharge record
                 const recharge = await tx.walletRecharge.create({
                     data: {
@@ -110,7 +115,8 @@ export class InstantWalletRechargeUseCase {
                         status: status,
                         createdByName: createdBy,
                         validatedByName: isInstant ? createdBy : null,
-                        validatedAt: isInstant ? new Date() : null
+                        validatedAt: isInstant ? transactionDate : null,
+                        createdAt: transactionDate
                     }
                 });
 
@@ -140,7 +146,7 @@ export class InstantWalletRechargeUseCase {
                             referenceNumber: `REC-${recharge.id.substring(0, 8)}-${refNumber}`,
                             userReference: dto.reference || null,
                             amount: dto.amount,
-                            date: new Date(),
+                            date: transactionDate,
                             clientId: dto.clientId,
                             clientName,
                             clientDocument: (client as any).identificationNumber ?? null,
@@ -172,7 +178,7 @@ export class InstantWalletRechargeUseCase {
                             referenceNumber: internalRef,
                             userReference: dto.reference || null,
                             amount: dto.amount,
-                            date: new Date(),
+                            date: transactionDate,
                             clientId: dto.clientId,
                             clientName,
                             clientDocument: (client as any).identificationNumber ?? null,

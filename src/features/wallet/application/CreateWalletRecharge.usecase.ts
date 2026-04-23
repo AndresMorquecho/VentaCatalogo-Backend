@@ -12,6 +12,7 @@ export interface CreateWalletRechargeDTO {
     reference?: string;
     controlValidation?: string;
     notes?: string;
+    transactionDate?: string;
 }
 
 export class CreateWalletRechargeUseCase {
@@ -83,6 +84,10 @@ export class CreateWalletRechargeUseCase {
                     }
                 }
 
+                const transactionDate = dto.transactionDate 
+                    ? new Date(dto.transactionDate.includes('T') ? dto.transactionDate : `${dto.transactionDate}T12:00:00Z`) 
+                    : new Date();
+
                 const recharge = await tx.walletRecharge.create({
                     data: {
                         clientId: dto.clientId,
@@ -95,7 +100,8 @@ export class CreateWalletRechargeUseCase {
                         status: dto.paymentMethod === 'EFECTIVO' ? 'VALIDADO' : 'PENDIENTE_VALIDACION',
                         createdByName: createdBy,
                         validatedByName: dto.paymentMethod === 'EFECTIVO' ? createdBy : null,
-                        validatedAt: dto.paymentMethod === 'EFECTIVO' ? new Date() : null
+                        validatedAt: dto.paymentMethod === 'EFECTIVO' ? transactionDate : null,
+                        createdAt: transactionDate
                     }
                 });
 
@@ -131,7 +137,7 @@ export class CreateWalletRechargeUseCase {
                             referenceNumber: `REC-${recharge.id.substring(0, 8)}-${refNumber}`,
                             userReference: dto.reference || null,
                             amount: dto.amount,
-                            date: new Date(),
+                            date: transactionDate,
                             clientId: dto.clientId,
                             clientName: clientFullName,
                             clientDocument: client.identificationNumber,
@@ -164,7 +170,7 @@ export class CreateWalletRechargeUseCase {
                             referenceNumber: internalRef,
                             userReference: dto.reference || null,
                             amount: dto.amount,
-                            date: new Date(),
+                            date: transactionDate,
                             clientId: dto.clientId,
                             clientName: clientFullName,
                             clientDocument: client.identificationNumber,

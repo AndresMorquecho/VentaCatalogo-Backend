@@ -111,7 +111,7 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
           o.brand_id,
           b.name as brand_name,
           o.id as order_id,
-          COALESCE(o.real_invoice_total, o.total) as total,
+          COALESCE(NULLIF(o.real_invoice_total, 0), o.total) as total,
           o.reception_date,
           o.status,
           CASE 
@@ -179,7 +179,7 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
         SELECT 
           o.brand_id,
           o.id as order_id,
-          COALESCE(o.real_invoice_total, o.total) as total,
+          COALESCE(NULLIF(o.real_invoice_total, 0), o.total) as total,
           o.status,
           CASE 
             WHEN o.status = 'ENTREGADO' AND o.delivery_date IS NOT NULL 
@@ -313,7 +313,7 @@ export class PrismaPortfolioRecoveryRepository implements IPortfolioRecoveryRepo
       WITH warehouse_orders AS (
         SELECT 
           o.id as order_id,
-          COALESCE(o.real_invoice_total, o.total) as total,
+          COALESCE(NULLIF(o.real_invoice_total, 0), o.total) as total,
           o.reception_date,
           o.status,
           ${dateGrouping} as period_date

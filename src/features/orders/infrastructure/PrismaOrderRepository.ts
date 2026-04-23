@@ -144,8 +144,8 @@ export class PrismaOrderRepository implements IOrderRepository {
         LEFT JOIN "order_payments" p ON o.id = p."order_id"
         GROUP BY o.id
         HAVING ${filters.hasPendingPayment 
-          ? Prisma.sql`COALESCE(o."real_invoice_total", o.total) > COALESCE(SUM(p.amount), 0)` 
-          : Prisma.sql`COALESCE(o."real_invoice_total", o.total) <= COALESCE(SUM(p.amount), 0)`}
+          ? Prisma.sql`COALESCE(NULLIF(o."real_invoice_total", 0), o.total) > COALESCE(SUM(p.amount), 0)` 
+          : Prisma.sql`COALESCE(NULLIF(o."real_invoice_total", 0), o.total) <= COALESCE(SUM(p.amount), 0)`}
       `;
       const filteredIds = rows.map(r => r.id);
       if (filteredIds.length === 0) return { data: [], total: 0 };

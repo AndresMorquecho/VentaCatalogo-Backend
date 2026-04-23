@@ -36,7 +36,7 @@ export class GetDashboardSummaryUseCase {
                         (SELECT count(id) FROM orders WHERE status = 'ENTREGADO') as status_entregado,
                         (SELECT count(id) FROM orders WHERE status = 'CANCELADO') as status_cancelado,
                         (SELECT SUM(pending) FROM (
-                            SELECT GREATEST(0, COALESCE(o.real_invoice_total, o.total) - COALESCE(p.paid, 0)) as pending
+                            SELECT GREATEST(0, COALESCE(NULLIF(o.real_invoice_total, 0), o.total) - COALESCE(p.paid, 0)) as pending
                             FROM orders o
                             LEFT JOIN (
                                 SELECT order_id, SUM(amount) as paid 
