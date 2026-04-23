@@ -43,12 +43,16 @@ interface ProcessedOrder {
   receiptNumber: string;
   orderNumber: string;
   status: string;
+  type: string; // Added
   clientId: string;
   clientName: string;
+  clientIdentification?: string; // Added
   brandName: string;
   realInvoiceTotal: number;
+  total: number; // Added
   invoiceNumber: string | null;
   documentType: string | null;
+  sourceOrderNumber?: string | null; // Added
   payments: any[]; // NUEVO: Incluir pagos para que el frontend calcule saldos
 }
 
@@ -89,8 +93,6 @@ export class CreateReceptionBatchOptimizedUseCase {
       return Result.ok(result);
       
     } catch (error) {
-      console.timeEnd('BATCH_RECEPTION_TOTAL');
-      console.error('CreateReceptionBatchOptimizedUseCase Error:', error);
       return Result.fail(error instanceof Error ? error.message : 'Error al procesar recepción por lote');
     }
   }
@@ -196,6 +198,7 @@ export class CreateReceptionBatchOptimizedUseCase {
             invoiceNumber: true,
             documentType: true,
             type: true,
+            sourceOrderNumber: true, // Added
             exchangeItemId: true,
             parentOrderId: true,
             payments: {
@@ -422,13 +425,6 @@ export class CreateReceptionBatchOptimizedUseCase {
         const newPaidAmount = paidAmount + (item.abonoRecepcion || 0);
         const pendingAmount = item.finalTotal - newPaidAmount;
 
-
-
-        if (pendingAmount < -0.01) {
-          console.log(`   ℹ️ Credit detected ($${Math.abs(pendingAmount).toFixed(2)}) but distribution is deferred to Delivery module as per new workflow`);
-        } else {
-          console.log(`   ℹ️ No credit generated (pendingAmount=${pendingAmount.toFixed(2)} >= 0)`);
-        }
       }
       
 
@@ -604,12 +600,16 @@ export class CreateReceptionBatchOptimizedUseCase {
           receiptNumber: order.receiptNumber,
           orderNumber: update?.orderNumber || order.orderNumber,
           status: update?.status || order.status,
+          type: order.type, // Added
           clientId: order.clientId,
           clientName: order.clientName,
+          clientIdentification: (order as any).client?.identificationNumber, // Added
           brandName: order.brand.name,
           realInvoiceTotal: update?.realInvoiceTotal || Number(order.realInvoiceTotal || order.total),
+          total: Number(order.total), // Added
           invoiceNumber: update?.invoiceNumber || order.invoiceNumber,
           documentType: update?.documentType || order.documentType,
+          sourceOrderNumber: order.sourceOrderNumber, // Added
           payments: [...existingPayments, ...newPaymentsForThisOrder] // RETORNAR PAGOS PARA EL PDF
         };
       });

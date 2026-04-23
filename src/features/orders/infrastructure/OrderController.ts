@@ -881,7 +881,6 @@ export class OrderController {
 
       return HttpResponse.ok(res, result.getValue());
     } catch (error) {
-      console.error('Batch update error in controller:', error);
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Batch update failed');
     }
   };

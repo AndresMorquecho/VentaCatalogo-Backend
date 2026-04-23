@@ -198,7 +198,12 @@ export class PrismaOrderRepository implements IOrderRepository {
               total: true,
               realInvoiceTotal: true,
               orderNumber: true,
-              brand: { select: { name: true } }
+              clientName: true,
+              type: true,
+              clientId: true,
+              brandId: true,
+              brand: { select: { name: true } },
+              payments: true
             }
           },
           _count: {
