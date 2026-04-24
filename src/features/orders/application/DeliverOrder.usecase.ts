@@ -530,7 +530,8 @@ export class DeliverOrderUseCase {
             if (dist.amount <= 0.005) continue;
 
             // Apply credit to another order → create a payment for that order
-            await tx.orderPayment.create({
+            // Capture the ID so the income FR can reference it (REG. POR visibility)
+            const distPayment = await tx.orderPayment.create({
               data: {
                 orderId: dist.targetOrderId,
                 amount: dist.amount,
@@ -584,7 +585,7 @@ export class DeliverOrderUseCase {
               }
             });
 
-            // Create income leg (target order receiving credit)
+            // Create income leg (target order receiving credit) — linked to orderPayment for REG. POR
             await tx.financialRecord.create({
               data: {
                 type: 'PAYMENT',
@@ -594,6 +595,7 @@ export class DeliverOrderUseCase {
                 clientId: order.clientId,
                 clientName: order.clientName,
                 orderId: dist.targetOrderId,
+                orderPaymentId: distPayment.id,
                 bankAccountId: (await tx.bankAccount.findFirst({ where: { type: 'CASH' } }))?.id || '',
                 source: 'CREDIT_DISTRIBUTION',
                 paymentMethod: 'CREDITO_CLIENTE',

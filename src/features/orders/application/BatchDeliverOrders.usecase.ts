@@ -347,7 +347,7 @@ export class BatchDeliverOrdersUseCase {
           const amountToApply = Math.min(op.pending, remainingToDistribute);
           if (amountToApply > 0) {
             // @ts-ignore
-            await tx.orderPayment.create({
+            const createdBatchPayment = await tx.orderPayment.create({
               data: {
                 orderId: op.orderId,
                 amount: amountToApply,
@@ -357,6 +357,20 @@ export class BatchDeliverOrdersUseCase {
                 deliveryBatchId: deliveryBatch.id
               }
             });
+
+            // Link this orderPayment to its financial records so REG. POR is visible
+            // We match by orderId + amount + deliveryBatchId to find the FR just created above
+            await tx.financialRecord.updateMany({
+              where: {
+                orderId: op.orderId,
+                // @ts-ignore
+                deliveryBatchId: deliveryBatch.id,
+                orderPaymentId: null,
+                type: 'PAYMENT'
+              },
+              data: { orderPaymentId: createdBatchPayment.id }
+            });
+
             appliedAmounts[op.orderId] = amountToApply;
             remainingToDistribute -= amountToApply;
           }
@@ -542,6 +556,7 @@ export class BatchDeliverOrdersUseCase {
                   deliveryBatchId: deliveryBatch.id
                 }
               });
+              const distPaymentId = payment.id; // capture for FR link
 
               // Distribution group: FROM source order TO target order
               const distGroupId = generateGroupId();
@@ -614,7 +629,7 @@ export class BatchDeliverOrdersUseCase {
                   client: { connect: { id: clientId } },
                   clientName: clientName,
                   order: { connect: { id: dist.targetOrderId! } },
-                  orderPayment: { connect: { id: payment.id } },
+                  orderPayment: { connect: { id: distPaymentId } },
                   bankAccount: { connect: { id: cashAccountId } },
                   source: 'CREDIT_DISTRIBUTION',
                   paymentMethod: 'CREDITO_CLIENTE',
