@@ -136,27 +136,37 @@ export class PrismaCashClosureRepository implements ICashClosureRepository {
     }
 
     async checkClosureExistsForPeriod(fromDate: Date, toDate: Date): Promise<boolean> {
-        // Robustness: Ensure dates are valid before querying
         if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
             console.error('[PrismaCashClosureRepository] Invalid dates passed:', { fromDate, toDate });
             return false;
         }
-
         const db = prisma as any;
         const count = await db.cashClosure.count({
             where: {
                 OR: [
-                    {
-                        fromDate: { lte: fromDate },
-                        toDate: { gte: fromDate }
-                    },
-                    {
-                        fromDate: { lte: toDate },
-                        toDate: { gte: toDate }
-                    }
+                    { fromDate: { lte: fromDate }, toDate: { gte: fromDate } },
+                    { fromDate: { lte: toDate }, toDate: { gte: toDate } },
+                    { fromDate: { gte: fromDate }, toDate: { lte: toDate } }
                 ]
             }
         });
         return count > 0;
+    }
+
+    async findClosuresInRange(fromDate: Date, toDate: Date): Promise<{ id: string; fromDate: Date; toDate: Date; closedAt: Date; closedBy: string }[]> {
+        if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) return [];
+        const db = prisma as any;
+        const records = await db.cashClosure.findMany({
+            where: {
+                OR: [
+                    { fromDate: { lte: fromDate }, toDate: { gte: fromDate } },
+                    { fromDate: { lte: toDate }, toDate: { gte: toDate } },
+                    { fromDate: { gte: fromDate }, toDate: { lte: toDate } }
+                ]
+            },
+            select: { id: true, fromDate: true, toDate: true, closedAt: true, closedBy: true },
+            orderBy: { fromDate: 'asc' }
+        });
+        return records;
     }
 }

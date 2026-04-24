@@ -98,9 +98,12 @@ export class InstantWalletRechargeUseCase {
                 const isInstant = dto.paymentMethod === 'EFECTIVO';
                 const status = isInstant ? 'VALIDADO' : 'PENDIENTE_VALIDACION';
 
+                const now = new Date();
+                const timePart = now.toISOString().split('T')[1];
+
                 const transactionDate = dto.transactionDate 
-                    ? new Date(dto.transactionDate.includes('T') ? dto.transactionDate : `${dto.transactionDate}T12:00:00Z`) 
-                    : new Date();
+                    ? new Date(dto.transactionDate.includes('T') ? dto.transactionDate : `${dto.transactionDate}T${timePart}`) 
+                    : now;
 
                 // 2. Create the Recharge record
                 const recharge = await tx.walletRecharge.create({

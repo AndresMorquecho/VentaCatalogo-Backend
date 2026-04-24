@@ -424,7 +424,8 @@ export class OrderController {
       // 1. BUSINESS RULE: Only orders in initial states without extra payments can be fully edited
       const canEditStatus = ['POR_RECIBIR', 'POR_ENVIAR', 'EN_TRANSITO'].includes(order.status);
       const orderPayments = order.payments || [];
-      const hasExtraPayments = orderPayments.length > 2 || (orderPayments.length > 1 && !orderPayments.some((p: any) => p.method === 'CREDITO_CLIENTE'));
+      const VALID_INITIAL_METHODS = ['CREDITO_CLIENTE', 'BILLETERA_VIRTUAL', 'SALDO_A_FAVOR'];
+      const hasExtraPayments = orderPayments.length > 2 || (orderPayments.length > 1 && !orderPayments.some((p: any) => VALID_INITIAL_METHODS.includes(p.method)));
 
       if (!canEditStatus || hasExtraPayments) {
         let reason = 'No se puede editar este pedido porque ya tiene movimientos (recepción o abonos adicionales).';
@@ -806,6 +807,101 @@ export class OrderController {
       return HttpResponse.ok(res, savedOrder);
     } catch (error) {
       return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to update order');
+    }
+  };
+
+  /**
+   * PATCH /:id/price — Corrección de precio de pedido (permiso: orders.edit_price)
+   *
+   * Reglas de negocio:
+   * - SOLO modifica el campo `total` del pedido. NO toca pagos existentes.
+   * - Bloqueado si el pedido está en estado ENTREGADO o CAMBIADO.
+   * - Bloqueado si el periodo de caja ya fue cerrado.
+   * - Si el nuevo total > suma de pagos actuales → saldo pendiente positivo (el pedido aparecerá como POR_PAGAR en abonos).
+   * - Si el nuevo total <= suma de pagos → saldo = 0 (el pedido queda pagado).
+   * - Actualiza el OrderItem para mantener el unitPrice proporcional.
+   */
+  updateOrderPrice = async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const newTotal = Number(req.body.total);
+
+      if (isNaN(newTotal) || newTotal < 0) {
+        return HttpResponse.badRequest(res, 'El nuevo precio debe ser un número positivo.');
+      }
+
+      const order = await prisma.order.findUnique({
+        where: { id },
+        include: { payments: true, items: true, client: true }
+      });
+
+      if (!order) {
+        return HttpResponse.notFound(res, 'Pedido no encontrado');
+      }
+
+      // REGLA 1: No editar si está entregado o cambiado
+      const BLOCKED_STATUSES_PRICE = ['ENTREGADO', 'CAMBIADO', 'ANULADO', 'DESMANTELADO'];
+      if (BLOCKED_STATUSES_PRICE.includes(order.status)) {
+        return HttpResponse.badRequest(res, `No se puede modificar el precio: El pedido está en estado ${order.status}.`);
+      }
+
+      // REGLA 2: No editar si el periodo de caja está cerrado
+      const lastClosure = await prisma.cashClosure.findFirst({ orderBy: { toDate: 'desc' } });
+      if (lastClosure && order.transactionDate <= lastClosure.toDate) {
+        return HttpResponse.badRequest(res, 'No se puede modificar el precio: El periodo de caja ya está cerrado.');
+      }
+
+      const oldTotal = Number(order.total);
+      if (Math.abs(newTotal - oldTotal) < 0.001) {
+        return HttpResponse.ok(res, { message: 'Sin cambios: el precio ya es el mismo.' });
+      }
+
+      // Calcular la suma actual de pagos para ver el impacto
+      const totalPaid = roundCurrency(order.payments.reduce((sum, p) => sum + Number(p.amount), 0));
+      const newSaldo = roundCurrency(newTotal - totalPaid);
+
+      const updatedOrder = await prisma.$transaction(async (tx) => {
+        // 1. Actualizar el total del pedido
+        const updated = await tx.order.update({
+          where: { id },
+          data: {
+            total: newTotal,
+            version: { increment: 1 },
+            updatedAt: new Date()
+          },
+          include: { payments: true, items: true, brand: true, client: true }
+        });
+
+        // 2. Actualizar los items del pedido para mantener consistencia (proporcional)
+        if (order.items.length > 0) {
+          const totalQty = order.items.reduce((sum, i) => sum + i.quantity, 0);
+          if (totalQty > 0) {
+            const newUnitPrice = roundCurrency(newTotal / totalQty);
+            for (const item of order.items) {
+              const itemNewUnitPrice = roundCurrency((newTotal * item.quantity) / totalQty);
+              await tx.orderItem.update({
+                where: { id: item.id },
+                data: { unitPrice: itemNewUnitPrice }
+              });
+            }
+          }
+        }
+
+        return updated;
+      });
+
+      return HttpResponse.ok(res, {
+        ...updatedOrder,
+        priceEdit: {
+          oldTotal,
+          newTotal,
+          totalPaid,
+          newSaldo,
+          editedBy: req.user?.username
+        }
+      });
+    } catch (error) {
+      return HttpResponse.fail(res, error instanceof Error ? error.message : 'Failed to update order price');
     }
   };
 

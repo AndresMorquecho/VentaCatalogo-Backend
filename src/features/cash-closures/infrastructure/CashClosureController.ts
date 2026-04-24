@@ -58,7 +58,8 @@ export class CashClosureController {
         try {
             const toDate = req.query.toDate ? new Date(req.query.toDate as string) : new Date();
             const userId = req.query.userId as string | undefined;
-            const result = await this.getCashClosurePreviewUseCase.execute(toDate, userId);
+            const fromDate = req.query.fromDate ? new Date(req.query.fromDate as string) : undefined;
+            const result = await this.getCashClosurePreviewUseCase.execute(toDate, userId, fromDate);
 
             if (result.isFailure) {
                 return res.status(400).json({ success: false, error: { message: result.error } });

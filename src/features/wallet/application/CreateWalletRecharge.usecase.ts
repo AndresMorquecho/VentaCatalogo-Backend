@@ -84,9 +84,12 @@ export class CreateWalletRechargeUseCase {
                     }
                 }
 
+                const now = new Date();
+                const timePart = now.toISOString().split('T')[1]; // Get HH:mm:ss.sssZ from current UTC time
+                
                 const transactionDate = dto.transactionDate 
-                    ? new Date(dto.transactionDate.includes('T') ? dto.transactionDate : `${dto.transactionDate}T12:00:00Z`) 
-                    : new Date();
+                    ? new Date(dto.transactionDate.includes('T') ? dto.transactionDate : `${dto.transactionDate}T${timePart}`) 
+                    : now;
 
                 const recharge = await tx.walletRecharge.create({
                     data: {

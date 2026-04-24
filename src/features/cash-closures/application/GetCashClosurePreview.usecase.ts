@@ -41,6 +41,14 @@ export interface SummaryTableRecord {
     balance: number;
 }
 
+export interface ClosedPeriodInfo {
+    id: string;
+    fromDate: Date;
+    toDate: Date;
+    closedAt: Date;
+    closedBy: string;
+}
+
 export interface CashClosurePreview {
     fromDate: Date;
     toDate: Date;
@@ -52,6 +60,7 @@ export interface CashClosurePreview {
     movementCount: number;
     lastClosureDate: Date | null;
     isAlreadyClosed: boolean;
+    closuresInRange: ClosedPeriodInfo[];
     allAccountsBalances: {
         id: string;
         name: string;
@@ -127,11 +136,15 @@ export interface CashClosurePreview {
 export class GetCashClosurePreviewUseCase {
     constructor(private cashClosureRepository: ICashClosureRepository) { }
 
-    async execute(toDate: Date, userId?: string): Promise<Result<CashClosurePreview>> {
+    async execute(toDate: Date, userId?: string, customFromDate?: Date): Promise<Result<CashClosurePreview>> {
         try {
             const lastClosure = await this.cashClosureRepository.findLastClosure();
-            const fromDate = lastClosure ? new Date(lastClosure.toDate.getTime() + 1) : new Date(0);
-            const existing = await this.cashClosureRepository.checkClosureExistsForPeriod(fromDate, toDate);
+            // If a custom fromDate is provided by the user, use it. Otherwise auto-calculate.
+            const autoFromDate = lastClosure ? new Date(lastClosure.toDate.getTime() + 1) : new Date(0);
+            const fromDate = customFromDate && !isNaN(customFromDate.getTime()) ? customFromDate : autoFromDate;
+            
+            const closuresInRange = await this.cashClosureRepository.findClosuresInRange(fromDate, toDate);
+            const existing = closuresInRange.length > 0;
 
             const allAccounts = await prisma.bankAccount.findMany({ where: { isActive: true } });
 
@@ -206,13 +219,14 @@ export class GetCashClosurePreviewUseCase {
                 movementCount: summary.movementCount,
                 lastClosureDate: lastClosure ? lastClosure.toDate : null,
                 isAlreadyClosed: !!existing,
+                closuresInRange,
                 allAccountsBalances: summary.balanceByBank.map(b => ({
                     id: b.bankAccountId,
                     name: b.bankAccountName,
                     type: b.bankAccountType,
                     expectedBalance: b.finalBalance
                 })),
-                movements: summary.detailedMovements, // empty per new spec
+                movements: summary.detailedMovements,
                 incomeBySource: summary.incomeBySource,
                 walletRechargeByMethod: { TRANSFERENCIA: 0, DEPOSITO: 0, CHEQUE: 0 },
                 incomeByMethod: summary.incomeByMethod,

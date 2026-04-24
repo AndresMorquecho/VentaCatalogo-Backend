@@ -153,6 +153,7 @@ router.post('/:id/reverse-delivery', authenticate, requirePermission('delivery.c
 router.post('/:id/dismantle', authenticate, requirePermission('delivery.confirm'), orderController.dismantleOrder);
 router.patch('/receipt/:receiptNumber/rename', authenticate, requirePermission('orders.edit'), orderController.renameReceipt);
 router.delete('/receipt/:receiptNumber', authenticate, requirePermission('exchanges.edit'), orderController.cancelExchangeReceipt);
+router.patch('/:id/price', authenticate, requirePermission('orders.edit_price'), orderController.updateOrderPrice);
 router.put('/:id', authenticate, requirePermission('orders.edit'), orderController.update);
 router.delete('/:id', authenticate, requirePermission('orders.delete'), orderController.deleteOrder);
 

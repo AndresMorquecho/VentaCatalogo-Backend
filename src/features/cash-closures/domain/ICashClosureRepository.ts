@@ -13,4 +13,5 @@ export interface ICashClosureRepository {
     delete(id: string): Promise<void>;
     findLastClosure(): Promise<CashClosure | null>;
     checkClosureExistsForPeriod(fromDate: Date, toDate: Date): Promise<boolean>;
+    findClosuresInRange(fromDate: Date, toDate: Date): Promise<{ id: string; fromDate: Date; toDate: Date; closedAt: Date; closedBy: string }[]>;
 }
