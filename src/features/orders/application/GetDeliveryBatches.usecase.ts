@@ -7,14 +7,15 @@ export interface DeliveryBatchFilters {
   endDate?: string;
   clientId?: string;
   orderQuantity?: string;
+  type?: string;
   page?: number;
   limit?: number;
 }
 
 export class GetDeliveryBatchesUseCase {
   async execute(filters: DeliveryBatchFilters): Promise<Result<any>> {
-    const { searchText, startDate, endDate, page = 1, limit = 25 } = filters;
-    const skip = (page - 1) * limit;
+    const { searchText, startDate, endDate, page, limit, type } = filters;
+    const skip = (page && limit) ? (page - 1) * limit : undefined;
 
     try {
       const where: any = {};
@@ -42,6 +43,15 @@ export class GetDeliveryBatchesUseCase {
         where.orders = { some: { clientId: filters.clientId } };
       }
 
+      if (type && type !== 'all') {
+        where.orders = { 
+          some: { 
+            ...(where.orders?.some || {}),
+            type 
+          } 
+        };
+      }
+
       if (filters.orderQuantity) {
           const qty = parseInt(filters.orderQuantity);
           if (!isNaN(qty)) {
@@ -54,7 +64,7 @@ export class GetDeliveryBatchesUseCase {
                 HAVING COUNT(*) = ${qty}
               `;
               const allowedIds = batchesWithQty.map(b => b.delivery_batch_id);
-              if (allowedIds.length === 0) return Result.ok({ data: [], pagination: { total: 0, page, limit, pages: 0 } });
+              if (allowedIds.length === 0) return Result.ok({ data: [], pagination: { total: 0, page: page || 1, limit: limit || 0, pages: 0 } });
               where.id = { in: allowedIds };
           }
       }
@@ -93,9 +103,9 @@ export class GetDeliveryBatchesUseCase {
         data: batches,
         pagination: {
           total,
-          page,
-          limit,
-          pages: Math.ceil(total / limit)
+          page: page || 1,
+          limit: limit || total,
+          pages: limit ? Math.ceil(total / (limit || 1)) : 1
         }
       });
     } catch (error) {

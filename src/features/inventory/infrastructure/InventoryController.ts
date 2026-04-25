@@ -17,6 +17,7 @@ export class InventoryController {
             endDate: req.query.endDate as string | undefined,
             receiptNumber: req.query.receiptNumber as string | undefined,
             orderNumber: req.query.orderNumber as string | undefined,
+            orderType: req.query.orderType as string | undefined,
             search: req.query.search as string | undefined,
             page,
             limit

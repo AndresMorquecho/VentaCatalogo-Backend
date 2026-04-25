@@ -1170,10 +1170,7 @@ export class OrderController {
 
   getReceptionBatches = async (req: Request, res: Response) => {
     try {
-      const page = Math.max(1, parseInt(req.query.page as string) || 1);
-      const limit = Math.max(1, parseInt(req.query.limit as string) || 15);
-      const skip = (page - 1) * limit;
-
+      const type = req.query.type as string;
       const packingNumber = req.query.packingNumber as string;
       const brandId = req.query.brandId as string;
       const startDate = req.query.startDate as string;
@@ -1186,10 +1183,6 @@ export class OrderController {
         where.packingNumber = { contains: packingNumber, mode: 'insensitive' };
       }
 
-      if (brandId && brandId !== 'ALL') {
-        where.orders = { some: { brandId } };
-      }
-
       if (startDate || endDate) {
         where.receptionDate = {};
         if (startDate) where.receptionDate.gte = new Date(startDate);
@@ -1198,6 +1191,17 @@ export class OrderController {
           end.setHours(23, 59, 59, 999);
           where.receptionDate.lte = end;
         }
+      }
+
+      if (type && type !== 'all') {
+        where.orders = { 
+          some: { 
+            type,
+            ...(brandId && brandId !== 'ALL' ? { brandId } : {}) 
+          } 
+        };
+      } else if (brandId && brandId !== 'ALL') {
+        where.orders = { some: { brandId } };
       }
 
       const orConditions: any[] = [];
@@ -1220,53 +1224,61 @@ export class OrderController {
         where.OR = orConditions;
       }
 
+      // Pagination logic: only apply if limit is provided
+      const page = req.query.page ? Math.max(1, parseInt(req.query.page as string)) : undefined;
+      const limit = req.query.limit ? Math.max(1, parseInt(req.query.limit as string)) : undefined;
+      const skip = (page && limit) ? (page - 1) * limit : undefined;
+
       // Get batches with minimal select (no heavy includes for performance)
-      const [batches, total] = await Promise.all([
-        prisma.receptionBatch.findMany({
-          where,
-          select: {
-            id: true,
-            packingNumber: true,
-            packingTotal: true,
-            receptionDate: true,
-            receivedByName: true,
-            createdAt: true,
-            notes: true,
-            orders: {
-              select: {
-                id: true,
-                receiptNumber: true,
-                orderNumber: true,
-                sourceOrderNumber: true,
-                type: true,
-                documentType: true,
-                clientId: true,
-                clientName: true,
-                brandId: true,
-                invoiceNumber: true,
-                realInvoiceTotal: true,
-                total: true,
-                status: true,
-                payments: true,
-                brand: {
-                  select: {
-                    name: true
-                  }
+      const queryOptions: any = {
+        where,
+        orderBy: { receptionDate: 'desc' },
+        select: {
+          id: true,
+          packingNumber: true,
+          packingTotal: true,
+          receptionDate: true,
+          receivedByName: true,
+          createdAt: true,
+          notes: true,
+          orders: {
+            select: {
+              id: true,
+              receiptNumber: true,
+              orderNumber: true,
+              sourceOrderNumber: true,
+              type: true,
+              documentType: true,
+              clientId: true,
+              clientName: true,
+              brandId: true,
+              invoiceNumber: true,
+              realInvoiceTotal: true,
+              total: true,
+              status: true,
+              payments: true,
+              brand: {
+                select: {
+                  name: true
                 }
               }
             }
-          },
-          orderBy: { receptionDate: 'desc' },
-          skip,
-          take: limit
-        }),
+          }
+        }
+      };
+
+      if (skip !== undefined) queryOptions.skip = skip;
+      if (limit !== undefined) queryOptions.take = limit;
+
+      const [batches, total] = await Promise.all([
+        prisma.receptionBatch.findMany(queryOptions),
         prisma.receptionBatch.count({ where })
       ]);
       
       // Transform to include brandName at order level for frontend compatibility
-      const transformedBatches = batches.map(batch => ({
+      const transformedBatches = (batches as any[]).map(batch => ({
         ...batch,
-        orders: batch.orders.map(order => ({
+        orders: (batch.orders || []).map((order: any) => ({
           ...order,
           brandName: (order.brand as any).name,
           brand: undefined // Remove nested brand object
@@ -1278,9 +1290,9 @@ export class OrderController {
         data: transformedBatches,
         pagination: {
           total,
-          page,
-          limit,
-          pages: Math.ceil(total / limit)
+          page: page || 1,
+          limit: limit || total,
+          pages: limit ? Math.ceil(total / (limit || 1)) : 1
         }
       });
     } catch (error) {
@@ -1320,8 +1332,9 @@ export class OrderController {
         endDate: req.query.endDate as string,
         clientId: req.query.clientId as string,
         orderQuantity: req.query.orderQuantity as string,
-        page: req.query.page ? parseInt(req.query.page as string) : 1,
-        limit: req.query.limit ? parseInt(req.query.limit as string) : 25
+        type: req.query.type as string,
+        page: req.query.page ? parseInt(req.query.page as string) : undefined,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : undefined
       };
 
       const result = await this.getDeliveryBatchesUseCase.execute(filters);

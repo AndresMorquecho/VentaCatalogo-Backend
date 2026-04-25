@@ -11,6 +11,7 @@ export class GetInventoryMovementsUseCase {
         receiptNumber?: string;
         orderNumber?: string;
         search?: string;
+        orderType?: string;
         page?: number; 
         limit?: number 
     }): Promise<Result<{ data: any[]; total: number; stats: any }>> {
@@ -24,18 +25,24 @@ export class GetInventoryMovementsUseCase {
             const search = filters.search?.trim() || undefined;
             const typeValue = filters.type?.trim() || undefined;
             const brandId = filters.brandId?.trim() || undefined;
+            const orderType = filters.orderType?.trim() || undefined;
             const skip = page && limit ? (page - 1) * limit : undefined;
             const take = limit || undefined;
 
-            // ⏱️ We query the Order table as PRIMARY source to ensure PENDING orders appear
+            // ⏱️ We query the Order table as PRIMARY source to ensure all orders appear
             const orderWhere: any = {
                 type: { not: 'CATALOGO' }
             };
 
+            // 0. Order Type Filter
+            if (orderType && orderType !== 'all') {
+                orderWhere.type = orderType;
+            }
+
             // 1. Status Filter (mapped from 'type' which is a logistics action)
             if (typeValue && typeValue !== 'ALL') {
                 if (typeValue === 'ENTRY') {
-                    orderWhere.status = { in: ['RECIBIDO_EN_BODEGA', 'ENTREGADO'] };
+                    orderWhere.status = 'RECIBIDO_EN_BODEGA';
                 } else if (typeValue === 'DELIVERED') {
                     orderWhere.status = 'ENTREGADO';
                 } else if (typeValue === 'RETURNED') {
@@ -62,7 +69,14 @@ export class GetInventoryMovementsUseCase {
             if (orderNumber) orderWhere.orderNumber = { contains: orderNumber, mode: 'insensitive' };
             if (filters.orderId) orderWhere.id = filters.orderId;
 
-            // 4. Global Search
+            // 4. Date Range Filter (applied to order creation date)
+            if (startDate || endDate) {
+                orderWhere.createdAt = {};
+                if (startDate) orderWhere.createdAt.gte = new Date(startDate + 'T00:00:00.000Z');
+                if (endDate) orderWhere.createdAt.lte = new Date(endDate + 'T23:59:59.999Z');
+            }
+
+            // 5. Global Search
             if (search) {
                 orderWhere.OR = [
                     { receiptNumber: { contains: search, mode: 'insensitive' } },
@@ -142,40 +156,75 @@ export class GetInventoryMovementsUseCase {
             
             for (const order of orders) {
                 const moves = order.inventoryMovements || [];
+                const totalQuantity = (order.items || []).reduce((sum: number, it: any) => sum + (it.quantity || 0), 0);
+                const orderBase = { ...order, inventoryMovements: undefined, items: undefined };
+
                 if (moves.length > 0) {
                     const relevantMoves = (typeValue && typeValue !== 'ALL')
                         ? moves.filter((m: any) => m.type === typeValue)
                         : moves;
 
-                    const totalQuantity = (order.items || []).reduce((sum: number, it: any) => sum + (it.quantity || 0), 0);
-                    
-                    relevantMoves.forEach((m: any) => {
+                    if (relevantMoves.length > 0) {
+                        // Order has matching movement records — use them
+                        relevantMoves.forEach((m: any) => {
+                            finalMovements.push({
+                                ...m,
+                                totalQuantity,
+                                order: orderBase,
+                                client: order.client,
+                                brand: order.brand
+                            });
+                        });
+                    } else {
+                        // Order has movements but none match the requested type.
+                        // Create a synthetic entry based on order status so the order still appears.
                         finalMovements.push({
-                            ...m,
+                            id: `synth-${order.id}`,
+                            orderId: order.id,
+                            clientId: order.clientId,
+                            brandId: order.brandId,
+                            type: typeValue || order.status,
+                            createdAt: order.receptionDate || order.createdAt,
+                            createdBy: order.receivedByName || order.createdByName || 'S/N',
                             totalQuantity,
-                            order: { ...order, inventoryMovements: undefined, items: undefined },
+                            order: orderBase,
                             client: order.client,
                             brand: order.brand
                         });
-                    });
+                    }
                 } else {
-                    if (typeValue && typeValue !== 'ALL') continue;
-
-                    const totalQuantity = (order.items || []).reduce((sum: number, it: any) => sum + (it.quantity || 0), 0);
-
-                    finalMovements.push({
-                        id: `pend-${order.id}`,
-                        orderId: order.id,
-                        clientId: order.clientId,
-                        brandId: order.brandId,
-                        type: 'POR_RECIBIR', 
-                        createdAt: order.createdAt,
-                        createdBy: order.createdByName || 'S/N',
-                        totalQuantity,
-                        order: { ...order, inventoryMovements: undefined, items: undefined },
-                        client: order.client,
-                        brand: order.brand
-                    });
+                    // Order has NO inventory movement records at all.
+                    if (typeValue && typeValue !== 'ALL') {
+                        // Still include as a synthetic entry — order status already matched the filter.
+                        finalMovements.push({
+                            id: `synth-${order.id}`,
+                            orderId: order.id,
+                            clientId: order.clientId,
+                            brandId: order.brandId,
+                            type: typeValue,
+                            createdAt: order.receptionDate || order.createdAt,
+                            createdBy: order.receivedByName || order.createdByName || 'S/N',
+                            totalQuantity,
+                            order: orderBase,
+                            client: order.client,
+                            brand: order.brand
+                        });
+                    } else {
+                        // No type filter — show as POR_RECIBIR virtual entry
+                        finalMovements.push({
+                            id: `pend-${order.id}`,
+                            orderId: order.id,
+                            clientId: order.clientId,
+                            brandId: order.brandId,
+                            type: 'POR_RECIBIR', 
+                            createdAt: order.createdAt,
+                            createdBy: order.createdByName || 'S/N',
+                            totalQuantity,
+                            order: orderBase,
+                            client: order.client,
+                            brand: order.brand
+                        });
+                    }
                 }
             }
 
