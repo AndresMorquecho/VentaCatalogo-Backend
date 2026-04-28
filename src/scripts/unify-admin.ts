@@ -18,7 +18,7 @@ async function main() {
         "bank_accounts.view", "bank_accounts.create", "bank_accounts.edit", "bank_accounts.delete",
         "inventory.view", "inventory.edit",
         "brands.view", "brands.create", "brands.edit", "brands.delete",
-        "cash_closure.view", "cash_closure.close",
+        "cash_closure.view", "cash_closure.view_all", "cash_closure.close",
         "calls.view", "calls.create",
         "loyalty.view", "loyalty.manage_rules", "loyalty.manage_prizes",
         "users.view", "users.create", "users.edit", "users.delete", "users.change_password", "users.assign_roles"

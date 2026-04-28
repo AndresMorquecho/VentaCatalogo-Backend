@@ -59,7 +59,18 @@ export class CashClosureController {
             const toDate = req.query.toDate ? new Date(req.query.toDate as string) : new Date();
             const userId = req.query.userId as string | undefined;
             const fromDate = req.query.fromDate ? new Date(req.query.fromDate as string) : undefined;
-            const result = await this.getCashClosurePreviewUseCase.execute(toDate, userId, fromDate);
+
+            // Security check: Only users with 'cash_closure.view_all' can see other users or 'all'
+            const canViewAll = req.user?.permissions?.includes('cash_closure.view_all');
+            if (!canViewAll) {
+                // If not admin/authorized, they can only see their own data
+                if (userId && userId !== req.user?.id) {
+                    return res.status(403).json({ success: false, error: { message: 'No tienes permiso para ver el cierre de otros usuarios.' } });
+                }
+            }
+
+            const targetUserId = canViewAll ? userId : (userId || req.user?.id);
+            const result = await this.getCashClosurePreviewUseCase.execute(toDate, targetUserId, fromDate);
 
             if (result.isFailure) {
                 return res.status(400).json({ success: false, error: { message: result.error } });
