@@ -97,57 +97,65 @@ export class CreateReceptionBatchOptimizedUseCase {
     }
   }
 
-  private async executeInChunks(dto: BatchReceptionDTO, userId: string): Promise<any> {
+  private async executeInChunks(dto: BatchReceptionDTO, userId: string): Promise<Result<any>> {
 
     
     const chunks = chunkArray(dto.items, this.CHUNK_SIZE);
     const allProcessedOrders: ProcessedOrder[] = [];
-    let batch: any;
+    let currentBatchId = dto.id;
+    let aggregateTotal = 0;
+    let finalPackingNumber = dto.packingNumber;
 
     for (let i = 0; i < chunks.length; i++) {
-
-      
       const chunkDto: BatchReceptionDTO = {
         ...dto,
         items: chunks[i],
-        // Only create batch on first chunk, reuse for subsequent chunks
-        id: i === 0 ? dto.id : batch?.id
+        // Reuse the batch ID created in the first chunk for subsequent chunks
+        id: currentBatchId
       };
 
-      const result = await this.processBatch(chunkDto, userId);
+      const result = await this.processBatch(chunkDto, userId, i > 0);
       
       if (i === 0) {
-        batch = result.batch;
+        currentBatchId = result.batchId;
+        finalPackingNumber = result.packingNumber;
       }
       
+      aggregateTotal += (result.packingTotal || 0);
       allProcessedOrders.push(...result.orders);
-
     }
 
-    return {
+    return Result.ok({
       success: true,
-      batchId: batch.id,
+      batchId: currentBatchId,
+      packingNumber: finalPackingNumber,
+      packingTotal: aggregateTotal,
       processedCount: allProcessedOrders.length,
       orders: allProcessedOrders
-    };
+    });
   }
 
-  private async processBatch(dto: BatchReceptionDTO, userId: string): Promise<any> {
+  private async processBatch(dto: BatchReceptionDTO, userId: string, isChunkAppend: boolean = false): Promise<any> {
     return await prisma.$transaction(async (tx) => {
-
-      
       let batch;
       
       // ============================================================================
       // STEP 1: Handle batch creation/update (w/ Concurrency Control)
       // ============================================================================
-
-      
       let finalPackingNumber = dto.packingNumber;
 
       if (dto.id) {
-        batch = await this.handleBatchEdit(tx, dto, userId);
-        finalPackingNumber = batch.packingNumber; // Use the one from existing batch if name was not changed
+        if (isChunkAppend) {
+          // If we are appending a subsequent chunk to a batch created in the SAME process,
+          // we just fetch the batch reference without reverting anything.
+          batch = await tx.receptionBatch.findUnique({ where: { id: dto.id } });
+          if (!batch) throw new Error('El lote intermedio de fragmentación no fue encontrado');
+          finalPackingNumber = batch.packingNumber;
+        } else {
+          // Normal edit mode: Handle full reversion of previous batch state
+          batch = await this.handleBatchEdit(tx, dto, userId);
+          finalPackingNumber = batch.packingNumber;
+        }
       } else {
         // --- 🔒 CONCURRENCY CHECK: Ensure packingNumber is unique and sequential ---
         finalPackingNumber = await getNextSequence('PK-', 'PACKING', tx);

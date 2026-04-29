@@ -88,7 +88,7 @@ router.get('/', authenticate, requirePermission(['bank_accounts.view', 'orders.c
 
 router.post('/', authenticate, requirePermission('bank_accounts.create'), async (req, res, next) => {
   try {
-    const { name, type, current_balance, is_active } = req.body;
+    const { name, type, current_balance, is_active, bank_name, account_number, holder_name, description } = req.body;
 
     const account = await prisma.bankAccount.create({
       data: {
@@ -96,9 +96,10 @@ router.post('/', authenticate, requirePermission('bank_accounts.create'), async 
         type: type || 'BANK',
         currentBalance: current_balance !== undefined ? current_balance : 0,
         isActive: is_active !== undefined ? is_active : true,
-        holderName: 'VentasCatalogo',
-        bankName: name || 'Banco',
-        accountNumber: 'N/A'
+        holderName: holder_name || 'VentasCatalogo',
+        bankName: bank_name || name || 'Banco',
+        accountNumber: account_number || 'N/A',
+        description: description || null
       }
     });
 
@@ -177,6 +178,11 @@ router.put('/:id', authenticate, requirePermission('bank_accounts.edit'), async 
     if (type !== undefined) updateData.type = type;
     if (current_balance !== undefined) updateData.currentBalance = current_balance;
     if (is_active !== undefined) updateData.isActive = is_active;
+    if (req.body.bank_name !== undefined) updateData.bankName = req.body.bank_name;
+    if (req.body.account_number !== undefined) updateData.accountNumber = req.body.account_number;
+    if (req.body.holder_name !== undefined) updateData.holderName = req.body.holder_name;
+    if (req.body.description !== undefined) updateData.description = req.body.description;
+    
     updateData.version = { increment: 1 };
 
     const account = await prisma.bankAccount.update({

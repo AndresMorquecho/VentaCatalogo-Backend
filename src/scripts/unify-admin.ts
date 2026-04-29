@@ -9,19 +9,21 @@ async function main() {
     // 1. Obtener todos los permisos posibles del sistema (esto es estático basado en tu código anterior)
     const allPermissions = [
         "dashboard.view",
-        "orders.view", "orders.create", "orders.edit", "orders.delete",
-        "reception.view", "reception.confirm",
-        "delivery.view", "delivery.confirm",
-        "clients.view", "clients.create", "clients.edit", "clients.delete",
-        "transactions.view",
-        "payments.view", "payments.create", "payments.delete",
+        "orders.view", "orders.create", "orders.edit", "orders.delete", "orders.export_excel",
+        "reception.view", "reception.confirm", "reception.export_excel",
+        "delivery.view", "delivery.confirm", "delivery.export_excel",
+        "clients.view", "clients.create", "clients.edit", "clients.delete", "clients.export_excel",
+        "transactions.view", "transactions.export_excel",
+        "payments.view", "payments.create", "payments.delete", "payments.export_excel",
         "bank_accounts.view", "bank_accounts.create", "bank_accounts.edit", "bank_accounts.delete",
-        "inventory.view", "inventory.edit",
+        "inventory.view", "inventory.edit", "inventory.export_excel",
         "brands.view", "brands.create", "brands.edit", "brands.delete",
-        "cash_closure.view", "cash_closure.view_all", "cash_closure.close",
+        "cash_closure.view", "cash_closure.view_all", "cash_closure.close", "cash_closure.export_excel",
+        "cartera.view", "cartera.export_excel",
         "calls.view", "calls.create",
         "loyalty.view", "loyalty.manage_rules", "loyalty.manage_prizes",
-        "users.view", "users.create", "users.edit", "users.delete", "users.change_password", "users.assign_roles"
+        "users.view", "users.create", "users.edit", "users.delete", "users.change_password", "users.assign_roles", "users.export_excel",
+        "exchanges.view", "exchanges.create", "exchanges.edit", "exchanges.delete", "exchanges.export_excel"
     ];
 
     // 2. Buscar roles que parezcan administrativos

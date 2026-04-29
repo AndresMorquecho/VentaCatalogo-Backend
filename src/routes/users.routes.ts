@@ -66,9 +66,22 @@ router.post('/', requirePermission('users.create'), async (req, res, next) => {
   try {
     const { username, password, role, email } = req.body;
 
-    const existing = await prisma.user.findUnique({ where: { username } });
-    if (existing) {
-      throw new AppError(400, 'Username already in use', 'USERNAME_EXISTS');
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { username },
+          { email: email ? email : undefined }
+        ]
+      }
+    });
+
+    if (existingUser) {
+      if (existingUser.username === username) {
+        throw new AppError(400, 'El nombre de usuario ya está en uso', 'USERNAME_EXISTS');
+      }
+      if (email && existingUser.email === email) {
+        throw new AppError(400, 'El correo electrónico ya está registrado por otro usuario', 'EMAIL_EXISTS');
+      }
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -104,6 +117,28 @@ router.put('/:id', requirePermission('users.edit'), async (req, res, next) => {
 
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) throw new AppError(404, 'User not found', 'NOT_FOUND');
+
+    // Check for duplicate username or email
+    if (username || email) {
+      const duplicate = await prisma.user.findFirst({
+        where: {
+          id: { not: id },
+          OR: [
+            username ? { username } : undefined,
+            email ? { email } : undefined
+          ].filter(Boolean) as any
+        }
+      });
+
+      if (duplicate) {
+        if (username && duplicate.username === username) {
+          throw new AppError(400, 'El nombre de usuario ya está en uso por otra cuenta', 'USERNAME_EXISTS');
+        }
+        if (email && duplicate.email === email) {
+          throw new AppError(400, 'El correo electrónico ya está registrado por otro usuario', 'EMAIL_EXISTS');
+        }
+      }
+    }
 
     let finalActive = isActive !== undefined ? isActive : existing.isActive;
     let finalRole = role || existing.role;
