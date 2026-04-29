@@ -9,21 +9,26 @@ async function main() {
     // 1. Obtener todos los permisos posibles del sistema (esto es estático basado en tu código anterior)
     const allPermissions = [
         "dashboard.view",
-        "orders.view", "orders.create", "orders.edit", "orders.delete", "orders.export_excel",
-        "reception.view", "reception.confirm", "reception.export_excel",
-        "delivery.view", "delivery.confirm", "delivery.export_excel",
-        "clients.view", "clients.create", "clients.edit", "clients.delete", "clients.export_excel",
+        "orders.view", "orders.create", "orders.edit", "orders.delete", "orders.export_excel", "orders.edit_price", "orders.save_with_zero_deposit", "orders.delete_item",
+        "reception.view", "reception.confirm", "reception.edit", "reception.delete", "reception.export_excel",
+        "delivery.view", "delivery.confirm", "delivery.dismantle", "delivery.return", "delivery.export_excel",
+        "clients.view", "clients.create", "clients.edit", "clients.delete", "clients.export_excel", "clients.update",
         "transactions.view", "transactions.export_excel",
         "payments.view", "payments.create", "payments.delete", "payments.export_excel",
-        "bank_accounts.view", "bank_accounts.create", "bank_accounts.edit", "bank_accounts.delete",
-        "inventory.view", "inventory.edit", "inventory.export_excel",
-        "brands.view", "brands.create", "brands.edit", "brands.delete",
-        "cash_closure.view", "cash_closure.view_all", "cash_closure.close", "cash_closure.export_excel",
+        "bank_accounts.view", "bank_accounts.create", "bank_accounts.edit", "bank_accounts.delete", "bank_accounts.manage",
+        "inventory.view", "inventory.edit", "inventory.manage", "inventory.export_excel",
+        "brands.view", "brands.create", "brands.edit", "brands.delete", "brands.manage",
+        "cash_closure.view", "cash_closure.view_all", "cash_closure.close", "cash_closure.export_excel", "cash_closure.create", "cash_closure.history",
         "cartera.view", "cartera.export_excel",
-        "calls.view", "calls.create",
-        "loyalty.view", "loyalty.manage_rules", "loyalty.manage_prizes",
-        "users.view", "users.create", "users.edit", "users.delete", "users.change_password", "users.assign_roles", "users.export_excel",
-        "exchanges.view", "exchanges.create", "exchanges.edit", "exchanges.delete", "exchanges.export_excel"
+        "calls.view", "calls.create", "calls.manage",
+        "loyalty.view", "loyalty.manage_rules", "loyalty.manage_prizes", "loyalty.create_rule", "loyalty.edit_rule", "loyalty.delete_rule", "loyalty.create_prize", "loyalty.edit_prize", "loyalty.delete_prize", "loyalty.redeem",
+        "users.view", "users.create", "users.edit", "users.delete", "users.change_password", "users.assign_roles", "users.export_excel", "users.manage",
+        "exchanges.view", "exchanges.create", "exchanges.edit", "exchanges.delete", "exchanges.export_excel", "exchanges.reception", "exchanges.delivery", "exchanges.save_with_zero_deposit",
+        "wallet.view", "wallet.recharge",
+        "wallet_validations.view", "wallet_validations.confirm", "wallet_validations.reject", "wallet_validations.validate",
+        "catalogs.view", "catalogs.manage",
+        "system_config.view", "system_config.edit_parameters", "system_config.create_notimonchito", "system_config.edit_notimonchito", "system_config.delete_notimonchito",
+        "system_settings.view", "system_settings.edit"
     ];
 
     // 2. Buscar roles que parezcan administrativos

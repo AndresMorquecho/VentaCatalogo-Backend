@@ -174,9 +174,24 @@ export class GetCashClosurePreviewUseCase {
             });
 
             // 🚀 OPTIMIZATION: Instead of fetching ALL prior movements, sum them in the DB
+            const priorWhere: Prisma.FinancialRecordWhereInput = { date: { lt: fromDate } };
+            
+            // If we have a CUSTOM start date or we are filtering by USER, 
+            // we should only show the generation of that specific period.
+            // (Ignoring historical cumulative balances which cause confusion in period audits)
+            if (customFromDate || (userId && userId !== 'all')) {
+                priorWhere.id = 'none'; 
+            } else if (userId && userId !== 'all') {
+                // This part is redundant now but kept for clarity if logic diverges later
+                const requestedUser = await prisma.user.findUnique({ 
+                    where: { id: userId },
+                    select: { username: true }
+                });
+                if (requestedUser) priorWhere.createdBy = requestedUser.username;
+            }
             const priorAggregates = await prisma.financialRecord.groupBy({
                 by: ['bankAccountId', 'movementType', 'toAccountType', 'fromAccountType'],
-                where: { date: { lt: fromDate } },
+                where: priorWhere,
                 _sum: { amount: true }
             });
 

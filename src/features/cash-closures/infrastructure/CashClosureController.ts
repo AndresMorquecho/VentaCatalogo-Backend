@@ -61,7 +61,10 @@ export class CashClosureController {
             const fromDate = req.query.fromDate ? new Date(req.query.fromDate as string) : undefined;
 
             // Security check: Only users with 'cash_closure.view_all' can see other users or 'all'
-            const canViewAll = req.user?.permissions?.includes('cash_closure.view_all');
+            const userRole = req.user?.role?.toUpperCase() || '';
+            const isAdmin = userRole === 'ADMIN' || userRole === 'ADMINISTRADOR';
+            const canViewAll = isAdmin || req.user?.permissions?.includes('cash_closure.view_all');
+            
             if (!canViewAll) {
                 // If not admin/authorized, they can only see their own data
                 if (userId && userId !== req.user?.id) {
