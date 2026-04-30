@@ -178,12 +178,19 @@ export class GetInventoryMovementsUseCase {
                     } else {
                         // Order has movements but none match the requested type.
                         // Create a synthetic entry based on order status so the order still appears.
+                        const mapStatusToType = (status: string) => {
+                            if (status === 'ENTREGADO') return 'DELIVERED';
+                            if (status === 'RECIBIDO_EN_BODEGA') return 'ENTRY';
+                            if (status === 'DEVUELTO') return 'RETURNED';
+                            return status;
+                        };
+
                         finalMovements.push({
                             id: `synth-${order.id}`,
                             orderId: order.id,
                             clientId: order.clientId,
                             brandId: order.brandId,
-                            type: typeValue || order.status,
+                            type: typeValue || mapStatusToType(order.status),
                             createdAt: order.receptionDate || order.createdAt,
                             createdBy: order.receivedByName || order.createdByName || 'S/N',
                             totalQuantity,
@@ -194,6 +201,13 @@ export class GetInventoryMovementsUseCase {
                     }
                 } else {
                     // Order has NO inventory movement records at all.
+                    const mapStatusToType = (status: string) => {
+                        if (status === 'ENTREGADO') return 'DELIVERED';
+                        if (status === 'RECIBIDO_EN_BODEGA') return 'ENTRY';
+                        if (status === 'DEVUELTO') return 'RETURNED';
+                        return status;
+                    };
+
                     if (typeValue && typeValue !== 'ALL') {
                         // Still include as a synthetic entry — order status already matched the filter.
                         finalMovements.push({
@@ -201,7 +215,7 @@ export class GetInventoryMovementsUseCase {
                             orderId: order.id,
                             clientId: order.clientId,
                             brandId: order.brandId,
-                            type: typeValue,
+                            type: typeValue === 'ALL' ? mapStatusToType(order.status) : typeValue,
                             createdAt: order.receptionDate || order.createdAt,
                             createdBy: order.receivedByName || order.createdByName || 'S/N',
                             totalQuantity,
@@ -210,15 +224,16 @@ export class GetInventoryMovementsUseCase {
                             brand: order.brand
                         });
                     } else {
-                        // No type filter — show as POR_RECIBIR virtual entry
+                        // No type filter — show as virtual entry based on current status
+                        const type = mapStatusToType(order.status);
                         finalMovements.push({
                             id: `pend-${order.id}`,
                             orderId: order.id,
                             clientId: order.clientId,
                             brandId: order.brandId,
-                            type: 'POR_RECIBIR', 
-                            createdAt: order.createdAt,
-                            createdBy: order.createdByName || 'S/N',
+                            type: type === 'POR_RECIBIR' ? 'POR_RECIBIR' : type, 
+                            createdAt: order.receptionDate || order.createdAt,
+                            createdBy: order.receivedByName || order.createdByName || 'S/N',
                             totalQuantity,
                             order: orderBase,
                             client: order.client,
