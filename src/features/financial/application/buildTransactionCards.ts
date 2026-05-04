@@ -229,7 +229,7 @@ function resolveOperationType(records: RawRecord[], title: CardTitle): Operation
   // Derive from title
   if (title === 'VENTA_CATALOGO') return 'VENTA_CATALOGO';
   if (title === 'RECARGA_BILLETERA') return 'RECARGA';
-  if (title === 'REEMBOLSO_CASH') return 'REEMBOLSO';
+  if (title === 'REEMBOLSO_CASH' || title === 'REEMBOLSO_BANCARIO' || title === 'DEVOLUCION' || title === 'DEVOLUCION_BILLETERA') return 'REEMBOLSO';
   if (title === 'TRASPASO_SALDO') return 'TRASPASO';
   if (title.startsWith('CAMBIO')) return 'CAMBIO';
 

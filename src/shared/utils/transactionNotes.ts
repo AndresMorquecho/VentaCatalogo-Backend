@@ -26,6 +26,7 @@ export type CardTitle =
   | 'PAGO_CHEQUE'
   | 'USO_BILLETERA'
   | 'RECARGA_BILLETERA'
+  | 'DEVOLUCION_BILLETERA'
   | 'TRASPASO_SALDO'
   | 'DEVOLUCION'
   | 'REEMBOLSO_CASH'
@@ -70,6 +71,7 @@ export const CARD_TITLE_LABELS: Record<CardTitle, string> = {
   PAGO_CHEQUE: 'Pago con Cheque',
   USO_BILLETERA: 'Abono con Billetera Virtual',
   RECARGA_BILLETERA: 'Recarga de Billetera Virtual',
+  DEVOLUCION_BILLETERA: 'DEVOLUCIÓN',
   TRASPASO_SALDO: 'Traspaso de Saldo (Wallet)',
   DEVOLUCION: 'Devolución',
   REEMBOLSO_CASH: 'Devolución en Efectivo',

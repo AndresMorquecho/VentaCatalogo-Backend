@@ -217,9 +217,7 @@ export class PaymentController {
             });
             if (!payment) return HttpResponse.notFound(res, 'Abono no encontrado');
 
-            if (payment.method === 'CREDITO_CLIENTE') {
-                return HttpResponse.badRequest(res, 'No se permite eliminar abonos de tipo CREDITO_CLIENTE desde este módulo. Use el módulo de billetera.');
-            }
+
 
             // REGLA: Solo se puede eliminar el ÚLTIMO abono registrado del pedido para no desconfigurar saldos históricos
             const lastPayment = await prisma.orderPayment.findFirst({
@@ -243,13 +241,40 @@ export class PaymentController {
 
                 const amount = Number(payment.amount);
 
-                // REVERSIÓN DE BANCO/CAJA
-                // Usamos el bankAccountId del registro financiero (donde entró el dinero realmente)
-                if (fr && fr.bankAccountId && amount > 0) {
-                    await tx.bankAccount.update({
-                        where: { id: fr.bankAccountId },
-                        data: { currentBalance: { decrement: amount }, version: { increment: 1 } }
+                if (payment.method === 'CREDITO_CLIENTE') {
+                    const clientAccount = await tx.clientAccount.findUnique({
+                        where: { clientId: payment.order.clientId }
                     });
+                    
+                    if (clientAccount) {
+                        await tx.clientAccount.update({
+                            where: { id: clientAccount.id },
+                            data: {
+                                totalCreditAvailable: { increment: amount },
+                                version: { increment: 1 }
+                            }
+                        });
+
+                        await tx.clientCredit.create({
+                            data: {
+                                clientAccountId: clientAccount.id,
+                                amount: amount,
+                                remainingAmount: amount,
+                                originTransactionId: `REV-${payment.id.substring(0, 10)}`,
+                                originOrderId: payment.order.id,
+                                status: 'AVAILABLE'
+                            }
+                        });
+                    }
+                } else {
+                    // REVERSIÓN DE BANCO/CAJA
+                    // Usamos el bankAccountId del registro financiero (donde entró el dinero realmente)
+                    if (fr && fr.bankAccountId && amount > 0) {
+                        await tx.bankAccount.update({
+                            where: { id: fr.bankAccountId },
+                            data: { currentBalance: { decrement: amount }, version: { increment: 1 } }
+                        });
+                    }
                 }
 
                 if (fr) {

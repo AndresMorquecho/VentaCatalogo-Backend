@@ -25,5 +25,6 @@ router.post('/recharge/:id/reject', authenticate, (req, res) => controller.rejec
 router.post('/recharge/:id/dismiss', authenticate, (req, res) => controller.dismissRecharge(req, res));
 router.get('/recharges/history', authenticate, (req, res) => controller.getHistory(req, res));
 router.get('/client/:clientId/history', authenticate, (req, res) => controller.getClientWalletHistory(req, res));
+router.post('/withdraw', authenticate, (req, res) => controller.withdrawBalance(req, res));
 
 export default router;

@@ -7,6 +7,7 @@ import { HttpResponse } from '../../../shared/infrastructure/http/HttpResponse';
 import { AuthRequest } from '../../../middleware/auth';
 import { prisma } from '../../../lib/prisma';
 import { roundCurrency } from '../../../shared/utils/currency';
+import { buildNotesJSON } from '../../../shared/utils/transactionNotes';
 
 export class WalletController {
     constructor(
@@ -252,6 +253,164 @@ export class WalletController {
             return HttpResponse.created(res, result.getValue());
         } catch (error: any) {
             return HttpResponse.fail(res, error?.message || 'Internal Server Error');
+        }
+    }
+
+    async withdrawBalance(req: AuthRequest, res: Response) {
+        try {
+            const body = req.body;
+            const clientId = body.clientId || body.client_id;
+            const amount = Number(body.amount);
+            const bankAccountId = body.bankAccountId || body.bank_account_id;
+            const reason = body.reason || body.notes;
+            const createdBy = req.user?.username || 'system';
+
+            if (!clientId || !amount || !bankAccountId) {
+                return HttpResponse.badRequest(res, 'Se requiere Cliente, Monto y Cuenta/Caja de origen');
+            }
+
+            if (amount <= 0) {
+                return HttpResponse.badRequest(res, 'El monto debe ser mayor a cero');
+            }
+
+            const result = await prisma.$transaction(async (tx) => {
+                const clientAccount = await tx.clientAccount.findUnique({
+                    where: { clientId },
+                    select: { id: true, totalCreditAvailable: true, version: true }
+                });
+
+                if (!clientAccount || Number(clientAccount.totalCreditAvailable) < amount) {
+                    throw new Error('Saldo insuficiente en la billetera para realizar la devolución');
+                }
+
+                const bankAccount = await tx.bankAccount.findUnique({
+                    where: { id: bankAccountId },
+                    select: { id: true, currentBalance: true, version: true, name: true, type: true }
+                });
+
+                if (!bankAccount) {
+                    throw new Error('Cuenta bancaria o caja no encontrada');
+                }
+
+                if (Number(bankAccount.currentBalance) < amount) {
+                    throw new Error(`Saldo insuficiente en ${bankAccount.name} para realizar la devolución`);
+                }
+
+                // Restar del saldo total
+                await tx.clientAccount.update({
+                    where: { id: clientAccount.id, version: clientAccount.version },
+                    data: {
+                        totalCreditAvailable: { decrement: amount },
+                        version: { increment: 1 }
+                    }
+                });
+
+                // Restar de los créditos disponibles (FIFO)
+                const availableCredits = await tx.clientCredit.findMany({
+                    where: { clientAccountId: clientAccount.id, status: 'AVAILABLE' },
+                    orderBy: { createdAt: 'asc' }
+                });
+
+                let remainingToSubtract = amount;
+                for (const credit of availableCredits) {
+                    if (remainingToSubtract <= 0) break;
+                    const amountToSubtract = Math.min(Number(credit.remainingAmount), remainingToSubtract);
+
+                    const newRemaining = Number(credit.remainingAmount) - amountToSubtract;
+                    const newStatus = newRemaining <= 0.01 ? 'USED' : 'AVAILABLE';
+
+                    await tx.clientCredit.update({
+                        where: { id: credit.id },
+                        data: {
+                            remainingAmount: newRemaining,
+                            status: newStatus,
+                            usedAt: newStatus === 'USED' ? new Date() : undefined
+                        }
+                    });
+
+                    remainingToSubtract -= amountToSubtract;
+                }
+
+                // Restar del banco/caja
+                await tx.bankAccount.update({
+                    where: { id: bankAccount.id, version: bankAccount.version },
+                    data: {
+                        currentBalance: { decrement: amount },
+                        version: { increment: 1 }
+                    }
+                });
+
+                const client = await tx.client.findUnique({ where: { id: clientId } });
+                const finRef = `DEV-${Date.now()}`;
+                const groupId = `GRP-${finRef}`;
+
+                // 1. INTERNAL: Mover dinero virtualmente fuera de la billetera hacia la caja
+                await tx.financialRecord.create({
+                    data: {
+                        type: 'EXPENSE',
+                        referenceNumber: `${finRef}-INT`,
+                        amount: amount,
+                        date: new Date(),
+                        clientId: clientId,
+                        clientName: client?.firstName || 'Desconocido',
+                        createdBy,
+                        notes: buildNotesJSON({
+                            title: 'DEVOLUCION_BILLETERA',
+                            module: 'WALLET',
+                            description: reason || 'Devolución de saldo a favor',
+                            clientDoc: client?.identificationNumber || 'S/N',
+                            orders: []
+                        }),
+                        bankAccountId: bankAccount.id,
+                        source: 'WALLET_WITHDRAWAL',
+                        paymentMethod: bankAccount.type === 'CASH' ? 'EFECTIVO' : 'TRANSFERENCIA',
+                        movementType: 'INTERNAL',
+                        fromAccountType: 'WALLET',
+                        toAccountType: 'BANK_ACCOUNT',
+                        balanceBefore: Number(clientAccount.totalCreditAvailable),
+                        balanceAfter: Number(clientAccount.totalCreditAvailable) - amount,
+                        version: 1,
+                        clientDocument: client?.identificationNumber,
+                        transactionGroupId: groupId
+                    }
+                });
+
+                // 2. EXPENSE: El dinero físico/bancario sale de la empresa hacia el cliente
+                const record = await tx.financialRecord.create({
+                    data: {
+                        type: 'EXPENSE',
+                        referenceNumber: finRef,
+                        amount: amount,
+                        date: new Date(),
+                        clientId: clientId,
+                        clientName: client?.firstName || 'Desconocido',
+                        createdBy,
+                        notes: buildNotesJSON({
+                            title: 'DEVOLUCION_BILLETERA',
+                            module: 'WALLET',
+                            description: reason || 'Devolución de saldo a favor',
+                            clientDoc: client?.identificationNumber || 'S/N',
+                            orders: []
+                        }),
+                        bankAccountId: bankAccount.id,
+                        source: 'WALLET_WITHDRAWAL',
+                        paymentMethod: bankAccount.type === 'CASH' ? 'EFECTIVO' : 'TRANSFERENCIA',
+                        movementType: 'EXPENSE',
+                        fromAccountType: 'BANK_ACCOUNT',
+                        toAccountType: 'EXTERNAL',
+                        balanceBefore: Number(bankAccount.currentBalance), // Current balance before THIS exact transaction (was not updated here)
+                        balanceAfter: Number(bankAccount.currentBalance) - amount,
+                        version: 1,
+                        clientDocument: client?.identificationNumber,
+                        transactionGroupId: groupId
+                    }
+                });
+                return record;
+            });
+
+            return HttpResponse.ok(res, result);
+        } catch (error: any) {
+            return HttpResponse.fail(res, error?.message || 'Error procesando devolución');
         }
     }
 

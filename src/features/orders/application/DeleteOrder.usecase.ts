@@ -116,7 +116,7 @@ export class DeleteOrderUseCase {
                     // --- REVERSIÓN DE PAGOS CON BILLETERA VIRTUAL ---
                     // For each wallet payment, refund the exact amount paid
                     for (const payment of order.payments) {
-                        if (payment.method === 'BILLETERA_VIRTUAL') {
+                        if (payment.method === 'BILLETERA_VIRTUAL' || payment.method === 'CREDITO_CLIENTE') {
                             const clientAcc = order.client.clientAccount;
                             if (clientAcc) {
                                 const refundAmount = Number(payment.amount);
