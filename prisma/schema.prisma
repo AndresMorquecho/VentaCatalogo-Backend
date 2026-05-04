@@ -443,6 +443,25 @@ model CashClosure {
   @@map("cash_closures")
 }
 
+model UserCashClosure {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  username       String   @map("username")
+  fromDate       DateTime @map("from_date")
+  toDate         DateTime @map("to_date")
+  notes          String?
+  expectedAmount Decimal  @map("expected_amount") @db.Decimal(10, 2)
+  actualAmount   Decimal  @map("actual_amount") @db.Decimal(10, 2)
+  difference     Decimal  @db.Decimal(10, 2)
+  receivedBy     String   @map("received_by")
+  closedAt       DateTime @default(now()) @map("closed_at")
+
+  @@index([userId])
+  @@index([fromDate])
+  @@index([toDate])
+  @@map("user_cash_closures")
+}
+
 model Call {
   id           String    @id @default(uuid())
   clientId     String    @map("client_id")

@@ -161,15 +161,56 @@ router.put('/:id', requirePermission('users.edit'), async (req, res, next) => {
       }
     }
 
-    const user = await prisma.user.update({
-      where: { id },
-      data: {
-        username: username || existing.username,
-        email: email !== undefined ? email : existing.email,
-        role: finalRole,
-        isActive: finalActive
+    const newUsername = username || existing.username;
+    const usernameChanged = username && username !== existing.username;
+
+    // Use a transaction to propagate username changes to all denormalized fields
+    const user = await prisma.$transaction(async (tx) => {
+      // 1. Update the user record
+      const updatedUser = await tx.user.update({
+        where: { id },
+        data: {
+          username: newUsername,
+          email: email !== undefined ? email : existing.email,
+          role: finalRole,
+          isActive: finalActive
+        }
+      });
+
+      // 2. If username changed, propagate to ALL tables that store it as denormalized text
+      if (usernameChanged) {
+        const oldName = existing.username;
+        const newName = username;
+
+        await Promise.all([
+          tx.financialRecord.updateMany({ where: { createdBy: oldName }, data: { createdBy: newName } }),
+          tx.order.updateMany({ where: { createdByName: oldName }, data: { createdByName: newName } }),
+          tx.order.updateMany({ where: { receivedByName: oldName }, data: { receivedByName: newName } }),
+          tx.order.updateMany({ where: { deliveredByName: oldName }, data: { deliveredByName: newName } }),
+          tx.cashClosure.updateMany({ where: { closedBy: oldName }, data: { closedBy: newName } }),
+          tx.receptionBatch.updateMany({ where: { receivedByName: oldName }, data: { receivedByName: newName } }),
+          tx.deliveryBatch.updateMany({ where: { deliveredByName: oldName }, data: { deliveredByName: newName } }),
+          tx.walletRecharge.updateMany({ where: { createdByName: oldName }, data: { createdByName: newName } }),
+          tx.walletRecharge.updateMany({ where: { validatedByName: oldName }, data: { validatedByName: newName } }),
+          tx.auditLog.updateMany({ where: { userName: oldName }, data: { userName: newName } }),
+          tx.catalogDelivery.updateMany({ where: { deliveredBy: oldName }, data: { deliveredBy: newName } }),
+          tx.catalogInventory.updateMany({ where: { createdBy: oldName }, data: { createdBy: newName } }),
+          tx.call.updateMany({ where: { createdBy: oldName }, data: { createdBy: newName } }),
+          tx.call.updateMany({ where: { updatedBy: oldName }, data: { updatedBy: newName } }),
+          tx.inventoryMovement.updateMany({ where: { createdBy: oldName }, data: { createdBy: newName } }),
+          tx.client.updateMany({ where: { createdByName: oldName }, data: { createdByName: newName } }),
+          tx.orderReceipt.updateMany({ where: { createdByName: oldName }, data: { createdByName: newName } }),
+          tx.exchangeBatch.updateMany({ where: { createdByName: oldName }, data: { createdByName: newName } }),
+          tx.noteTemplate.updateMany({ where: { createdByName: oldName }, data: { createdByName: newName } }),
+          tx.systemSettings.updateMany({ where: { updatedByName: oldName }, data: { updatedByName: newName } }),
+          tx.systemLock.updateMany({ where: { userName: oldName }, data: { userName: newName } }),
+        ]);
+
+        console.log(`[USER] Username propagated: "${oldName}" → "${newName}" across all tables`);
       }
-    });
+
+      return updatedUser;
+    }, { timeout: 30000 }); // 30s timeout for large propagations
 
     res.json({
       success: true,
