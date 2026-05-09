@@ -390,6 +390,17 @@ export class BatchCreateOrderUseCase {
       if (allPayments.length > 0) await tx.orderPayment.createMany({ data: allPayments });
       if (allFinancialRecords.length > 0) await tx.financialRecord.createMany({ data: allFinancialRecords });
 
+      // 6. Sync Client Metadata (Last Order Info)
+      // Pick the first brand name from the batch as a representative "Last Brand"
+      const lastBrandName = dto.orders[0]?.brandName || '—';
+      await tx.client.update({
+        where: { id: dto.clientId },
+        data: {
+          lastOrderDate: dto.transactionDate || new Date(),
+          lastBrandName: lastBrandName
+        }
+      });
+
       // Return orders with their payments for immediate PDF synchronization
       return allOrders.map(o => ({
         ...o,

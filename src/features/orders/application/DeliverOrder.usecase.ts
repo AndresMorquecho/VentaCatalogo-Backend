@@ -347,6 +347,15 @@ export class DeliverOrderUseCase {
         }
       });
 
+      // 5.5 Sync Client Metadata (Last Order Info)
+      await tx.client.update({
+        where: { id: order.clientId },
+        data: {
+          lastOrderDate: order.transactionDate,
+          lastBrandName: order.brand?.name || '—'
+        }
+      });
+
       // 6. Logística de Cambios - Sincronizar estado a ENTREGADO
       if (order.parentOrderId) {
         const batchItem = await tx.exchangeBatchItem.findFirst({
