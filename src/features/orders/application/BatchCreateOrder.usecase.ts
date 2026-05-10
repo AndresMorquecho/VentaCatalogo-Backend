@@ -199,7 +199,7 @@ export class BatchCreateOrderUseCase {
           possibleDeliveryDate: orderDto.possibleDeliveryDate,
           paymentMethod: dto.paymentMethod,
           bankAccountId: dto.bankAccountId || null,
-          notes: orderDto.notes,
+          notes: orderDto.notes || dto.notes,
           description: orderDto.description,
           trackingGuide: dto.trackingGuide,
           createdByName: createdBy,
