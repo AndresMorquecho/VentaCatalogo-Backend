@@ -142,6 +142,7 @@ export class PrismaOrderRepository implements IOrderRepository {
         SELECT o.id
         FROM "orders" o
         LEFT JOIN "order_payments" p ON o.id = p."order_id"
+        WHERE o.status NOT IN ('DESMANTELADO', 'ANULADO')
         GROUP BY o.id
         HAVING ${filters.hasPendingPayment 
           ? Prisma.sql`COALESCE(NULLIF(o."real_invoice_total", 0), o.total) > COALESCE(SUM(p.amount), 0)` 
@@ -665,16 +666,14 @@ export class PrismaOrderRepository implements IOrderRepository {
         }
       });
 
-      // 2. If mode is BLOCK, block the client
-      if (mode === 'BLOCK') {
-        await tx.client.update({
-          where: { id: order.clientId },
-          data: { 
-            isBlocked: true,
-            blockedReason: reason
-          }
-        });
-      }
+      // 2. Always block the client when an order is dismantled
+      await tx.client.update({
+        where: { id: order.clientId },
+        data: { 
+          isBlocked: true,
+          blockedReason: `DESMANTELADO: ${reason}`
+        }
+      });
     });
   }
 }

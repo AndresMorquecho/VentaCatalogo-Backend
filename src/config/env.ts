@@ -41,4 +41,4 @@ export const env = {
     NODE_ENV: process.env.NODE_ENV || 'development',
     IS_PRODUCTION: process.env.NODE_ENV === 'production',
     FRONTEND_URL: process.env.FRONTEND_URL || (process.env.CORS_ORIGIN?.split(',')[0]) || 'http://localhost:5173',
-};
+}

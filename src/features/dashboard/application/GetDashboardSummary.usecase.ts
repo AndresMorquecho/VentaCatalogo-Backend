@@ -3,7 +3,7 @@ import { Result } from '../../../shared/domain/Result';
 import { Prisma } from '@prisma/client';
 
 interface DashboardFilters {
-    brandId?: string;
+    brandIds?: string[];
     dateFrom?: Date;
     dateTo?: Date;
 }
@@ -32,10 +32,11 @@ export class GetDashboardSummaryUseCase {
             const rangeEnd = filters.dateTo ?? tomorrow;
 
             // ── Brand filter fragment ──────────────────────────────────────
-            // Cast the UUID column to text for comparison — avoids the 'text = uuid' operator error
-            // PostgreSQL can compare uuid::text = 'some-string' without issues
-            const brandFilter = filters.brandId
-                ? Prisma.sql`AND o.brand_id::text = ${filters.brandId}`
+            // Support multiple brands with IN(...) or single brand with =
+            const brandFilter = filters.brandIds && filters.brandIds.length > 0
+                ? filters.brandIds.length === 1
+                    ? Prisma.sql`AND o.brand_id::text = ${filters.brandIds[0]}`
+                    : Prisma.sql`AND o.brand_id::text IN (${Prisma.join(filters.brandIds)})`
                 : Prisma.sql``;
 
             // ── PARALLEL QUERIES ────────────────────────────────────────────
@@ -60,7 +61,7 @@ export class GetDashboardSummaryUseCase {
                             SELECT GREATEST(0, COALESCE(NULLIF(o.real_invoice_total, 0), o.total) - COALESCE(p.paid, 0)) as pending
                             FROM orders o
                             LEFT JOIN (SELECT order_id, SUM(amount) as paid FROM order_payments GROUP BY order_id) p ON o.id = p.order_id
-                            WHERE o.status != 'CANCELADO' ${brandFilter}
+                            WHERE o.status NOT IN ('CANCELADO', 'DESMANTELADO', 'ANULADO') ${brandFilter}
                         ) as portfolio) as total_portfolio
                 `,
 
@@ -133,7 +134,7 @@ export class GetDashboardSummaryUseCase {
                 where: {
                     status: 'RECIBIDO_EN_BODEGA',
                     receptionDate: { lte: fifteenDaysAgo },
-                    ...(filters.brandId ? { brandId: filters.brandId } : {})
+                    ...(filters.brandIds && filters.brandIds.length > 0 ? { brandId: { in: filters.brandIds } } : {})
                 },
                 orderBy: { receptionDate: 'asc' },
                 take: 5,
