@@ -6,6 +6,7 @@ interface DashboardFilters {
     brandIds?: string[];
     dateFrom?: Date;
     dateTo?: Date;
+    period?: 'daily' | 'weekly' | 'monthly';
 }
 
 export class GetDashboardSummaryUseCase {
@@ -24,19 +25,31 @@ export class GetDashboardSummaryUseCase {
 
             // ── Date range ─────────────────────────────────────────────────
             const rangeStart = filters.dateFrom ?? (() => {
-                const d = new Date(today);
-                d.setDate(d.getDate() - 6);
-                d.setHours(0, 0, 0, 0);
-                return d;
+                if (filters.period === 'weekly') {
+                    const d = new Date(today);
+                    d.setDate(d.getDate() - 6);
+                    d.setHours(0, 0, 0, 0);
+                    return d;
+                } else if (filters.period === 'monthly') {
+                    const d = new Date(today);
+                    d.setDate(d.getDate() - 29);
+                    d.setHours(0, 0, 0, 0);
+                    return d;
+                }
+                // default to 'daily' (today)
+                return today;
             })();
             const rangeEnd = filters.dateTo ?? tomorrow;
+
+            const weeklyStart = filters.dateFrom ? rangeStart : new Date(rangeEnd.getTime() - 8 * 7 * 24 * 60 * 60 * 1000);
+            const monthlyStart = filters.dateFrom ? rangeStart : new Date(rangeEnd.getTime() - 180 * 24 * 60 * 60 * 1000);
 
             // ── Brand filter fragment ──────────────────────────────────────
             // Support multiple brands with IN(...) or single brand with =
             const brandFilter = filters.brandIds && filters.brandIds.length > 0
                 ? filters.brandIds.length === 1
-                    ? Prisma.sql`AND o.brand_id::text = ${filters.brandIds[0]}`
-                    : Prisma.sql`AND o.brand_id::text IN (${Prisma.join(filters.brandIds)})`
+                    ? Prisma.sql`AND o.brand_id = ${filters.brandIds[0]}`
+                    : Prisma.sql`AND o.brand_id IN (${Prisma.join(filters.brandIds)})`
                 : Prisma.sql``;
 
             // ── PARALLEL QUERIES ────────────────────────────────────────────
@@ -47,21 +60,21 @@ export class GetDashboardSummaryUseCase {
                     SELECT
                         (SELECT COALESCE(SUM(amount), 0) FROM financial_records WHERE movement_type = 'INCOME' AND date >= ${today} AND date < ${tomorrow}) as daily_income,
                         (SELECT COALESCE(SUM(amount), 0) FROM financial_records WHERE movement_type = 'INCOME' AND date >= ${startOfMonth}) as monthly_income,
-                        (SELECT COALESCE(SUM(current_balance), 0) FROM bank_accounts WHERE is_active = true) as current_cash,
+                        (SELECT COALESCE(SUM(fr.amount), 0) FROM financial_records fr LEFT JOIN orders o ON fr.order_id = o.id WHERE fr.movement_type = 'INCOME' AND fr.date >= ${rangeStart} AND fr.date < ${rangeEnd} ${brandFilter}) as current_cash,
                         (SELECT count(id) FROM clients WHERE is_active = true) as active_clients,
                         (SELECT count(o.id) FROM orders o WHERE o.status != 'CANCELADO' AND o.created_at >= ${rangeStart} AND o.created_at < ${rangeEnd} ${brandFilter}) as orders_in_range,
-                        (SELECT count(o.id) FROM orders o WHERE o.status = 'ENTREGADO' ${brandFilter}) as total_delivered,
-                        (SELECT count(o.id) FROM orders o WHERE o.status = 'POR_RECIBIR' ${brandFilter}) as status_por_recibir,
-                        (SELECT count(o.id) FROM orders o WHERE o.status = 'RECIBIDO_EN_BODEGA' ${brandFilter}) as status_en_bodega,
-                        (SELECT count(o.id) FROM orders o WHERE o.status = 'ENTREGADO' ${brandFilter}) as status_entregado,
-                        (SELECT count(o.id) FROM orders o WHERE o.status = 'CANCELADO' ${brandFilter}) as status_cancelado,
+                        (SELECT count(o.id) FROM orders o WHERE o.status = 'ENTREGADO' AND o.created_at >= ${rangeStart} AND o.created_at < ${rangeEnd} ${brandFilter}) as total_delivered,
+                        (SELECT count(o.id) FROM orders o WHERE o.status = 'POR_RECIBIR' AND o.created_at >= ${rangeStart} AND o.created_at < ${rangeEnd} ${brandFilter}) as status_por_recibir,
+                        (SELECT count(o.id) FROM orders o WHERE o.status = 'RECIBIDO_EN_BODEGA' AND o.created_at >= ${rangeStart} AND o.created_at < ${rangeEnd} ${brandFilter}) as status_en_bodega,
+                        (SELECT count(o.id) FROM orders o WHERE o.status = 'ENTREGADO' AND o.created_at >= ${rangeStart} AND o.created_at < ${rangeEnd} ${brandFilter}) as status_entregado,
+                        (SELECT count(o.id) FROM orders o WHERE o.status = 'CANCELADO' AND o.created_at >= ${rangeStart} AND o.created_at < ${rangeEnd} ${brandFilter}) as status_cancelado,
                         (SELECT count(o.id) FROM orders o WHERE o.status = 'RECIBIDO_EN_BODEGA' AND o.reception_date <= ${fifteenDaysAgo} ${brandFilter}) as orders_over_15d,
                         (SELECT count(o.id) FROM orders o WHERE o.status = 'RECIBIDO_EN_BODEGA' AND o.reception_date <= ${thirtyDaysAgo} ${brandFilter}) as orders_over_30d,
                         (SELECT SUM(pending) FROM (
                             SELECT GREATEST(0, COALESCE(NULLIF(o.real_invoice_total, 0), o.total) - COALESCE(p.paid, 0)) as pending
                             FROM orders o
                             LEFT JOIN (SELECT order_id, SUM(amount) as paid FROM order_payments GROUP BY order_id) p ON o.id = p.order_id
-                            WHERE o.status NOT IN ('CANCELADO', 'DESMANTELADO', 'ANULADO') ${brandFilter}
+                            WHERE o.status NOT IN ('CANCELADO', 'DESMANTELADO', 'ANULADO') AND o.created_at >= ${rangeStart} AND o.created_at < ${rangeEnd} ${brandFilter}
                         ) as portfolio) as total_portfolio
                 `,
 
@@ -85,18 +98,18 @@ export class GetDashboardSummaryUseCase {
                     ) days
                     LEFT JOIN (
                         SELECT DATE(o.created_at) as day, COUNT(*) as created
-                        FROM orders o WHERE 1=1 ${brandFilter}
+                        FROM orders o WHERE o.created_at >= ${rangeStart} AND o.created_at < ${rangeEnd} ${brandFilter}
                         GROUP BY DATE(o.created_at)
                     ) c ON days.day = c.day
                     LEFT JOIN (
                         SELECT DATE(o.delivery_date) as day, COUNT(*) as delivered
-                        FROM orders o WHERE o.status = 'ENTREGADO' ${brandFilter}
+                        FROM orders o WHERE o.status = 'ENTREGADO' AND o.delivery_date >= ${rangeStart} AND o.delivery_date < ${rangeEnd} ${brandFilter}
                         GROUP BY DATE(o.delivery_date)
                     ) d ON days.day = d.day
                     ORDER BY days.day ASC
                 `,
 
-                // 4. Weekly trend (last 8 weeks from rangeEnd)
+                // 4. Weekly trend (dynamic range or last 8 weeks from rangeEnd)
                 prisma.$queryRaw<any[]>`
                     SELECT
                         TO_CHAR(DATE_TRUNC('week', o.created_at), 'DD/MM') as week_label,
@@ -104,14 +117,14 @@ export class GetDashboardSummaryUseCase {
                         COUNT(*) as created,
                         COUNT(*) FILTER (WHERE o.status = 'ENTREGADO') as delivered
                     FROM orders o
-                    WHERE o.created_at >= (${rangeEnd}::date - INTERVAL '8 weeks')
+                    WHERE o.created_at >= ${weeklyStart}
                       AND o.created_at < ${rangeEnd}
                       ${brandFilter}
                     GROUP BY DATE_TRUNC('week', o.created_at)
                     ORDER BY week_start ASC
                 `,
 
-                // 5. Monthly trend (last 6 months from rangeEnd)
+                // 5. Monthly trend (dynamic range or last 6 months from rangeEnd)
                 prisma.$queryRaw<any[]>`
                     SELECT
                         TO_CHAR(DATE_TRUNC('month', o.created_at), 'Mon') as month_label,
@@ -119,7 +132,7 @@ export class GetDashboardSummaryUseCase {
                         COUNT(*) as created,
                         COUNT(*) FILTER (WHERE o.status = 'ENTREGADO') as delivered
                     FROM orders o
-                    WHERE o.created_at >= (${rangeEnd}::date - INTERVAL '6 months')
+                    WHERE o.created_at >= ${monthlyStart}
                       AND o.created_at < ${rangeEnd}
                       ${brandFilter}
                     GROUP BY DATE_TRUNC('month', o.created_at)

@@ -6,7 +6,7 @@ export class DashboardController {
     constructor(private getDashboardSummaryUseCase: GetDashboardSummaryUseCase) { }
 
     getSummary = async (req: Request, res: Response) => {
-        const { brandId, brandIds, dateFrom, dateTo } = req.query as Record<string, string>;
+        const { brandId, brandIds, dateFrom, dateTo, period } = req.query as Record<string, string>;
 
         // Support both single brandId (legacy) and multiple brandIds (comma-separated)
         let brandIdArray: string[] | undefined;
@@ -20,6 +20,7 @@ export class DashboardController {
             brandIds: brandIdArray && brandIdArray.length > 0 ? brandIdArray : undefined,
             dateFrom: dateFrom ? new Date(dateFrom) : undefined,
             dateTo: dateTo ? new Date(dateTo + 'T23:59:59') : undefined,
+            period: period as 'daily' | 'weekly' | 'monthly' | undefined,
         });
 
         if (result.isFailure) {
