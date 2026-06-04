@@ -388,51 +388,74 @@ export class PrismaOrderRepository implements IOrderRepository {
   async generateSequence(prefix: string): Promise<string> {
     const year = new Date().getFullYear();
     
-    // 1. Get the max PD number
-    const lastPD = await prisma.order.findFirst({
-      where: { orderNumber: { startsWith: `PD-${year}-` } },
-      orderBy: { orderNumber: 'desc' },
-      select: { orderNumber: true }
-    });
+    let finalMax = 0;
 
-    // 2. Get the max CAM number
-    const lastCAM = await prisma.order.findFirst({
-      where: { orderNumber: { startsWith: `CAM-${year}-` } },
-      orderBy: { orderNumber: 'desc' },
-      select: { orderNumber: true }
-    });
-
-    // 3. Get the max OR receipt number (only if prefix is OR)
-    let lastORValue = 0;
-    if (prefix === 'OR') {
-      const lastOROrder = await prisma.order.findFirst({
-        where: { receiptNumber: { startsWith: `OR-${year}-` } },
-        orderBy: { receiptNumber: 'desc' },
-        select: { receiptNumber: true }
-      });
-      const lastORReceipt = await prisma.orderReceipt.findFirst({
-        where: { receiptNumber: { startsWith: `OR-${year}-` } },
-        orderBy: { receiptNumber: 'desc' },
-        select: { receiptNumber: true }
-      });
+    try {
+      if (prefix === 'OR') {
+        const resOrder = await prisma.$queryRaw<Array<{ max_val: number | null }>>`
+          SELECT MAX(CAST(substring(receipt_number from '[0-9]+$') AS INTEGER)) as max_val 
+          FROM orders 
+          WHERE receipt_number LIKE ${`OR-${year}-%`}
+        `;
+        const resReceipt = await prisma.$queryRaw<Array<{ max_val: number | null }>>`
+          SELECT MAX(CAST(substring(receipt_number from '[0-9]+$') AS INTEGER)) as max_val 
+          FROM order_receipts 
+          WHERE receipt_number LIKE ${`OR-${year}-%`}
+        `;
+        const v1 = resOrder[0]?.max_val || 0;
+        const v2 = resReceipt[0]?.max_val || 0;
+        finalMax = Math.max(v1, v2);
+      } else {
+        const resPD = await prisma.$queryRaw<Array<{ max_val: number | null }>>`
+          SELECT MAX(CAST(substring(order_number from '[0-9]+$') AS INTEGER)) as max_val 
+          FROM orders 
+          WHERE order_number LIKE ${`PD-${year}-%`}
+        `;
+        const resCAM = await prisma.$queryRaw<Array<{ max_val: number | null }>>`
+          SELECT MAX(CAST(substring(order_number from '[0-9]+$') AS INTEGER)) as max_val 
+          FROM orders 
+          WHERE order_number LIKE ${`CAM-${year}-%`}
+        `;
+        const maxPD = resPD[0]?.max_val || 0;
+        const maxCAM = resCAM[0]?.max_val || 0;
+        finalMax = Math.max(maxPD, maxCAM);
+      }
+    } catch (rawError) {
+      console.error('Error running raw SQL query for sequence generator, falling back to in-memory filter:', rawError);
       
-      const v1 = lastOROrder?.receiptNumber ? (parseInt(lastOROrder.receiptNumber.split('-')[2]) || 0) : 0;
-      const v2 = lastORReceipt?.receiptNumber ? (parseInt(lastORReceipt.receiptNumber.split('-')[2]) || 0) : 0;
-      lastORValue = Math.max(v1, v2);
+      // Fallback: fetch all values and parse in JS
+      const getNum = (val?: string | null) => {
+        if (!val) return 0;
+        const parts = val.split('-');
+        return parts.length >= 3 ? (parseInt(parts[2]) || 0) : 0;
+      };
+
+      if (prefix === 'OR') {
+        const orderReceipts = await prisma.order.findMany({
+          where: { receiptNumber: { startsWith: `OR-${year}-` } },
+          select: { receiptNumber: true }
+        });
+        const receiptReceipts = await prisma.orderReceipt.findMany({
+          where: { receiptNumber: { startsWith: `OR-${year}-` } },
+          select: { receiptNumber: true }
+        });
+        const v1 = orderReceipts.reduce((max, r) => Math.max(max, getNum(r.receiptNumber)), 0);
+        const v2 = receiptReceipts.reduce((max, r) => Math.max(max, getNum(r.receiptNumber)), 0);
+        finalMax = Math.max(v1, v2);
+      } else {
+        const pdOrders = await prisma.order.findMany({
+          where: { orderNumber: { startsWith: `PD-${year}-` } },
+          select: { orderNumber: true }
+        });
+        const camOrders = await prisma.order.findMany({
+          where: { orderNumber: { startsWith: `CAM-${year}-` } },
+          select: { orderNumber: true }
+        });
+        const maxPD = pdOrders.reduce((max, r) => Math.max(max, getNum(r.orderNumber)), 0);
+        const maxCAM = camOrders.reduce((max, r) => Math.max(max, getNum(r.orderNumber)), 0);
+        finalMax = Math.max(maxPD, maxCAM);
+      }
     }
-
-    // Extraction function
-    const getNum = (val?: string | null) => {
-      if (!val) return 0;
-      const parts = val.split('-');
-      return parts.length >= 3 ? (parseInt(parts[2]) || 0) : 0;
-    };
-
-    const maxPD = getNum(lastPD?.orderNumber);
-    const maxCAM = getNum(lastCAM?.orderNumber);
-    
-    let finalMax = Math.max(maxPD, maxCAM);
-    if (prefix === 'OR') finalMax = lastORValue;
 
     return `${prefix}-${year}-${String(finalMax + 1).padStart(3, '0')}`;
   }
