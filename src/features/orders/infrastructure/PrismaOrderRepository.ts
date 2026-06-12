@@ -554,6 +554,7 @@ export class PrismaOrderRepository implements IOrderRepository {
               receiptNumber: payment.receiptNumber,
               description: payment.description,
               createdAt: payment.createdAt,
+              deliveryBatchId: payment.deliveryBatchId || undefined,
               // Primary: FR linked by order_payment_id. Fallback: order-level FR with matching amount (for legacy batch delivery payments)
               createdBy: financialRecords[0]?.createdBy
                 || raw.financialRecords?.find(

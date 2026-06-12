@@ -84,6 +84,7 @@ export interface OrderPayment {
   receiptNumber?: string;
   description?: string;
   createdAt: Date;
+  deliveryBatchId?: string;
 }
 
 export class Order extends Entity<OrderProps> {
