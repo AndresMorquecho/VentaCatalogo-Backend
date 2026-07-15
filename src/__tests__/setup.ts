@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 
 // Setup test environment
-vi.mock('@/shared/infrastructure/database', () => ({
+vi.mock('../lib/prisma', () => ({
   prisma: {
     $transaction: vi.fn(),
     order: {

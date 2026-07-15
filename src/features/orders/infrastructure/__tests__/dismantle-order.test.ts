@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaOrderRepository } from '../PrismaOrderRepository';
 
 // Mock Prisma
-vi.mock('@/lib/prisma', () => {
+vi.mock('../../../../lib/prisma', () => {
   const mockPrisma = {
     order: {
       findUnique: vi.fn(),
@@ -17,7 +17,7 @@ vi.mock('@/lib/prisma', () => {
   return { prisma: mockPrisma };
 });
 
-import { prisma } from '@/lib/prisma';
+import { prisma } from '../../../../lib/prisma';
 
 describe('Order Dismantle Functionality', () => {
   let orderRepository: PrismaOrderRepository;

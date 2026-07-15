@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { prisma } from '@/lib/prisma';
+import { prisma } from '../../../../lib/prisma';
+import type { Prisma } from '@prisma/client';
 
 /**
  * Integration Test for Dismantle Functionality
@@ -58,7 +59,7 @@ describe('Dismantle Order - Integration Test', () => {
     expect(clientBefore?.isBlocked).toBe(false);
 
     // When: We dismantle the order in NORMAL mode
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.order.update({
         where: { id: testOrderId },
         data: {
@@ -106,7 +107,7 @@ describe('Dismantle Order - Integration Test', () => {
     expect(clientBefore?.isBlocked).toBe(false);
 
     // When: We dismantle the order in BLOCK mode
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.order.update({
         where: { id: blockTestOrder.id },
         data: {
