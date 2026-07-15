@@ -690,14 +690,16 @@ export class PrismaOrderRepository implements IOrderRepository {
         }
       });
 
-      // 2. Always block the client when an order is dismantled
-      await tx.client.update({
-        where: { id: order.clientId },
-        data: { 
-          isBlocked: true,
-          blockedReason: `DESMANTELADO: ${reason}`
-        }
-      });
+      // 2. Block the client only if mode is BLOCK
+      if (mode === 'BLOCK') {
+        await tx.client.update({
+          where: { id: order.clientId },
+          data: { 
+            isBlocked: true,
+            blockedReason: `DESMANTELADO: ${reason}`
+          }
+        });
+      }
     });
   }
 }
