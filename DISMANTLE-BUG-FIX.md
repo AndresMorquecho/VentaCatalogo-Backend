@@ -117,10 +117,17 @@ Test Files  1 passed (1)
 
 ## ✅ Verificación
 
-Para ejecutar los tests:
+El código compila correctamente y los tests pasan:
 
 ```bash
+# Compilar el proyecto
+npm run build
+# ✅ Compilación exitosa
+
+# Ejecutar tests unitarios
 npm test -- dismantle-order.test.ts
+# ✅ Test Files  1 passed (1)
+# ✅ Tests      7 passed (7)
 ```
 
 Para ejecutar con detalles:
