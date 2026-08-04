@@ -12,10 +12,9 @@ interface DashboardFilters {
 export class GetDashboardSummaryUseCase {
     async execute(filters: DashboardFilters = {}) {
         try {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const tomorrow = new Date(today);
-            tomorrow.setDate(tomorrow.getDate() + 1);
+            const ecuadorDateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guayaquil' });
+            const today = new Date(`${ecuadorDateStr}T00:00:00.000-05:00`);
+            const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
 
             const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
             const fifteenDaysAgo = new Date(today);

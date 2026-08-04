@@ -87,13 +87,28 @@ export class GetInventoryMovementsUseCase {
                 ];
             }
 
-            // 📊 Fetch paginated orders and global stats
+            // 📊 Calculate start and end of TODAY in local Ecuador Timezone (UTC-5)
+            const ecuadorDateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guayaquil' });
+            const todayStart = new Date(`${ecuadorDateStr}T00:00:00.000-05:00`);
+            const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
             const fifteenDaysAgo = new Date();
             fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const tomorrow = new Date(today);
-            tomorrow.setDate(tomorrow.getDate() + 1);
+
+            // Clean filter for global KPI summary cards (respects brand/orderType if set, but NOT table search/status/date filters)
+            const statsWhere: any = {
+                type: { not: 'CATALOGO' }
+            };
+            if (orderType && orderType !== 'all') {
+                statsWhere.type = orderType;
+            }
+            if (brandId && brandId !== '') {
+                const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(brandId);
+                if (isUuid) {
+                    statsWhere.brandId = brandId;
+                } else {
+                    statsWhere.brand = { name: { contains: brandId, mode: 'insensitive' } };
+                }
+            }
 
             const [orders, totalCount, stats] = await Promise.all([
                 prisma.order.findMany({
@@ -112,45 +127,30 @@ export class GetInventoryMovementsUseCase {
                     take
                 }),
                 prisma.order.count({ where: orderWhere }),
-                prisma.order.groupBy({
-                    by: ['status'],
-                    where: orderWhere,
-                    _count: { id: true }
-                }).then(groups => {
-                    const counts = {
-                        pending: 0,
-                        inWarehouse: 0,
-                        deliveredToday: 0,
-                        longStorage: 0
-                    };
-                    groups.forEach(g => {
-                        if (g.status === 'POR_RECIBIR') counts.pending = g._count.id;
-                        if (g.status === 'RECIBIDO_EN_BODEGA') counts.inWarehouse = g._count.id;
-                    });
-                    return counts;
-                })
+                Promise.all([
+                    prisma.order.count({ where: { ...statsWhere, status: 'POR_RECIBIR' } }),
+                    prisma.order.count({ where: { ...statsWhere, status: 'RECIBIDO_EN_BODEGA' } }),
+                    prisma.order.count({
+                        where: {
+                            ...statsWhere,
+                            status: 'ENTREGADO',
+                            deliveryDate: { gte: todayStart, lt: tomorrowStart }
+                        }
+                    }),
+                    prisma.order.count({
+                        where: {
+                            ...statsWhere,
+                            status: 'RECIBIDO_EN_BODEGA',
+                            receptionDate: { lte: fifteenDaysAgo }
+                        }
+                    })
+                ]).then(([pending, inWarehouse, deliveredToday, longStorage]) => ({
+                    pending,
+                    inWarehouse,
+                    deliveredToday,
+                    longStorage
+                }))
             ]);
-
-            // Additional stats that are harder to get with groupBy
-            const [deliveredToday, longStorage] = await Promise.all([
-                prisma.order.count({
-                    where: {
-                        ...orderWhere,
-                        status: 'ENTREGADO',
-                        deliveryDate: { gte: today, lt: tomorrow }
-                    }
-                }),
-                prisma.order.count({
-                    where: {
-                        ...orderWhere,
-                        status: 'RECIBIDO_EN_BODEGA',
-                        receptionDate: { lte: fifteenDaysAgo }
-                    }
-                })
-            ]);
-
-            stats.deliveredToday = deliveredToday;
-            stats.longStorage = longStorage;
 
             const finalMovements: any[] = [];
             
