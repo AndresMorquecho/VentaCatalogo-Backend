@@ -12,6 +12,7 @@ export interface InstantWalletRechargeDTO {
     controlValidation?: string;
     notes?: string;
     transactionDate?: string;
+    orderId?: string;
 }
 
 /**
@@ -105,6 +106,25 @@ export class InstantWalletRechargeUseCase {
                     ? new Date(dto.transactionDate.includes('T') ? dto.transactionDate : `${dto.transactionDate}T${timePart}`) 
                     : now;
 
+                let orderContext: any[] = [];
+                if (dto.orderId) {
+                    const linkedOrder = await tx.order.findUnique({
+                        where: { id: dto.orderId },
+                        include: { brand: true }
+                    });
+                    if (linkedOrder) {
+                        orderContext = [{
+                            receiptNumber: linkedOrder.receiptNumber,
+                            orderNumber: linkedOrder.orderNumber,
+                            brandName: linkedOrder.brand?.name || null
+                        }];
+                    }
+                }
+
+                const rechargeNotes = dto.orderId 
+                    ? (dto.notes ? `${dto.notes} [ORD:${dto.orderId}]` : `[ORD:${dto.orderId}]`)
+                    : (dto.notes || null);
+
                 // 2. Create the Recharge record
                 const recharge = await tx.walletRecharge.create({
                     data: {
@@ -114,7 +134,7 @@ export class InstantWalletRechargeUseCase {
                         bankAccountId: dto.bankAccountId,
                         reference: dto.reference || null,
                         controlValidation: dto.controlValidation || null,
-                        notes: dto.notes || null,
+                        notes: rechargeNotes,
                         status: status,
                         createdByName: createdBy,
                         validatedByName: isInstant ? createdBy : null,
@@ -154,11 +174,12 @@ export class InstantWalletRechargeUseCase {
                             clientName,
                             clientDocument: (client as any).identificationNumber ?? null,
                             createdBy,
+                            orderId: dto.orderId || null,
                             notes: buildNotesJSON({
-                                title: cardTitleFromMethod(dto.paymentMethod),
+                                title: 'RECARGA_BILLETERA',
                                 module: 'WALLET',
                                 clientDoc: (client as any).identificationNumber || 'S/N',
-                                orders: [],
+                                orders: orderContext,
                                 description: dto.notes,
                                 extra: dto.controlValidation ? `Control: ${dto.controlValidation}` : undefined
                             }),
@@ -186,11 +207,12 @@ export class InstantWalletRechargeUseCase {
                             clientName,
                             clientDocument: (client as any).identificationNumber ?? null,
                             createdBy,
+                            orderId: dto.orderId || null,
                             notes: buildNotesJSON({
                                 title: 'RECARGA_BILLETERA',
                                 module: 'WALLET',
                                 clientDoc: (client as any).identificationNumber || 'S/N',
-                                orders: [],
+                                orders: orderContext,
                                 description: dto.notes,
                                 extra: dto.controlValidation ? `Control: ${dto.controlValidation}` : undefined
                             }),

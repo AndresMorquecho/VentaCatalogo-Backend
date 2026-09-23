@@ -13,6 +13,7 @@ export interface CreateWalletRechargeDTO {
     controlValidation?: string;
     notes?: string;
     transactionDate?: string;
+    orderId?: string;
 }
 
 export class CreateWalletRechargeUseCase {
@@ -91,6 +92,25 @@ export class CreateWalletRechargeUseCase {
                     ? new Date(dto.transactionDate.includes('T') ? dto.transactionDate : `${dto.transactionDate}T${timePart}`) 
                     : now;
 
+                let orderContext: any[] = [];
+                if (dto.orderId) {
+                    const linkedOrder = await tx.order.findUnique({
+                        where: { id: dto.orderId },
+                        include: { brand: true }
+                    });
+                    if (linkedOrder) {
+                        orderContext = [{
+                            receiptNumber: linkedOrder.receiptNumber,
+                            orderNumber: linkedOrder.orderNumber,
+                            brandName: linkedOrder.brand?.name || null
+                        }];
+                    }
+                }
+
+                const rechargeNotes = dto.orderId 
+                    ? (dto.notes ? `${dto.notes} [ORD:${dto.orderId}]` : `[ORD:${dto.orderId}]`)
+                    : dto.notes;
+
                 const recharge = await tx.walletRecharge.create({
                     data: {
                         clientId: dto.clientId,
@@ -99,7 +119,7 @@ export class CreateWalletRechargeUseCase {
                         bankAccountId: finalBankAccountId,
                         reference: dto.reference,
                         controlValidation: dto.controlValidation,
-                        notes: dto.notes,
+                        notes: rechargeNotes,
                         status: dto.paymentMethod === 'EFECTIVO' ? 'VALIDADO' : 'PENDIENTE_VALIDACION',
                         createdByName: createdBy,
                         validatedByName: dto.paymentMethod === 'EFECTIVO' ? createdBy : null,
@@ -145,11 +165,12 @@ export class CreateWalletRechargeUseCase {
                             clientName: clientFullName,
                             clientDocument: client.identificationNumber,
                             createdBy,
+                            orderId: dto.orderId || null,
                             notes: buildNotesJSON({
-                                title: cardTitleFromMethod('EFECTIVO'),
+                                title: 'RECARGA_BILLETERA',
                                 module: 'WALLET',
                                 clientDoc: client.identificationNumber || 'S/N',
-                                orders: [],
+                                orders: orderContext,
                                 description: dto.notes,
                                 extra: dto.controlValidation ? `Control: ${dto.controlValidation}` : undefined
                             }),
@@ -178,11 +199,12 @@ export class CreateWalletRechargeUseCase {
                             clientName: clientFullName,
                             clientDocument: client.identificationNumber,
                             createdBy,
+                            orderId: dto.orderId || null,
                             notes: buildNotesJSON({
                                 title: 'RECARGA_BILLETERA',
                                 module: 'WALLET',
                                 clientDoc: client.identificationNumber || 'S/N',
-                                orders: [],
+                                orders: orderContext,
                                 description: dto.notes,
                                 extra: dto.controlValidation ? `Control: ${dto.controlValidation}` : undefined
                             }),

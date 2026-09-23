@@ -87,6 +87,20 @@ export async function computeCashClosureData(
     let runningEntregas = 0;
     let runningCatalog = 0;
 
+function extractOrderFromNotes(notes: string | null | undefined): string | null {
+    if (!notes) return null;
+    const keywordMatch = notes.match(/(?:PEDIDO|PED|ORDEN|ORD|RECIBO|REC)\s*[:#\-.]?\s*([A-Za-z0-9\-_]{4,25})/i);
+    if (keywordMatch) return keywordMatch[1].trim();
+
+    const afMatch = notes.match(/\b(AF\d{5,10})\b/i);
+    if (afMatch) return afMatch[1].trim();
+
+    const orMatch = notes.match(/\b(OR-\d{4}-\d{1,6})\b/i);
+    if (orMatch) return orMatch[1].trim();
+
+    return null;
+}
+
     // To process correctly chronological running balances, we iterate cards in reverse (oldest first)
     // buildTransactionCards sorts descending (newest first).
     const chronologicalCards = [...cards].reverse();
@@ -98,11 +112,48 @@ export async function computeCashClosureData(
         
         const isBankPayment = ['TRANSFERENCIA', 'DEPOSITO', 'CHEQUE'].includes(mainRecord?.paymentMethod || '');
 
+        // Extract order info
+        let orderCode = card.orders.map(o => o.receiptNumber + (o.orderNumber ? ` / ${o.orderNumber}` : '')).filter(Boolean).join(', ');
+        
+        if (!orderCode) {
+            // Check if any raw record has relation to order
+            const recWithOrder = baseMovements.find(r => card.rawRecordIds.includes(r.id) && r.order);
+            if (recWithOrder?.order) {
+                orderCode = recWithOrder.order.receiptNumber + (recWithOrder.order.orderNumber ? ` / ${recWithOrder.order.orderNumber}` : '');
+            }
+        }
+
+        if (!orderCode && card.notes) {
+            const candidateOrder = extractOrderFromNotes(card.notes);
+            if (candidateOrder) {
+                const clientRecord = baseMovements.find(r => card.rawRecordIds.includes(r.id) && r.clientId);
+                if (clientRecord?.clientId) {
+                    const matchedOrder = await prisma.order.findFirst({
+                        where: {
+                            clientId: clientRecord.clientId,
+                            OR: [
+                                { orderNumber: { contains: candidateOrder, mode: 'insensitive' } },
+                                { receiptNumber: { contains: candidateOrder, mode: 'insensitive' } }
+                            ]
+                        },
+                        select: { receiptNumber: true, orderNumber: true }
+                    });
+                    if (matchedOrder) {
+                        orderCode = matchedOrder.receiptNumber + (matchedOrder.orderNumber ? ` / ${matchedOrder.orderNumber}` : '');
+                    } else {
+                        orderCode = candidateOrder.startsWith('OR-') ? candidateOrder : `Ped. ${candidateOrder}`;
+                    }
+                } else {
+                    orderCode = candidateOrder.startsWith('OR-') ? candidateOrder : `Ped. ${candidateOrder}`;
+                }
+            }
+        }
+
         const baseRow = {
             date: new Date(card.date),
             label: card.titleLabel,
             reference: isBankPayment ? (card.reference || '—') : '-',
-            code: card.orders.map(o => o.receiptNumber + (o.orderNumber ? ` / ${o.orderNumber}` : '')).join(', ') || card.reference,
+            code: orderCode || '—',
             description: card.notes || '',
             identification: isBankPayment ? (card.extra?.startsWith('Control: ') ? card.extra.replace('Control: ', '') : '') : '-',
             client: card.clientName || '',
@@ -120,6 +171,9 @@ export async function computeCashClosureData(
                 runningWallet += isIncome ? m.amount : -m.amount;
                 summaryTables.wallet.push({
                     ...baseRow,
+                    label: isIncome 
+                        ? 'Recarga Billetera Virtual' 
+                        : (baseRow.label === 'Pago en Efectivo' ? 'Abono con Billetera Virtual' : baseRow.label),
                     amount: m.amount,
                     type: isIncome ? 'INCOME' : 'EXPENSE',
                     balance: runningWallet
@@ -131,6 +185,7 @@ export async function computeCashClosureData(
                 runningBancos += isIncome ? m.amount : -m.amount;
                 summaryTables.bancos.push({
                     ...baseRow,
+                    label: (card.operationType === 'RECARGA' && isIncome) ? 'Recarga Billetera Virtual' : baseRow.label,
                     amount: m.amount,
                     type: isIncome ? 'INCOME' : 'EXPENSE',
                     balance: runningBancos

@@ -135,6 +135,26 @@ export class ValidateWalletRechargesUseCase {
                     
                     const clientFullName = recharge.client.firstName;
 
+                    const orderIdMatch = recharge.notes?.match(/\[ORD:([a-zA-Z0-9\-_]+)\]/);
+                    const linkedOrderId = orderIdMatch ? orderIdMatch[1] : null;
+                    const cleanNotes = recharge.notes ? recharge.notes.replace(/\[ORD:[a-zA-Z0-9\-_]+\]/, '').trim() : undefined;
+
+                    let orderContext: any[] = [];
+                    let finalOrderId = linkedOrderId;
+                    if (linkedOrderId) {
+                        const linkedOrder = await tx.order.findUnique({
+                            where: { id: linkedOrderId },
+                            include: { brand: true }
+                        });
+                        if (linkedOrder) {
+                            orderContext = [{
+                                receiptNumber: linkedOrder.receiptNumber,
+                                orderNumber: linkedOrder.orderNumber,
+                                brandName: linkedOrder.brand?.name || null
+                            }];
+                        }
+                    }
+
                     // 4. Create Financial Records (Audit Trail)
                     // 4a. INCOME: External -> Bank Account
                     const incomeFR = await (tx as any).financialRecord.create({
@@ -148,12 +168,13 @@ export class ValidateWalletRechargesUseCase {
                             clientName: clientFullName,
                             clientDocument: recharge.client.identificationNumber,
                             createdBy: validatedBy,
+                            orderId: finalOrderId || null,
                             notes: buildNotesJSON({
-                                title: cardTitleFromMethod(recharge.paymentMethod),
+                                title: 'RECARGA_BILLETERA',
                                 module: 'WALLET',
                                 clientDoc: recharge.client.identificationNumber || 'S/N',
-                                orders: [],
-                                description: recharge.notes || undefined,
+                                orders: orderContext,
+                                description: cleanNotes || undefined,
                                 extra: recharge.controlValidation ? `Control: ${recharge.controlValidation}` : undefined
                             }),
                             bankAccountId: finalBankAccountId,
@@ -181,12 +202,13 @@ export class ValidateWalletRechargesUseCase {
                             clientName: clientFullName,
                             clientDocument: recharge.client.identificationNumber,
                             createdBy: validatedBy,
+                            orderId: finalOrderId || null,
                             notes: buildNotesJSON({
                                 title: 'RECARGA_BILLETERA',
                                 module: 'WALLET',
                                 clientDoc: recharge.client.identificationNumber || 'S/N',
-                                orders: [],
-                                description: recharge.notes || undefined,
+                                orders: orderContext,
+                                description: cleanNotes || undefined,
                                 extra: recharge.controlValidation ? `Control: ${recharge.controlValidation}` : undefined
                             }),
                             bankAccountId: finalBankAccountId,

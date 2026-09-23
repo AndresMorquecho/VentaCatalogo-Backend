@@ -170,7 +170,16 @@ function resolveTitle(records: RawRecord[]): CardTitle {
 
   // Parse notes for v2 JSON
   const parsed = parseNotesJSON(primary.notes);
-  if (parsed?.v === 2 && parsed.title) return parsed.title;
+  if (parsed?.v === 2 && parsed.title) {
+    if (parsed.module === 'WALLET' && records.some(r => r.toAccountType === 'WALLET')) {
+      return 'RECARGA_BILLETERA';
+    }
+    return parsed.title;
+  }
+
+  if (records.some(r => parseNotesJSON(r.notes)?.module === 'WALLET' && r.toAccountType === 'WALLET')) {
+    return 'RECARGA_BILLETERA';
+  }
 
   // Derive from record fields (for legacy or non-standard records)
   const type = primary.type;

@@ -28,7 +28,8 @@ export class WalletController {
                 reference: body.reference,
                 controlValidation: body.control_validation || body.controlValidation,
                 notes: body.notes,
-                transactionDate: body.transaction_date || body.transactionDate || body.date
+                transactionDate: body.transaction_date || body.transactionDate || body.date,
+                orderId: body.order_id || body.orderId || undefined
             };
 
             console.log('[WalletController] Final DTO:', dto);
@@ -230,7 +231,8 @@ export class WalletController {
                 reference: body.reference || body.reference,
                 controlValidation: body.controlValidation || body.control_validation,
                 notes: body.notes,
-                transactionDate: body.transaction_date || body.transactionDate || body.date
+                transactionDate: body.transaction_date || body.transactionDate || body.date,
+                orderId: body.order_id || body.orderId || undefined
             };
             const createdBy = req.user?.username || 'system';
 
