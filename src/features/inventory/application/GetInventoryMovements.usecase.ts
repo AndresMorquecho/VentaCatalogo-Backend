@@ -12,6 +12,7 @@ export class GetInventoryMovementsUseCase {
         orderNumber?: string;
         search?: string;
         orderType?: string;
+        status?: string;
         page?: number; 
         limit?: number 
     }): Promise<Result<{ data: any[]; total: number; stats: any }>> {
@@ -26,6 +27,7 @@ export class GetInventoryMovementsUseCase {
             const typeValue = filters.type?.trim() || undefined;
             const brandId = filters.brandId?.trim() || undefined;
             const orderType = filters.orderType?.trim() || undefined;
+            const statusFilter = filters.status?.trim() || undefined;
             const skip = page && limit ? (page - 1) * limit : undefined;
             const take = limit || undefined;
 
@@ -39,8 +41,10 @@ export class GetInventoryMovementsUseCase {
                 orderWhere.type = orderType;
             }
 
-            // 1. Status Filter (mapped from 'type' which is a logistics action)
-            if (typeValue && typeValue !== 'ALL') {
+            // 1. Status Filter (mapped from 'status' or 'type')
+            if (statusFilter && statusFilter !== 'ALL') {
+                orderWhere.status = statusFilter;
+            } else if (typeValue && typeValue !== 'ALL') {
                 if (typeValue === 'ENTRY') {
                     orderWhere.status = 'RECIBIDO_EN_BODEGA';
                 } else if (typeValue === 'DELIVERED') {

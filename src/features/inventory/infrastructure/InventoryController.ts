@@ -18,6 +18,7 @@ export class InventoryController {
             receiptNumber: req.query.receiptNumber as string | undefined,
             orderNumber: req.query.orderNumber as string | undefined,
             orderType: req.query.orderType as string | undefined,
+            status: req.query.status as string | undefined,
             search: req.query.search as string | undefined,
             page,
             limit
