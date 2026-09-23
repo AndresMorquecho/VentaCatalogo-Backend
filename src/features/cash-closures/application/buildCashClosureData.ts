@@ -125,8 +125,8 @@ function extractOrderFromNotes(notes: string | null | undefined): string | null 
 
         if (!orderCode && card.notes) {
             const candidateOrder = extractOrderFromNotes(card.notes);
+            const clientRecord = baseMovements.find(r => card.rawRecordIds.includes(r.id) && r.clientId);
             if (candidateOrder) {
-                const clientRecord = baseMovements.find(r => card.rawRecordIds.includes(r.id) && r.clientId);
                 if (clientRecord?.clientId) {
                     const matchedOrder = await prisma.order.findFirst({
                         where: {
@@ -145,6 +145,26 @@ function extractOrderFromNotes(notes: string | null | undefined): string | null 
                     }
                 } else {
                     orderCode = candidateOrder.startsWith('OR-') ? candidateOrder : `Ped. ${candidateOrder}`;
+                }
+            } else if (clientRecord?.clientId) {
+                // If no explicit order code, but note mentions N/C and a brand (e.g. "N/C CAVALINI...")
+                const brandMatch = card.notes.match(/(?:N\/C|NC|NOTA DE CREDITO)\s+([A-Za-z0-9]+)/i);
+                if (brandMatch) {
+                    const brandKeyword = brandMatch[1].trim();
+                    const matchedOrder = await prisma.order.findFirst({
+                        where: {
+                            clientId: clientRecord.clientId,
+                            OR: [
+                                { brand: { name: { contains: brandKeyword, mode: 'insensitive' } } },
+                                { orderNumber: { contains: brandKeyword, mode: 'insensitive' } }
+                            ]
+                        },
+                        orderBy: { createdAt: 'desc' },
+                        select: { receiptNumber: true, orderNumber: true }
+                    });
+                    if (matchedOrder) {
+                        orderCode = matchedOrder.receiptNumber + (matchedOrder.orderNumber ? ` / ${matchedOrder.orderNumber}` : '');
+                    }
                 }
             }
         }
@@ -169,11 +189,19 @@ function extractOrderFromNotes(notes: string | null | undefined): string | null 
             // ─── WALLET ──────────────────────────────────────────────────
             if (m.accountType === 'WALLET') {
                 runningWallet += isIncome ? m.amount : -m.amount;
+                const incomeMethodLabel = mainRecord?.paymentMethod === 'EFECTIVO' 
+                    ? 'Pago en Efectivo' 
+                    : mainRecord?.paymentMethod === 'TRANSFERENCIA' 
+                    ? 'Transferencia Bancaria' 
+                    : mainRecord?.paymentMethod === 'DEPOSITO' 
+                    ? 'Depósito Bancario' 
+                    : mainRecord?.paymentMethod === 'CHEQUE' 
+                    ? 'Pago con Cheque' 
+                    : baseRow.label;
+
                 summaryTables.wallet.push({
                     ...baseRow,
-                    label: isIncome 
-                        ? 'Recarga Billetera Virtual' 
-                        : (baseRow.label === 'Pago en Efectivo' ? 'Abono con Billetera Virtual' : baseRow.label),
+                    label: isIncome ? incomeMethodLabel : 'Abono con Billetera Virtual',
                     amount: m.amount,
                     type: isIncome ? 'INCOME' : 'EXPENSE',
                     balance: runningWallet
